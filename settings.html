@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Incentives — MedUnited CRM</title>
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+    <div class="app-shell">
+        <aside class="sidebar" id="app-sidebar"></aside>
+
+        <div class="main-col">
+            <header class="topbar">
+                <div>
+                    <h1>Incentive Rates</h1>
+                    <p class="subtitle">Amount paid per sale, per agent — changes apply immediately</p>
+                </div>
+            </header>
+
+            <main>
+                <div id="settings-error" class="form-error"></div>
+                <div class="table-container">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Agent</th>
+                                <th>Email</th>
+                                <th>Medpass Incentive (₹ / sale)</th>
+                                <th>Pharmacy Incentive (₹ / sale)</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody id="rates-table-body"></tbody>
+                    </table>
+                    <div id="rates-empty" class="empty-state hidden">No agent accounts yet.</div>
+                </div>
+            </main>
+        </div>
+    </div>
+
+    <script src="js/api.js"></script>
+    <script src="js/layout.js"></script>
+    <script src="js/settings.js"></script>
+</body>
+</html>
