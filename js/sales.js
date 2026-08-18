@@ -24,7 +24,8 @@
     var currentBillUrl = '';
     var currentPaymentUrl = '';
 
-    var lastSales = [];
+    var allSales = [];  // raw, unfiltered, straight from the server
+    var lastSales = []; // currently filtered + rendered set (what click/drag handlers look up)
 
     // ===== View toggle (Board / Table) =====
     var VIEW_KEY = 'medunited_view_' + SALE_TYPE;
@@ -50,6 +51,77 @@
     applyView();
 
     var priceTypeField = document.getElementById('sale-price-type'); // only present on medpass.html
+
+    // ===== Search + filters =====
+    var searchInput = document.getElementById('filter-search');
+    var agentFilter = document.getElementById('filter-agent');
+    var statusFilter = document.getElementById('filter-status');
+    var paymentFilter = document.getElementById('filter-payment');
+    var priceTypeFilter = document.getElementById('filter-price-type'); // only present on medpass.html
+
+    function populateAgentFilter(sales) {
+        if (!canManageAll) return; // agents only ever see their own sales — filtering by agent is pointless
+        var current = agentFilter.value;
+        var seen = {};
+        var options = ['<option value="">All Agents</option>'];
+        sales.forEach(function (s) {
+            var key = String(s.AgentEmail).toLowerCase();
+            if (seen[key]) return;
+            seen[key] = true;
+            options.push('<option value="' + escapeHtml(key) + '">' + escapeHtml(s.AgentName) + '</option>');
+        });
+        agentFilter.innerHTML = options.join('');
+        agentFilter.classList.remove('hidden');
+        if (seen[current]) agentFilter.value = current;
+    }
+
+    function applyFilters(sales) {
+        var q = searchInput.value.trim().toLowerCase();
+        var agent = agentFilter.value;
+        var status = statusFilter.value;
+        var payment = paymentFilter.value;
+        var priceType = priceTypeFilter ? priceTypeFilter.value : '';
+
+        return sales.filter(function (s) {
+            if (q) {
+                var haystack = (String(s.CustomerName || '') + ' ' + String(s.Contact || '') + ' ' + String(s.Detail || '')).toLowerCase();
+                if (haystack.indexOf(q) === -1) return false;
+            }
+            if (agent && String(s.AgentEmail).toLowerCase() !== agent) return false;
+            if (status && s.Status !== status) return false;
+            if (payment) {
+                if (payment === '__none__') { if (s.PaymentMethod) return false; }
+                else if (s.PaymentMethod !== payment) return false;
+            }
+            if (priceType && s.PriceType !== priceType) return false;
+            return true;
+        });
+    }
+
+    function hasActiveFilters() {
+        return !!(searchInput.value.trim() || agentFilter.value || statusFilter.value || paymentFilter.value || (priceTypeFilter && priceTypeFilter.value));
+    }
+
+    function renderAll() {
+        lastSales = applyFilters(allSales);
+        renderTable(lastSales);
+        renderBoard(lastSales);
+    }
+
+    searchInput.addEventListener('input', renderAll);
+    agentFilter.addEventListener('change', renderAll);
+    statusFilter.addEventListener('change', renderAll);
+    paymentFilter.addEventListener('change', renderAll);
+    if (priceTypeFilter) priceTypeFilter.addEventListener('change', renderAll);
+
+    document.getElementById('filter-clear-btn').addEventListener('click', function () {
+        searchInput.value = '';
+        agentFilter.value = '';
+        statusFilter.value = '';
+        paymentFilter.value = '';
+        if (priceTypeFilter) priceTypeFilter.value = '';
+        renderAll();
+    });
 
     function toggleUtrField() {
         var isUpi = document.getElementById('sale-payment-method').value === 'UPI';
@@ -234,7 +306,9 @@
 
         if (sales.length === 0) {
             tbody.innerHTML = '';
-            empty.textContent = 'No sales recorded yet. Click "New Sale" to add one.';
+            empty.textContent = hasActiveFilters()
+                ? 'No sales match your search/filters.'
+                : 'No sales recorded yet. Click "New Sale" to add one.';
             empty.classList.remove('hidden');
             return;
         }
@@ -300,7 +374,8 @@
 
         board.innerHTML = STATUS_COLUMNS.map(function (status) {
             var items = sales.filter(function (s) { return s.Status === status; });
-            var cardsHtml = items.length ? items.map(cardHtml).join('') : '<div class="kanban-empty-col">No sales here</div>';
+            var emptyMsg = hasActiveFilters() ? 'No matches' : 'No sales here';
+            var cardsHtml = items.length ? items.map(cardHtml).join('') : '<div class="kanban-empty-col">' + emptyMsg + '</div>';
             return '<div class="kanban-column">' +
                 '<div class="kanban-column-header"><span class="dot ' + status.toLowerCase() + '"></span>' + status +
                 '<span class="count">' + items.length + '</span></div>' +
@@ -362,6 +437,7 @@
         var res = await apiCall('listSales', { type: SALE_TYPE });
 
         if (res.error) {
+            allSales = [];
             lastSales = [];
             document.getElementById('sales-table-body').innerHTML = '';
             var errEmpty = document.getElementById('sales-empty');
@@ -371,9 +447,9 @@
             return;
         }
 
-        lastSales = res.sales || [];
-        renderTable(lastSales);
-        renderBoard(lastSales);
+        allSales = res.sales || [];
+        populateAgentFilter(allSales);
+        renderAll();
     }
 
     load();

@@ -26,6 +26,27 @@
             </header>
 
             <main>
+                <div class="filter-bar">
+                    <input type="search" id="filter-search" placeholder="Search customer, contact, order details…">
+                    <select id="filter-agent" class="hidden"><option value="">All Agents</option></select>
+                    <select id="filter-status">
+                        <option value="">All Statuses</option>
+                        <option value="Pending">Pending</option>
+                        <option value="Completed">Completed</option>
+                        <option value="Cancelled">Cancelled</option>
+                    </select>
+                    <select id="filter-payment">
+                        <option value="">All Payment Methods</option>
+                        <option value="UPI">UPI</option>
+                        <option value="Cash">Cash</option>
+                        <option value="Card">Card</option>
+                        <option value="Bank Transfer">Bank Transfer</option>
+                        <option value="Other">Other</option>
+                        <option value="__none__">Not set</option>
+                    </select>
+                    <button type="button" id="filter-clear-btn" class="secondary">Clear</button>
+                </div>
+
                 <p class="field-hint" style="margin:0 0 14px;">Drag a card between columns to change its status.</p>
 
                 <div class="kanban-board" id="kanban-board"></div>
