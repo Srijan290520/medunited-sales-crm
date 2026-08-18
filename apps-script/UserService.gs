@@ -6,8 +6,9 @@ function sanitizeUser(u) {
     Name: u.Name,
     Email: u.Email,
     Role: u.Role,
-    MedpassIncentive: Number(u.MedpassIncentive) || 0,
-    PharmacyIncentive: Number(u.PharmacyIncentive) || 0,
+    MedpassFullRate: Number(u.MedpassFullRate) || 0,
+    MedpassDiscountRate: Number(u.MedpassDiscountRate) || 0,
+    PharmacyIncentivePercent: Number(u.PharmacyIncentivePercent) || 0,
     Active: isActive(u.Active),
     CreatedAt: u.CreatedAt
   };
@@ -44,8 +45,9 @@ function svc_createUser(session, data) {
     PasswordHash: hashPassword(password, salt),
     Salt: salt,
     Role: role,
-    MedpassIncentive: Number(data.medpassIncentive) || 0,
-    PharmacyIncentive: Number(data.pharmacyIncentive) || 0,
+    MedpassFullRate: Number(data.medpassFullRate) || 0,
+    MedpassDiscountRate: Number(data.medpassDiscountRate) || 0,
+    PharmacyIncentivePercent: Number(data.pharmacyIncentivePercent) || 0,
     Active: true,
     CreatedAt: nowIso()
   };
@@ -77,20 +79,28 @@ function svc_updateUser(session, id, data) {
 }
 
 // Incentive rates are the one thing a manager (not just admin) is allowed to edit.
+// Medpass pays a flat ₹ rate per sale (different rate depending on whether it
+// was sold at Full Price or Discounted); Pharmacy pays a percentage of the
+// sale amount.
 function svc_updateIncentives(session, id, data) {
   requireRole(session, ['admin', 'manager']);
   var sheet = getSheetByName('Users');
   var patch = {};
 
-  if (data.medpassIncentive !== undefined) {
-    var m = Number(data.medpassIncentive);
-    if (isNaN(m) || m < 0) throw new Error('Medpass incentive must be a non-negative number.');
-    patch.MedpassIncentive = m;
+  if (data.medpassFullRate !== undefined) {
+    var mf = Number(data.medpassFullRate);
+    if (isNaN(mf) || mf < 0) throw new Error('Medpass Full Price rate must be a non-negative number.');
+    patch.MedpassFullRate = mf;
   }
-  if (data.pharmacyIncentive !== undefined) {
-    var p = Number(data.pharmacyIncentive);
-    if (isNaN(p) || p < 0) throw new Error('Pharmacy incentive must be a non-negative number.');
-    patch.PharmacyIncentive = p;
+  if (data.medpassDiscountRate !== undefined) {
+    var md = Number(data.medpassDiscountRate);
+    if (isNaN(md) || md < 0) throw new Error('Medpass Discounted rate must be a non-negative number.');
+    patch.MedpassDiscountRate = md;
+  }
+  if (data.pharmacyIncentivePercent !== undefined) {
+    var p = Number(data.pharmacyIncentivePercent);
+    if (isNaN(p) || p < 0 || p > 100) throw new Error('Pharmacy incentive percent must be between 0 and 100.');
+    patch.PharmacyIncentivePercent = p;
   }
 
   var updated = updateObjectById(sheet, id, patch);

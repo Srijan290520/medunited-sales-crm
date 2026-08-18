@@ -4,8 +4,8 @@
 
 function setupSpreadsheet() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var usersHeaders = ['ID', 'Name', 'Email', 'PasswordHash', 'Salt', 'Role', 'MedpassIncentive', 'PharmacyIncentive', 'Active', 'CreatedAt'];
-  var saleHeaders = ['ID', 'Date', 'AgentEmail', 'AgentName', 'CustomerName', 'Contact', 'Detail', 'Amount', 'Status', 'PaymentMethod', 'UTR', 'BillScreenshotUrl', 'PaymentScreenshotUrl', 'Notes', 'CreatedAt'];
+  var usersHeaders = ['ID', 'Name', 'Email', 'PasswordHash', 'Salt', 'Role', 'MedpassFullRate', 'MedpassDiscountRate', 'PharmacyIncentivePercent', 'Active', 'CreatedAt'];
+  var saleHeaders = ['ID', 'Date', 'AgentEmail', 'AgentName', 'CustomerName', 'Contact', 'Detail', 'Amount', 'Status', 'PriceType', 'PaymentMethod', 'UTR', 'BillScreenshotUrl', 'PaymentScreenshotUrl', 'Notes', 'CreatedAt'];
 
   ensureSheet(ss, 'Users', usersHeaders);
   ensureSheet(ss, 'Medpass', saleHeaders);
@@ -45,8 +45,9 @@ function createFirstAdmin() {
     PasswordHash: hashPassword(password, salt),
     Salt: salt,
     Role: 'admin',
-    MedpassIncentive: 0,
-    PharmacyIncentive: 0,
+    MedpassFullRate: 0,
+    MedpassDiscountRate: 0,
+    PharmacyIncentivePercent: 0,
     Active: true,
     CreatedAt: nowIso()
   });

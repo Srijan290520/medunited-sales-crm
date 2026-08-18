@@ -49,6 +49,8 @@
     });
     applyView();
 
+    var priceTypeField = document.getElementById('sale-price-type'); // only present on medpass.html
+
     function toggleUtrField() {
         var isUpi = document.getElementById('sale-payment-method').value === 'UPI';
         document.getElementById('utr-field').classList.toggle('hidden', !isUpi);
@@ -76,6 +78,7 @@
         document.getElementById('sale-contact').value = sale ? sale.Contact : '';
         document.getElementById('sale-detail').value = sale ? sale.Detail : '';
         document.getElementById('sale-amount').value = sale ? sale.Amount : '';
+        if (priceTypeField) priceTypeField.value = sale ? (sale.PriceType || '') : '';
         document.getElementById('sale-status').value = presetStatus || (sale ? sale.Status : 'Pending');
         document.getElementById('sale-payment-method').value = sale ? (sale.PaymentMethod || '') : '';
         document.getElementById('sale-utr').value = sale ? (sale.UTR || '') : '';
@@ -128,6 +131,9 @@
         if (billFile && billFile.size > MAX_FILE_BYTES) { showFormError('Bill screenshot is too large (max 5MB).'); return; }
         if (paymentFile && paymentFile.size > MAX_FILE_BYTES) { showFormError('Payment screenshot is too large (max 5MB).'); return; }
 
+        var priceType = priceTypeField ? priceTypeField.value : '';
+        if (priceTypeField && !priceType) { showFormError('Price type (Full Price or Discounted) is required.'); return; }
+
         // Client-side pre-check, mirroring the server rule, for a fast error
         // message — the server enforces this for real regardless.
         if (status === 'Completed') {
@@ -149,6 +155,7 @@
             contact: document.getElementById('sale-contact').value.trim(),
             detail: document.getElementById('sale-detail').value.trim(),
             amount: document.getElementById('sale-amount').value,
+            priceType: priceType,
             status: status,
             paymentMethod: paymentMethod,
             utr: utr,
@@ -201,6 +208,11 @@
         return html;
     }
 
+    function priceTypeCell(s) {
+        if (!s.PriceType) return '<span style="color:var(--text-muted);">—</span>';
+        return escapeHtml(s.PriceType);
+    }
+
     function proofCell(s) {
         var bill = s.BillScreenshotUrl
             ? '<a class="proof-link" href="' + s.BillScreenshotUrl + '" target="_blank" rel="noopener">Bill</a>'
@@ -240,6 +252,7 @@
                 '<td>' + escapeHtml(s.Contact) + '</td>' +
                 '<td>' + escapeHtml(s.Detail) + '</td>' +
                 '<td>' + formatMoney(s.Amount) + '</td>' +
+                (priceTypeField ? '<td>' + priceTypeCell(s) + '</td>' : '') +
                 '<td><span class="status-pill ' + statusClass(s.Status) + '">' + escapeHtml(s.Status) + '</span></td>' +
                 '<td>' + paymentCell(s) + '</td>' +
                 '<td>' + proofCell(s) + '</td>' +
@@ -269,10 +282,14 @@
             '<span class="proof-dot' + (sale.PaymentScreenshotUrl ? ' attached' : '') + '" title="Payment screenshot"></span>' +
             '</div>';
 
+        var priceTag = (priceTypeField && sale.PriceType)
+            ? ' <span class="kanban-payment-tag" style="margin-left:4px;">' + escapeHtml(sale.PriceType) + '</span>'
+            : '';
+
         return '<div class="kanban-card" draggable="' + (canEditSale(sale) ? 'true' : 'false') + '" data-id="' + sale.ID + '">' +
             '<div class="kanban-card-top"><span class="kanban-amount">' + formatMoney(sale.Amount) + '</span>' + proofDots + '</div>' +
             '<div class="kanban-customer">' + escapeHtml(sale.CustomerName) + '</div>' +
-            '<div class="kanban-detail">' + escapeHtml(sale.Detail || '—') + '</div>' +
+            '<div class="kanban-detail">' + escapeHtml(sale.Detail || '—') + priceTag + '</div>' +
             '<div class="kanban-card-footer">' + avatarHtml(sale.AgentName) +
             '<span class="kanban-payment-tag">' + (sale.PaymentMethod ? escapeHtml(sale.PaymentMethod) : '') + '</span>' +
             '</div></div>';

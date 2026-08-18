@@ -35,6 +35,8 @@ function validateCompletionRequirements(status, paymentMethod, utr, billUrl, pay
   if (paymentMethod === 'UPI' && !utr) throw new Error('UTR number is required for UPI payments.');
 }
 
+var PRICE_TYPES = ['Full Price', 'Discounted'];
+
 function svc_createSale(session, type, data) {
   var sheet = getSheetByName(saleSheetName(type));
   var customerName = String(data.customerName || '').trim();
@@ -42,9 +44,15 @@ function svc_createSale(session, type, data) {
   var status = data.status || 'Pending';
   var paymentMethod = String(data.paymentMethod || '').trim();
   var utr = String(data.utr || '').trim();
+  var priceType = String(data.priceType || '').trim();
 
   if (!customerName) throw new Error('Customer name is required.');
   if (isNaN(amount) || amount < 0) throw new Error('Amount must be a non-negative number.');
+  // Medpass incentive rates depend on this, so it's required at creation —
+  // unlike payment proof, which is only required once a sale is Completed.
+  if (type === 'medpass' && PRICE_TYPES.indexOf(priceType) === -1) {
+    throw new Error('Price type (Full Price or Discounted) is required for Medpass sales.');
+  }
 
   var id = newId();
   var billUrl = data.billScreenshot ? saveAttachmentFromDataUrl(data.billScreenshot, type + '_' + id + '_bill') : '';
@@ -62,6 +70,7 @@ function svc_createSale(session, type, data) {
     Detail: String(data.detail || '').trim(),
     Amount: amount,
     Status: status,
+    PriceType: priceType,
     PaymentMethod: paymentMethod,
     UTR: utr,
     BillScreenshotUrl: billUrl,
@@ -86,7 +95,8 @@ function svc_updateSale(session, type, id, data) {
 
   var fieldMap = {
     date: 'Date', customerName: 'CustomerName', contact: 'Contact', detail: 'Detail',
-    amount: 'Amount', status: 'Status', notes: 'Notes', paymentMethod: 'PaymentMethod', utr: 'UTR'
+    amount: 'Amount', status: 'Status', notes: 'Notes', paymentMethod: 'PaymentMethod', utr: 'UTR',
+    priceType: 'PriceType'
   };
   var patch = {};
   Object.keys(fieldMap).forEach(function (key) {
@@ -96,6 +106,9 @@ function svc_updateSale(session, type, id, data) {
 
   if (patch.Amount !== undefined && (isNaN(patch.Amount) || patch.Amount < 0)) {
     throw new Error('Amount must be a non-negative number.');
+  }
+  if (type === 'medpass' && patch.PriceType !== undefined && PRICE_TYPES.indexOf(patch.PriceType) === -1) {
+    throw new Error('Price type (Full Price or Discounted) is required for Medpass sales.');
   }
 
   if (data.billScreenshot) {
@@ -132,6 +145,11 @@ function svc_deleteSale(session, type, id) {
 // already filtered the underlying rows for them. Cancelled sales are
 // excluded — they didn't happen, so they shouldn't count toward sales
 // totals, revenue, or incentive payouts.
+//
+// Incentive math differs by type: Medpass pays a flat rate per sale that
+// depends on whether it was Full Price or Discounted; Pharmacy pays a
+// percentage of the sale amount. Both are per-agent rates set on the
+// Incentives page.
 function svc_dashboardSummary(session) {
   function excludeCancelled(rows) {
     return rows.filter(function (r) { return r.Status !== 'Cancelled'; });
@@ -139,25 +157,12 @@ function svc_dashboardSummary(session) {
   var medpass = excludeCancelled(svc_listSales(session, 'medpass'));
   var pharmacy = excludeCancelled(svc_listSales(session, 'pharmacy'));
 
-  function groupByAgent(rows) {
-    var byAgent = {};
-    rows.forEach(function (r) {
-      var key = String(r.AgentEmail).toLowerCase();
-      if (!byAgent[key]) byAgent[key] = { agentName: r.AgentName, agentEmail: r.AgentEmail, count: 0, amount: 0 };
-      byAgent[key].count += 1;
-      byAgent[key].amount += Number(r.Amount) || 0;
-    });
-    return byAgent;
-  }
-
-  var medpassByAgent = groupByAgent(medpass);
-  var pharmacyByAgent = groupByAgent(pharmacy);
-
   var rateByEmail = {};
   sheetToObjects(getSheetByName('Users')).forEach(function (u) {
     rateByEmail[String(u.Email).toLowerCase()] = {
-      medpassIncentive: Number(u.MedpassIncentive) || 0,
-      pharmacyIncentive: Number(u.PharmacyIncentive) || 0
+      medpassFullRate: Number(u.MedpassFullRate) || 0,
+      medpassDiscountRate: Number(u.MedpassDiscountRate) || 0,
+      pharmacyIncentivePercent: Number(u.PharmacyIncentivePercent) || 0
     };
   });
 
@@ -168,20 +173,24 @@ function svc_dashboardSummary(session) {
     }
     return agents[key];
   }
-  Object.keys(medpassByAgent).forEach(function (key) {
-    var a = ensureAgent(key, medpassByAgent[key].agentName);
-    a.medpassCount = medpassByAgent[key].count;
-    a.medpassAmount = medpassByAgent[key].amount;
+
+  medpass.forEach(function (r) {
+    var key = String(r.AgentEmail).toLowerCase();
+    var a = ensureAgent(key, r.AgentName);
+    a.medpassCount += 1;
+    a.medpassAmount += Number(r.Amount) || 0;
+    var rate = rateByEmail[key] || { medpassFullRate: 0, medpassDiscountRate: 0 };
+    a.incentive += r.PriceType === 'Discounted' ? rate.medpassDiscountRate : rate.medpassFullRate;
   });
-  Object.keys(pharmacyByAgent).forEach(function (key) {
-    var a = ensureAgent(key, pharmacyByAgent[key].agentName);
-    a.pharmacyCount = pharmacyByAgent[key].count;
-    a.pharmacyAmount = pharmacyByAgent[key].amount;
-  });
-  Object.keys(agents).forEach(function (key) {
-    var rate = rateByEmail[key] || { medpassIncentive: 0, pharmacyIncentive: 0 };
-    var a = agents[key];
-    a.incentive = (a.medpassCount * rate.medpassIncentive) + (a.pharmacyCount * rate.pharmacyIncentive);
+
+  pharmacy.forEach(function (r) {
+    var key = String(r.AgentEmail).toLowerCase();
+    var a = ensureAgent(key, r.AgentName);
+    a.pharmacyCount += 1;
+    var amount = Number(r.Amount) || 0;
+    a.pharmacyAmount += amount;
+    var rate = rateByEmail[key] || { pharmacyIncentivePercent: 0 };
+    a.incentive += amount * (rate.pharmacyIncentivePercent / 100);
   });
 
   return {

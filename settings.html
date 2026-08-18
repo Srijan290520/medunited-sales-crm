@@ -14,20 +14,43 @@
             <header class="topbar">
                 <div>
                     <h1>Incentive Rates</h1>
-                    <p class="subtitle">Amount paid per sale, per agent — changes apply immediately</p>
+                    <p class="subtitle">Medpass pays a flat rate per sale (Full Price vs Discounted); Pharmacy pays a % of the sale amount</p>
                 </div>
             </header>
 
             <main>
                 <div id="settings-error" class="form-error"></div>
+
+                <div class="card">
+                    <div class="card-title">Apply to Whole Team</div>
+                    <p class="field-hint" style="margin-top:-8px;">Set a rate once and apply it to every agent — useful when the team-wide policy changes. Individual rows below still let you set exceptions.</p>
+                    <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:14px; align-items:end;">
+                        <div>
+                            <label for="bulk-medpass-full">Medpass — Full Price (₹/sale)</label>
+                            <input type="number" min="0" step="0.01" id="bulk-medpass-full">
+                        </div>
+                        <div>
+                            <label for="bulk-medpass-discount">Medpass — Discounted (₹/sale)</label>
+                            <input type="number" min="0" step="0.01" id="bulk-medpass-discount">
+                        </div>
+                        <div>
+                            <label for="bulk-pharmacy-percent">Pharmacy — % of sale amount</label>
+                            <input type="number" min="0" max="100" step="0.1" id="bulk-pharmacy-percent">
+                        </div>
+                        <div>
+                            <button type="button" id="bulk-apply-btn">Apply to All Agents</button>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="table-container">
                     <table class="data-table">
                         <thead>
                             <tr>
                                 <th>Agent</th>
-                                <th>Email</th>
-                                <th>Medpass Incentive (₹ / sale)</th>
-                                <th>Pharmacy Incentive (₹ / sale)</th>
+                                <th>Medpass — Full Price (₹)</th>
+                                <th>Medpass — Discounted (₹)</th>
+                                <th>Pharmacy (%)</th>
                                 <th></th>
                             </tr>
                         </thead>
