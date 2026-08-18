@@ -129,10 +129,15 @@ function svc_deleteSale(session, type, id) {
 
 // Aggregated per-agent counts, amounts and computed incentive totals.
 // Agents only ever see their own row here too, because svc_listSales
-// already filtered the underlying rows for them.
+// already filtered the underlying rows for them. Cancelled sales are
+// excluded — they didn't happen, so they shouldn't count toward sales
+// totals, revenue, or incentive payouts.
 function svc_dashboardSummary(session) {
-  var medpass = svc_listSales(session, 'medpass');
-  var pharmacy = svc_listSales(session, 'pharmacy');
+  function excludeCancelled(rows) {
+    return rows.filter(function (r) { return r.Status !== 'Cancelled'; });
+  }
+  var medpass = excludeCancelled(svc_listSales(session, 'medpass'));
+  var pharmacy = excludeCancelled(svc_listSales(session, 'pharmacy'));
 
   function groupByAgent(rows) {
     var byAgent = {};
