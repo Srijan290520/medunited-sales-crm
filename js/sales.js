@@ -129,16 +129,73 @@
     }
     document.getElementById('sale-payment-method').addEventListener('change', toggleUtrField);
 
-    function renderAttachmentPreview(elId, url) {
-        var el = document.getElementById(elId);
-        if (url) {
-            el.innerHTML = '<a href="' + url + '" target="_blank" rel="noopener">View current file</a> (choose a new file below to replace it)';
-            el.classList.remove('hidden');
+    // ===== Status segmented control =====
+    var statusHiddenInput = document.getElementById('sale-status');
+    var statusSegments = document.querySelectorAll('#status-segmented .segment');
+
+    function setStatusValue(value) {
+        statusHiddenInput.value = value;
+        Array.prototype.forEach.call(statusSegments, function (btn) {
+            btn.classList.toggle('active', btn.dataset.value === value);
+        });
+    }
+    Array.prototype.forEach.call(statusSegments, function (btn) {
+        btn.addEventListener('click', function () { setStatusValue(btn.dataset.value); });
+    });
+
+    // ===== Drag-and-drop upload cards (bill / payment screenshots) =====
+    function setUploadState(prefix, opts) {
+        opts = opts || {};
+        var card = document.getElementById(prefix + '-upload-card');
+        var labelEl = document.getElementById(prefix + '-upload-label');
+        var hintEl = document.getElementById(prefix + '-upload-hint');
+        var linkEl = document.getElementById(prefix + '-upload-link');
+        var defaultLabel = prefix === 'bill' ? 'Bill Screenshot' : 'Payment Screenshot';
+
+        if (opts.fileName) {
+            card.classList.add('has-file');
+            labelEl.textContent = opts.fileName;
+            hintEl.textContent = 'New file selected — will replace on save';
+            linkEl.classList.add('hidden');
+        } else if (opts.existingUrl) {
+            card.classList.add('has-file');
+            labelEl.textContent = defaultLabel + ' attached';
+            hintEl.textContent = 'Click or drag to replace';
+            linkEl.href = opts.existingUrl;
+            linkEl.classList.remove('hidden');
         } else {
-            el.innerHTML = '';
-            el.classList.add('hidden');
+            card.classList.remove('has-file');
+            labelEl.textContent = defaultLabel;
+            hintEl.textContent = 'Click or drag image (max 5MB)';
+            linkEl.classList.add('hidden');
         }
     }
+
+    function initUploadCard(prefix) {
+        var card = document.getElementById(prefix + '-upload-card');
+        var dropzone = card.querySelector('.upload-dropzone');
+        var input = document.getElementById('sale-' + prefix + '-screenshot');
+
+        input.addEventListener('change', function () {
+            var file = input.files[0];
+            setUploadState(prefix, file ? { fileName: file.name } : { existingUrl: prefix === 'bill' ? currentBillUrl : currentPaymentUrl });
+        });
+
+        ['dragenter', 'dragover'].forEach(function (evt) {
+            dropzone.addEventListener(evt, function (e) { e.preventDefault(); card.classList.add('drag-over'); });
+        });
+        ['dragleave', 'drop'].forEach(function (evt) {
+            dropzone.addEventListener(evt, function (e) { e.preventDefault(); card.classList.remove('drag-over'); });
+        });
+        dropzone.addEventListener('drop', function (e) {
+            if (e.dataTransfer.files && e.dataTransfer.files.length) {
+                input.files = e.dataTransfer.files;
+                input.dispatchEvent(new Event('change'));
+            }
+        });
+    }
+    initUploadCard('bill');
+    initUploadCard('payment');
 
     function openPopup(sale, presetStatus) {
         errorBox.classList.remove('show');
@@ -151,15 +208,15 @@
         document.getElementById('sale-detail').value = sale ? sale.Detail : '';
         document.getElementById('sale-amount').value = sale ? sale.Amount : '';
         if (priceTypeField) priceTypeField.value = sale ? (sale.PriceType || '') : '';
-        document.getElementById('sale-status').value = presetStatus || (sale ? sale.Status : 'Pending');
+        setStatusValue(presetStatus || (sale ? sale.Status : 'Pending'));
         document.getElementById('sale-payment-method').value = sale ? (sale.PaymentMethod || '') : '';
         document.getElementById('sale-utr').value = sale ? (sale.UTR || '') : '';
         document.getElementById('sale-notes').value = sale ? sale.Notes : '';
 
         currentBillUrl = sale ? (sale.BillScreenshotUrl || '') : '';
         currentPaymentUrl = sale ? (sale.PaymentScreenshotUrl || '') : '';
-        renderAttachmentPreview('bill-current', currentBillUrl);
-        renderAttachmentPreview('payment-current', currentPaymentUrl);
+        setUploadState('bill', currentBillUrl ? { existingUrl: currentBillUrl } : {});
+        setUploadState('payment', currentPaymentUrl ? { existingUrl: currentPaymentUrl } : {});
         toggleUtrField();
 
         overlay.classList.add('open');
@@ -173,6 +230,7 @@
 
     document.getElementById('new-sale-btn').addEventListener('click', function () { openPopup(null); });
     document.getElementById('popup-cancel').addEventListener('click', closePopup);
+    document.getElementById('popup-close-x').addEventListener('click', closePopup);
     overlay.addEventListener('click', closePopup);
 
     function fileToDataUrl(file) {

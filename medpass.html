@@ -83,75 +83,118 @@
 
     <div class="overlay" id="overlay"></div>
     <div class="form-popup" id="sale-popup">
-        <h3 id="popup-title">New Medpass Sale</h3>
-        <div id="popup-error" class="form-error"></div>
-        <form id="sale-form">
-            <input type="hidden" id="sale-id">
+        <div class="popup-header">
+            <h3 id="popup-title">New Medpass Sale</h3>
+            <button type="button" class="popup-close" id="popup-close-x" aria-label="Close">&times;</button>
+        </div>
 
-            <label for="sale-date">Date</label>
-            <input type="date" id="sale-date" required>
+        <div class="popup-body">
+            <div id="popup-error" class="form-error"></div>
+            <form id="sale-form">
+                <input type="hidden" id="sale-id">
+                <input type="hidden" id="sale-status" value="Pending">
 
-            <label for="sale-customer">Customer Name</label>
-            <input type="text" id="sale-customer" required>
+                <div class="form-section">
+                    <div class="form-section-title">Sale Details</div>
+                    <div class="form-row">
+                        <div class="form-field">
+                            <label for="sale-date">Date</label>
+                            <input type="date" id="sale-date" required>
+                        </div>
+                        <div class="form-field">
+                            <label for="sale-amount">Amount (₹)</label>
+                            <input type="number" id="sale-amount" min="0" step="0.01" required>
+                        </div>
+                    </div>
+                    <div class="form-field">
+                        <label for="sale-customer">Customer Name</label>
+                        <input type="text" id="sale-customer" required>
+                    </div>
+                    <div class="form-field">
+                        <label for="sale-contact">Contact Number</label>
+                        <input type="text" id="sale-contact">
+                    </div>
+                    <div class="form-field">
+                        <label id="detail-label" for="sale-detail">Plan Type</label>
+                        <input type="text" id="sale-detail" placeholder="e.g. Medpass Gold - Annual">
+                    </div>
+                    <div class="form-field" style="margin-bottom:0;">
+                        <label for="sale-price-type">Price Type</label>
+                        <select id="sale-price-type" required>
+                            <option value="">Select price type</option>
+                            <option value="Full Price">Full Price</option>
+                            <option value="Discounted">Discounted</option>
+                        </select>
+                        <p class="field-hint">Determines which incentive rate applies to this sale.</p>
+                    </div>
+                </div>
 
-            <label for="sale-contact">Contact Number</label>
-            <input type="text" id="sale-contact">
+                <div class="form-section">
+                    <div class="form-section-title">Status</div>
+                    <div class="segmented-control" id="status-segmented">
+                        <button type="button" class="segment" data-value="Pending">Pending</button>
+                        <button type="button" class="segment" data-value="Completed">Completed</button>
+                        <button type="button" class="segment" data-value="Cancelled">Cancelled</button>
+                    </div>
+                    <p class="field-hint" style="margin-bottom:0;">Marking a sale Completed requires payment method + both screenshots below.</p>
+                </div>
 
-            <label id="detail-label" for="sale-detail">Plan Type</label>
-            <input type="text" id="sale-detail" placeholder="e.g. Medpass Gold - Annual">
+                <div class="form-section">
+                    <div class="form-section-title">Payment</div>
+                    <div class="form-field">
+                        <label for="sale-payment-method">Payment Method</label>
+                        <select id="sale-payment-method">
+                            <option value="">Select payment method</option>
+                            <option value="UPI">UPI</option>
+                            <option value="Cash">Cash</option>
+                            <option value="Card">Card</option>
+                            <option value="Bank Transfer">Bank Transfer</option>
+                            <option value="Other">Other</option>
+                        </select>
+                    </div>
+                    <div id="utr-field" class="form-field hidden" style="margin-bottom:0;">
+                        <label for="sale-utr">UTR Number</label>
+                        <input type="text" id="sale-utr" placeholder="12-digit UPI transaction reference">
+                    </div>
+                </div>
 
-            <label for="sale-amount">Amount (₹)</label>
-            <input type="number" id="sale-amount" min="0" step="0.01" required>
+                <div class="form-section">
+                    <div class="form-section-title">Payment Proof</div>
+                    <div class="upload-grid">
+                        <div class="upload-card" id="bill-upload-card">
+                            <label class="upload-dropzone" for="sale-bill-screenshot">
+                                <input type="file" id="sale-bill-screenshot" accept="image/*" class="upload-input-hidden">
+                                <svg class="upload-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+                                <span class="upload-label" id="bill-upload-label">Bill Screenshot</span>
+                                <span class="upload-hint" id="bill-upload-hint">Click or drag image (max 5MB)</span>
+                            </label>
+                            <a href="#" target="_blank" rel="noopener" class="upload-view-link hidden" id="bill-upload-link">View current file</a>
+                        </div>
+                        <div class="upload-card" id="payment-upload-card">
+                            <label class="upload-dropzone" for="sale-payment-screenshot">
+                                <input type="file" id="sale-payment-screenshot" accept="image/*" class="upload-input-hidden">
+                                <svg class="upload-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+                                <span class="upload-label" id="payment-upload-label">Payment Screenshot</span>
+                                <span class="upload-hint" id="payment-upload-hint">Click or drag image (max 5MB)</span>
+                            </label>
+                            <a href="#" target="_blank" rel="noopener" class="upload-view-link hidden" id="payment-upload-link">View current file</a>
+                        </div>
+                    </div>
+                </div>
 
-            <label for="sale-price-type">Price Type</label>
-            <select id="sale-price-type" required>
-                <option value="">Select price type</option>
-                <option value="Full Price">Full Price</option>
-                <option value="Discounted">Discounted</option>
-            </select>
-            <p class="field-hint">Determines which incentive rate applies to this sale.</p>
+                <div class="form-section" style="border-bottom:none; margin-bottom:0; padding-bottom:0;">
+                    <div class="form-field" style="margin-bottom:0;">
+                        <label for="sale-notes">Notes</label>
+                        <textarea id="sale-notes"></textarea>
+                    </div>
+                </div>
+            </form>
+        </div>
 
-            <label for="sale-status">Status</label>
-            <select id="sale-status">
-                <option value="Pending">Pending</option>
-                <option value="Completed">Completed</option>
-                <option value="Cancelled">Cancelled</option>
-            </select>
-            <p class="field-hint">Marking a sale Completed requires payment method, bill screenshot and payment screenshot below.</p>
-
-            <label for="sale-payment-method">Payment Method</label>
-            <select id="sale-payment-method">
-                <option value="">Select payment method</option>
-                <option value="UPI">UPI</option>
-                <option value="Cash">Cash</option>
-                <option value="Card">Card</option>
-                <option value="Bank Transfer">Bank Transfer</option>
-                <option value="Other">Other</option>
-            </select>
-
-            <div id="utr-field" class="hidden">
-                <label for="sale-utr">UTR Number</label>
-                <input type="text" id="sale-utr" placeholder="12-digit UPI transaction reference">
-            </div>
-
-            <label for="sale-bill-screenshot">Bill Screenshot</label>
-            <input type="file" id="sale-bill-screenshot" accept="image/*">
-            <div id="bill-current" class="attachment-preview hidden"></div>
-            <p class="field-hint">Image files only, max 5MB.</p>
-
-            <label for="sale-payment-screenshot">Payment Screenshot</label>
-            <input type="file" id="sale-payment-screenshot" accept="image/*">
-            <div id="payment-current" class="attachment-preview hidden"></div>
-            <p class="field-hint">Image files only, max 5MB.</p>
-
-            <label for="sale-notes">Notes</label>
-            <textarea id="sale-notes"></textarea>
-
-            <div class="popup-actions">
-                <button type="button" class="secondary" id="popup-cancel">Cancel</button>
-                <button type="submit" id="popup-save">Save Sale</button>
-            </div>
-        </form>
+        <div class="popup-footer">
+            <button type="button" class="secondary" id="popup-cancel">Cancel</button>
+            <button type="submit" form="sale-form" id="popup-save">Save Sale</button>
+        </div>
     </div>
 
     <script src="js/api.js"></script>
