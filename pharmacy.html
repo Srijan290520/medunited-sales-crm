@@ -104,14 +104,20 @@
                         <label for="sale-customer">Customer Name</label>
                         <input type="text" id="sale-customer" required>
                     </div>
-                    <div class="form-field">
+                    <div class="form-field" style="margin-bottom:0;">
                         <label for="sale-contact">Contact Number</label>
                         <input type="text" id="sale-contact">
                     </div>
-                    <div class="form-field" style="margin-bottom:0;">
-                        <label id="detail-label" for="sale-detail">Order Details</label>
-                        <input type="text" id="sale-detail" placeholder="e.g. Monthly refill - BP meds">
+                </div>
+
+                <div class="form-section">
+                    <div class="form-section-title">Products</div>
+                    <div class="product-lines-header">
+                        <span>Product</span><span>Qty</span><span>Frequency</span><span></span>
                     </div>
+                    <div id="product-lines"></div>
+                    <button type="button" class="secondary" id="add-product-btn" style="margin-top:6px;">+ Add Product</button>
+                    <p class="field-hint" style="margin-bottom:0;">Quantity assumes one unit per dose — used to work out when each product runs out for refill reminders.</p>
                 </div>
 
                 <div class="form-section">

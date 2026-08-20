@@ -6,7 +6,8 @@
     document.getElementById('page-title').textContent =
         SALE_LABEL + (SALE_TYPE === 'pharmacy' ? ' (Home Delivery) Sales' : ' Sales');
     document.getElementById('detail-header').textContent = DETAIL_LABEL;
-    document.getElementById('detail-label').textContent = DETAIL_LABEL;
+    var detailLabelEl = document.getElementById('detail-label'); // not present on pharmacy.html (uses product lines instead)
+    if (detailLabelEl) detailLabelEl.textContent = DETAIL_LABEL;
     document.getElementById('popup-title').textContent = 'New ' + SALE_LABEL + ' Sale';
 
     var overlay = document.getElementById('overlay');
@@ -197,6 +198,66 @@
     initUploadCard('bill');
     initUploadCard('payment');
 
+    // ===== Pharmacy product line-items (name / quantity / frequency) =====
+    var productLinesContainer = document.getElementById('product-lines'); // only present on pharmacy.html
+    var FREQUENCY_OPTIONS = ['Once a day', 'Twice a day', 'Thrice a day'];
+
+    function productLineRowHtml(product) {
+        product = product || {};
+        var freqOptions = FREQUENCY_OPTIONS.map(function (f) {
+            return '<option value="' + f + '"' + (product.frequency === f ? ' selected' : '') + '>' + f + '</option>';
+        }).join('');
+        return '<div class="product-line">' +
+            '<input type="text" class="product-name" placeholder="e.g. Paracetamol" value="' + escapeHtml(product.name || '') + '">' +
+            '<input type="number" class="product-qty" placeholder="Qty" min="1" step="1" value="' + (product.quantity || '') + '">' +
+            '<select class="product-frequency">' + freqOptions + '</select>' +
+            '<button type="button" class="product-remove-btn" aria-label="Remove product">&times;</button>' +
+            '</div>';
+    }
+
+    function wireProductLineButtons() {
+        Array.prototype.forEach.call(productLinesContainer.querySelectorAll('.product-line'), function (row) {
+            row.querySelector('.product-remove-btn').onclick = function () {
+                if (productLinesContainer.querySelectorAll('.product-line').length <= 1) {
+                    row.querySelector('.product-name').value = '';
+                    row.querySelector('.product-qty').value = '';
+                    return;
+                }
+                row.remove();
+            };
+        });
+    }
+
+    function renderProductLines(products) {
+        if (!productLinesContainer) return;
+        if (!products || products.length === 0) products = [{}];
+        productLinesContainer.innerHTML = products.map(productLineRowHtml).join('');
+        wireProductLineButtons();
+    }
+
+    function parseProducts(json) {
+        try { return JSON.parse(json || '[]'); } catch (e) { return []; }
+    }
+
+    function getProductsFromForm() {
+        if (!productLinesContainer) return [];
+        var products = [];
+        Array.prototype.forEach.call(productLinesContainer.querySelectorAll('.product-line'), function (row) {
+            var name = row.querySelector('.product-name').value.trim();
+            var qty = row.querySelector('.product-qty').value;
+            var frequency = row.querySelector('.product-frequency').value;
+            if (name || qty) products.push({ name: name, quantity: qty, frequency: frequency });
+        });
+        return products;
+    }
+
+    if (productLinesContainer) {
+        document.getElementById('add-product-btn').addEventListener('click', function () {
+            productLinesContainer.insertAdjacentHTML('beforeend', productLineRowHtml());
+            wireProductLineButtons();
+        });
+    }
+
     function openPopup(sale, presetStatus) {
         errorBox.classList.remove('show');
         form.reset();
@@ -205,7 +266,9 @@
         document.getElementById('sale-date').value = sale ? String(sale.Date).slice(0, 10) : today;
         document.getElementById('sale-customer').value = sale ? sale.CustomerName : '';
         document.getElementById('sale-contact').value = sale ? sale.Contact : '';
-        document.getElementById('sale-detail').value = sale ? sale.Detail : '';
+        var detailField = document.getElementById('sale-detail'); // not present on pharmacy.html
+        if (detailField) detailField.value = sale ? sale.Detail : '';
+        if (productLinesContainer) renderProductLines(sale ? parseProducts(sale.Products) : null);
         document.getElementById('sale-amount').value = sale ? sale.Amount : '';
         if (priceTypeField) priceTypeField.value = sale ? (sale.PriceType || '') : '';
         setStatusValue(presetStatus || (sale ? sale.Status : 'Pending'));
@@ -264,6 +327,15 @@
         var priceType = priceTypeField ? priceTypeField.value : '';
         if (priceTypeField && !priceType) { showFormError('Price type (Full Price or Discounted) is required.'); return; }
 
+        var products = productLinesContainer ? getProductsFromForm() : null;
+        if (productLinesContainer) {
+            if (products.length === 0) { showFormError('Add at least one product.'); return; }
+            for (var pi = 0; pi < products.length; pi++) {
+                if (!products[pi].name) { showFormError('Every product needs a name.'); return; }
+                if (!products[pi].quantity || Number(products[pi].quantity) <= 0) { showFormError('Every product needs a quantity greater than 0.'); return; }
+            }
+        }
+
         // Client-side pre-check, mirroring the server rule, for a fast error
         // message — the server enforces this for real regardless.
         if (status === 'Completed') {
@@ -283,7 +355,6 @@
             date: document.getElementById('sale-date').value,
             customerName: document.getElementById('sale-customer').value.trim(),
             contact: document.getElementById('sale-contact').value.trim(),
-            detail: document.getElementById('sale-detail').value.trim(),
             amount: document.getElementById('sale-amount').value,
             priceType: priceType,
             status: status,
@@ -291,6 +362,11 @@
             utr: utr,
             notes: document.getElementById('sale-notes').value.trim()
         };
+        if (productLinesContainer) {
+            payload.products = products;
+        } else {
+            payload.detail = document.getElementById('sale-detail').value.trim();
+        }
 
         try {
             if (billFile) payload.billScreenshot = await fileToDataUrl(billFile);

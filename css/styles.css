@@ -495,6 +495,113 @@ table.data-table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
 }
 .upload-view-link:hover { text-decoration: underline; }
 
+/* Pharmacy product line-items (name / quantity / frequency) */
+.product-lines-header {
+    display: grid;
+    grid-template-columns: 2fr 0.8fr 1.3fr 28px;
+    gap: 8px;
+    font-size: 0.68em;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+    padding: 0 2px 6px;
+}
+
+.product-line {
+    display: grid;
+    grid-template-columns: 2fr 0.8fr 1.3fr 28px;
+    gap: 8px;
+    align-items: center;
+    margin-bottom: 8px;
+}
+.product-line input, .product-line select { padding: 8px 10px; font-size: 0.85em; }
+
+.product-remove-btn {
+    background: var(--bg);
+    color: var(--text-muted);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1em;
+    line-height: 1;
+    box-shadow: none;
+    flex-shrink: 0;
+}
+.product-remove-btn:hover { background: var(--danger-bg); color: var(--danger-text); border-color: transparent; transform: none; }
+
+/* Reminders */
+.reminder-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--border);
+    border-radius: var(--radius);
+    padding: 18px 20px;
+    margin-bottom: 14px;
+}
+.reminder-card.overdue { border-left-color: var(--danger); }
+.reminder-card.needs-attention { box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.15); }
+.reminder-card.resolved { opacity: 0.6; }
+
+.reminder-card-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 12px; }
+.reminder-customer { font-weight: 700; font-size: 1em; color: var(--text-primary); }
+.reminder-contact { font-size: 0.82em; color: var(--text-secondary); margin-top: 2px; }
+
+.reminder-badge {
+    display: inline-block;
+    padding: 4px 12px;
+    border-radius: 999px;
+    font-size: 0.78em;
+    font-weight: 700;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+.reminder-badge.overdue { background: var(--danger-bg); color: var(--danger-text); }
+.reminder-badge.upcoming { background: var(--warning-bg); color: var(--warning-text); }
+.reminder-badge.small { padding: 2px 8px; font-size: 0.7em; }
+
+.reminder-products {
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    padding: 10px 0;
+    margin-bottom: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.reminder-product-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 0.85em; }
+.reminder-product-row > span:first-child { font-weight: 600; color: var(--text-primary); flex: 1; }
+.reminder-product-meta { color: var(--text-secondary); font-size: 0.9em; white-space: nowrap; }
+
+.reminder-footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.reminder-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.reminder-actions button { font-size: 0.82em; padding: 8px 14px; }
+.reminder-contact-choices { display: flex; gap: 8px; flex-wrap: wrap; width: 100%; margin-top: 8px; }
+
+.reminder-reassign {
+    display: flex;
+    gap: 8px;
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px dashed var(--border);
+    align-items: center;
+}
+.reminder-reassign select {
+    flex: 1;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    font-size: 0.85em;
+    background: var(--surface);
+    color: var(--text-primary);
+}
+.reminder-reassign button { font-size: 0.82em; padding: 8px 14px; }
+
 /* Proof-of-payment links in tables */
 .proof-link {
     display: inline-block;
@@ -756,4 +863,5 @@ input:checked + .slider::before { transform: translateX(18px); }
     .topbar { padding: 16px 20px; }
     .charts-container { grid-template-columns: 1fr; }
     .form-row, .upload-grid { grid-template-columns: 1fr; }
+    .product-line, .product-lines-header { grid-template-columns: 1.4fr 0.7fr 1fr 24px; }
 }

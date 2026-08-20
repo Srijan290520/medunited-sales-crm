@@ -15,7 +15,7 @@ rows.
 
 Static HTML/CSS/JS frontend (no build step, no Node needed) talking to a
 Google Apps Script Web App backend, which reads/writes a Google Sheet with
-three tabs: `Medpass`, `Pharmacy`, `Users`.
+four tabs: `Medpass`, `Pharmacy`, `Users`, `Reminders`.
 
 ## 1. Create the Google Sheet
 
@@ -35,6 +35,7 @@ three tabs: `Medpass`, `Pharmacy`, `Users`.
    - `SalesService.gs`
    - `UserService.gs`
    - `Attachments.gs`
+   - `Reminders.gs`
    - `Setup.gs`
 4. Save the project (Ctrl+S). Give it a name like "MedUnited Sales CRM Backend".
 
@@ -91,6 +92,22 @@ Log in with the admin account you created in step 3. From there:
 - **Medpass** / **Pharmacy** pages → log and view sales.
 - **Dashboard** → team performance, charts, incentive totals.
 
+## Upgrading an already-deployed sheet
+
+`setupSpreadsheet()` only sets headers on a *brand-new* sheet — it won't add
+columns to a sheet that already has data. If you deployed this app before the
+Pharmacy refill-reminders feature was added, do this once:
+
+- **Pharmacy** sheet: add a `Products` column (anywhere is fine).
+- **Reminders** sheet: create a new tab named exactly `Reminders` with this
+  header row: `ID, PharmacySaleID, AgentEmail, AgentName, Reassigned,
+  CustomerName, Contact, Products, SaleDate, Status, ResolutionReason,
+  AttemptCount, LastAttemptDate, CreatedAt, UpdatedAt`
+
+Existing Pharmacy sales logged before this change won't have structured
+product data, so they won't generate a reminder until you edit and re-save
+them with at least one product line.
+
 ## Redeploying after code changes
 
 Every time you edit a `.gs` file, go back to **Deploy → Manage deployments**,
@@ -120,3 +137,21 @@ Version, then **Deploy**. Editing the file alone does not update the live
   screenshot, and a payment screenshot are attached (and a UTR, if the
   payment method is UPI) — enforced in `SalesService.gs`, not just the form,
   so it can't be bypassed by calling the API directly.
+
+## Refill reminders (Pharmacy)
+
+Each product on a Pharmacy sale gets a "runs out on" date computed from
+quantity ÷ doses-per-day (Once/Twice/Thrice a day), starting from the sale
+date. A reminder is created automatically once a Pharmacy sale is saved as
+**Completed** with at least one product, and shows up on the **Reminders**
+page for the agent who made the sale — overdue reminders sort first, and the
+countdown is always computed live (never stored), so it's never stale.
+
+- Marking a reminder **"Doesn't want medicines"** resolves it permanently.
+- **"Wants medicines, couldn't connect"** logs the attempt and keeps the
+  reminder active; after 3+ days of failed attempts it's flagged
+  ("no contact in 3+ days") so a manager knows to step in.
+- **Managers/admins** see every agent's reminders and can reassign one to a
+  different agent from the card — useful if the original agent is
+  unavailable. Reassignment sticks even if the underlying sale is later
+  edited.

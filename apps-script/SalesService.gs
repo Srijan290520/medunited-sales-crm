@@ -54,6 +54,16 @@ function svc_createSale(session, type, data) {
     throw new Error('Price type (Full Price or Discounted) is required for Medpass sales.');
   }
 
+  // Pharmacy sales carry structured product lines (name/quantity/frequency)
+  // instead of free-text detail — Detail becomes an auto-generated summary,
+  // and the structured data drives refill reminders.
+  var detail = String(data.detail || '').trim();
+  var products = [];
+  if (type === 'pharmacy') {
+    products = validateProducts(data.products);
+    detail = summarizeProducts(products);
+  }
+
   var id = newId();
   var billUrl = data.billScreenshot ? saveAttachmentFromDataUrl(data.billScreenshot, type + '_' + id + '_bill') : '';
   var paymentUrl = data.paymentScreenshot ? saveAttachmentFromDataUrl(data.paymentScreenshot, type + '_' + id + '_payment') : '';
@@ -67,7 +77,8 @@ function svc_createSale(session, type, data) {
     AgentName: session.name,
     CustomerName: customerName,
     Contact: String(data.contact || '').trim(),
-    Detail: String(data.detail || '').trim(),
+    Detail: detail,
+    Products: type === 'pharmacy' ? JSON.stringify(products) : '',
     Amount: amount,
     Status: status,
     PriceType: priceType,
@@ -79,6 +90,7 @@ function svc_createSale(session, type, data) {
     CreatedAt: nowIso()
   };
   appendObject(sheet, sale);
+  if (type === 'pharmacy') syncReminderForSale(sale);
   return sale;
 }
 
@@ -111,6 +123,12 @@ function svc_updateSale(session, type, id, data) {
     throw new Error('Price type (Full Price or Discounted) is required for Medpass sales.');
   }
 
+  if (type === 'pharmacy' && data.products !== undefined) {
+    var products = validateProducts(data.products);
+    patch.Products = JSON.stringify(products);
+    patch.Detail = summarizeProducts(products);
+  }
+
   if (data.billScreenshot) {
     patch.BillScreenshotUrl = saveAttachmentFromDataUrl(data.billScreenshot, type + '_' + id + '_bill');
   }
@@ -128,7 +146,9 @@ function svc_updateSale(session, type, id, data) {
     patch.PaymentScreenshotUrl !== undefined ? patch.PaymentScreenshotUrl : existing.PaymentScreenshotUrl
   );
 
-  return updateObjectById(sheet, id, patch);
+  var updated = updateObjectById(sheet, id, patch);
+  if (type === 'pharmacy') syncReminderForSale(updated);
+  return updated;
 }
 
 function svc_deleteSale(session, type, id) {
@@ -137,6 +157,7 @@ function svc_deleteSale(session, type, id) {
   var rowIndex = findRowIndexById(sheet, id);
   if (rowIndex === -1) throw new Error('Sale not found.');
   sheet.deleteRow(rowIndex);
+  if (type === 'pharmacy') removeReminderForSale(id);
   return { deleted: true };
 }
 

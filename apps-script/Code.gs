@@ -67,6 +67,18 @@ function handleRequest(e) {
         result = { error: false, user: svc_updateIncentives(requireSession(token), params.id, data) };
         break;
 
+      case 'listReminders':
+        result = { error: false, reminders: svc_listReminders(requireSession(token), params.includeResolved === 'true') };
+        break;
+
+      case 'markContacted':
+        result = { error: false, reminder: svc_markContacted(requireSession(token), params.id, data.outcome) };
+        break;
+
+      case 'reassignReminder':
+        result = { error: false, reminder: svc_reassignReminder(requireSession(token), params.id, data.agentEmail) };
+        break;
+
       default:
         result = { error: true, message: 'Unknown action: ' + action };
     }

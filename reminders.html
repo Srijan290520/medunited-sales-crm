@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Reminders — MedUnited CRM</title>
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+    <div class="app-shell">
+        <aside class="sidebar" id="app-sidebar"></aside>
+
+        <div class="main-col">
+            <header class="topbar">
+                <div>
+                    <h1>Reminders</h1>
+                    <p class="subtitle">Medicine refill follow-ups, based on quantity and dosing frequency</p>
+                </div>
+                <div class="topbar-actions">
+                    <button type="button" class="secondary" id="show-resolved-btn">Show Resolved</button>
+                </div>
+            </header>
+
+            <main>
+                <div class="filter-bar">
+                    <input type="search" id="filter-search" placeholder="Search customer or contact…">
+                    <select id="filter-agent" class="hidden"><option value="">All Agents</option></select>
+                    <button type="button" id="filter-clear-btn" class="secondary">Clear</button>
+                </div>
+
+                <div id="reminders-list"></div>
+                <div id="reminders-empty" class="empty-state hidden">No reminders right now.</div>
+            </main>
+        </div>
+    </div>
+
+    <script src="js/api.js"></script>
+    <script src="js/layout.js"></script>
+    <script src="js/reminders.js"></script>
+</body>
+</html>
