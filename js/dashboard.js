@@ -6,9 +6,15 @@
     var params = new URLSearchParams(window.location.search);
     if (params.get('denied') === '1') document.getElementById('denied-banner').classList.remove('hidden');
 
+    var canSeeIncentives = user.role === 'admin' || user.role === 'manager';
+
     if (user.role === 'agent') {
         document.getElementById('team-title').textContent = 'My Performance';
         document.getElementById('topbar-subtitle').textContent = 'Your sales performance';
+    }
+    if (!canSeeIncentives) {
+        document.getElementById('incentive-chart-card').classList.add('hidden');
+        document.getElementById('incentive-column-header').classList.add('hidden');
     }
 
     var salesChart, incentiveChart;
@@ -49,7 +55,7 @@
                 '<td>' + a.pharmacyCount + '</td>' +
                 '<td>' + formatMoney(a.medpassAmount) + '</td>' +
                 '<td>' + formatMoney(a.pharmacyAmount) + '</td>' +
-                '<td><strong>' + formatMoney(a.incentive) + '</strong></td>' +
+                (canSeeIncentives ? '<td><strong>' + formatMoney(a.incentive) + '</strong></td>' : '') +
                 '</tr>';
         }).join('');
     }
@@ -71,16 +77,18 @@
             options: { responsive: true, maintainAspectRatio: false, scales: { y: { beginAtZero: true, ticks: { precision: 0 } } } }
         });
 
-        var incCtx = document.getElementById('incentiveChart');
-        if (incentiveChart) incentiveChart.destroy();
-        incentiveChart = new Chart(incCtx, {
-            type: 'bar',
-            data: {
-                labels: labels,
-                datasets: [{ label: 'Incentive', data: agents.map(function (a) { return a.incentive; }), backgroundColor: '#f59e0b' }]
-            },
-            options: { responsive: true, maintainAspectRatio: false, scales: { y: { beginAtZero: true } } }
-        });
+        if (canSeeIncentives) {
+            var incCtx = document.getElementById('incentiveChart');
+            if (incentiveChart) incentiveChart.destroy();
+            incentiveChart = new Chart(incCtx, {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [{ label: 'Incentive', data: agents.map(function (a) { return a.incentive; }), backgroundColor: '#f59e0b' }]
+                },
+                options: { responsive: true, maintainAspectRatio: false, scales: { y: { beginAtZero: true } } }
+            });
+        }
     }
 
     document.getElementById('refresh-btn').addEventListener('click', load);

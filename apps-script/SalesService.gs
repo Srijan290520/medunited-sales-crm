@@ -214,6 +214,14 @@ function svc_dashboardSummary(session) {
     a.incentive += amount * (rate.pharmacyIncentivePercent / 100);
   });
 
+  var agentsArray = Object.keys(agents).map(function (k) { return agents[k]; });
+
+  // Incentive figures are manager/admin-only — stripped here, not just
+  // hidden in the UI, so an agent's session can't fetch them either way.
+  if (session.role === 'agent') {
+    agentsArray.forEach(function (a) { delete a.incentive; });
+  }
+
   return {
     totals: {
       medpassCount: medpass.length,
@@ -221,6 +229,6 @@ function svc_dashboardSummary(session) {
       medpassAmount: medpass.reduce(function (s, r) { return s + (Number(r.Amount) || 0); }, 0),
       pharmacyAmount: pharmacy.reduce(function (s, r) { return s + (Number(r.Amount) || 0); }, 0)
     },
-    agents: Object.keys(agents).map(function (k) { return agents[k]; })
+    agents: agentsArray
   };
 }
