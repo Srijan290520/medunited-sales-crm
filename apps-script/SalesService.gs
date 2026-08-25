@@ -163,20 +163,21 @@ function svc_deleteSale(session, type, id) {
 
 // Aggregated per-agent counts, amounts and computed incentive totals.
 // Agents only ever see their own row here too, because svc_listSales
-// already filtered the underlying rows for them. Cancelled sales are
-// excluded — they didn't happen, so they shouldn't count toward sales
-// totals, revenue, or incentive payouts.
+// already filtered the underlying rows for them. Only Completed sales
+// count — Cancelled ones didn't happen, and Pending ones aren't confirmed
+// yet (no payment proof), so neither should count toward sales totals,
+// revenue, or incentive payouts.
 //
 // Incentive math differs by type: Medpass pays a flat rate per sale that
 // depends on whether it was Full Price or Discounted; Pharmacy pays a
 // percentage of the sale amount. Both are per-agent rates set on the
 // Incentives page.
 function svc_dashboardSummary(session) {
-  function excludeCancelled(rows) {
-    return rows.filter(function (r) { return r.Status !== 'Cancelled'; });
+  function onlyCompleted(rows) {
+    return rows.filter(function (r) { return r.Status === 'Completed'; });
   }
-  var medpass = excludeCancelled(svc_listSales(session, 'medpass'));
-  var pharmacy = excludeCancelled(svc_listSales(session, 'pharmacy'));
+  var medpass = onlyCompleted(svc_listSales(session, 'medpass'));
+  var pharmacy = onlyCompleted(svc_listSales(session, 'pharmacy'));
 
   var rateByEmail = {};
   sheetToObjects(getSheetByName('Users')).forEach(function (u) {
