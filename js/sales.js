@@ -325,7 +325,7 @@
         if (paymentFile && paymentFile.size > MAX_FILE_BYTES) { showFormError('Payment screenshot is too large (max 5MB).'); return; }
 
         var priceType = priceTypeField ? priceTypeField.value : '';
-        if (priceTypeField && !priceType) { showFormError('Price type (Full Price or Discounted) is required.'); return; }
+        if (priceTypeField && !priceType) { showFormError('Price type is required.'); return; }
 
         var products = productLinesContainer ? getProductsFromForm() : null;
         if (productLinesContainer) {

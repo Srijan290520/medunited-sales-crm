@@ -35,7 +35,10 @@ function validateCompletionRequirements(status, paymentMethod, utr, billUrl, pay
   if (paymentMethod === 'UPI' && !utr) throw new Error('UTR number is required for UPI payments.');
 }
 
-var PRICE_TYPES = ['Full Price', 'Discounted'];
+// "Converted From OP" counts as Full Price for incentive purposes — the
+// incentive calc below only special-cases 'Discounted', so anything else
+// (including this) already falls through to the full rate automatically.
+var PRICE_TYPES = ['Full Price', 'Discounted', 'Converted From OP'];
 
 function svc_createSale(session, type, data) {
   var sheet = getSheetByName(saleSheetName(type));
