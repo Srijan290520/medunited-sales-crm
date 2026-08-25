@@ -1,6 +1,6 @@
 // api.js — talks to the Apps Script backend.
 // Set your deployed Web App URL here after you deploy the apps-script/ project.
-var API_URL = window.API_URL || 'https://script.google.com/macros/s/AKfycbw_FsZFDT2IEAJ_rEqqHjSz0lpz8uywORnMFGQxKgXjYjA5hAQGsr3RhNGfFOoFZfbe3w/exec';
+var API_URL = window.API_URL || 'https://script.google.com/macros/s/AKfycbx2U7lLWTH0DuEc9WN6-hhcKONkAyCMHWAnaaW654tI9nIecOTCIVVvdA0KVRfmBEaYEQ/exec';
 
 var TOKEN_KEY = 'medunited_crm_token';
 var USER_KEY = 'medunited_crm_user';
