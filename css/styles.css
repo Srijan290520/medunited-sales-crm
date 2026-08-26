@@ -556,8 +556,15 @@ table.data-table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
 .reminder-card.resolved { opacity: 0.6; }
 
 .reminder-card-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; margin-bottom: 6px; }
-.reminder-customer { font-weight: 700; font-size: 0.92em; color: var(--text-primary); }
-.reminder-contact { font-size: 0.78em; color: var(--text-secondary); }
+.reminder-card-heading { min-width: 0; }
+.reminder-customer {
+    font-weight: 700; font-size: 0.92em; color: var(--text-primary);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.reminder-contact {
+    font-size: 0.78em; color: var(--text-secondary);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 
 .reminder-badge {
     display: inline-block;
@@ -581,11 +588,44 @@ table.data-table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
     gap: 2px;
 }
 .reminder-product-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 0.78em; line-height: 1.6; }
-.reminder-product-row > span:first-child { font-weight: 600; color: var(--text-primary); flex: 1; }
+.reminder-product-row > span:first-child {
+    font-weight: 600; color: var(--text-primary); flex: 1; min-width: 0;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 .reminder-product-meta { color: var(--text-secondary); font-size: 0.88em; white-space: nowrap; }
 
-.reminder-footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
-.reminder-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.reminder-products-extra { display: flex; flex-direction: column; gap: 2px; margin-top: 2px; }
+.reminder-products-extra.hidden { display: none; }
+
+.reminder-more-btn {
+    background: transparent;
+    color: var(--accent-dark);
+    border: none;
+    box-shadow: none;
+    font-size: 0.72em;
+    font-weight: 600;
+    padding: 0;
+    margin-bottom: 4px;
+    height: 16px;
+    line-height: 16px;
+    overflow: hidden;
+    display: block;
+}
+.reminder-more-btn:hover { background: transparent; color: var(--accent); transform: none; }
+
+.reminder-attempts-note {
+    font-size: 0.72em;
+    color: var(--text-muted);
+    margin-bottom: 6px;
+    height: 16px;
+    line-height: 16px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.reminder-attempts-note.attention { color: var(--danger-text); font-weight: 600; }
+
+.reminder-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: nowrap; }
+.reminder-footer > .table-person { flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; }
+.reminder-actions { display: flex; gap: 6px; flex-wrap: wrap; flex-shrink: 0; }
 .reminder-actions button { font-size: 0.76em; padding: 5px 10px; }
 .reminder-contact-choices { display: flex; gap: 6px; flex-wrap: wrap; width: 100%; margin-top: 6px; }
 
