@@ -63,7 +63,8 @@
             var selected = a.Email.toLowerCase() === String(r.AgentEmail).toLowerCase() ? ' selected' : '';
             return '<option value="' + escapeHtml(a.Email) + '"' + selected + '>' + escapeHtml(a.Name) + '</option>';
         }).join('');
-        return '<div class="reminder-reassign">' +
+        return '<button type="button" class="reminder-reassign-toggle" data-id="' + r.ID + '">Reassign ▾</button>' +
+            '<div class="reminder-reassign hidden" id="reassign-' + r.ID + '">' +
             '<select class="reassign-select">' + options + '</select>' +
             '<button type="button" class="secondary reassign-btn" data-id="' + r.ID + '">Reassign</button>' +
             '</div>';
@@ -86,7 +87,7 @@
             : '';
 
         var attemptsNote = r.AttemptCount > 0
-            ? '<p class="field-hint" style="margin:8px 0 0;">Contacted ' + r.AttemptCount + ' time' + (r.AttemptCount === 1 ? '' : 's') +
+            ? '<p class="field-hint" style="margin:4px 0 0;">Contacted ' + r.AttemptCount + ' time' + (r.AttemptCount === 1 ? '' : 's') +
               (r.LastAttemptDate ? ', last on ' + formatDate(r.LastAttemptDate) : '') +
               (r.NeedsAttention ? ' — <strong style="color:var(--danger-text);">no contact in 3+ days</strong>' : '') + '</p>'
             : '';
@@ -141,6 +142,11 @@
                 var card = btn.closest('.reminder-card');
                 var select = card.querySelector('.reassign-select');
                 reassign(btn.dataset.id, select.value);
+            });
+        });
+        Array.prototype.forEach.call(document.querySelectorAll('.reminder-reassign-toggle'), function (btn) {
+            btn.addEventListener('click', function () {
+                document.getElementById('reassign-' + btn.dataset.id).classList.toggle('hidden');
             });
         });
     }
