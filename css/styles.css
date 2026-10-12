@@ -498,7 +498,7 @@ table.data-table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
 /* Pharmacy product line-items (name / quantity / frequency) */
 .product-lines-header {
     display: grid;
-    grid-template-columns: 2fr 0.8fr 1.3fr 28px;
+    grid-template-columns: 2fr 0.7fr 0.8fr 1.3fr 28px;
     gap: 8px;
     font-size: 0.68em;
     font-weight: 700;
@@ -510,7 +510,7 @@ table.data-table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
 
 .product-line {
     display: grid;
-    grid-template-columns: 2fr 0.8fr 1.3fr 28px;
+    grid-template-columns: 2fr 0.7fr 0.8fr 1.3fr 28px;
     gap: 8px;
     align-items: center;
     margin-bottom: 8px;
@@ -919,5 +919,57 @@ input:checked + .slider::before { transform: translateX(18px); }
     .topbar { padding: 16px 20px; }
     .charts-container { grid-template-columns: 1fr; }
     .form-row, .upload-grid { grid-template-columns: 1fr; }
-    .product-line, .product-lines-header { grid-template-columns: 1.4fr 0.7fr 1fr 24px; }
+    .product-line, .product-lines-header { grid-template-columns: 1.3fr 0.6fr 0.7fr 1fr 24px; }
 }
+
+/* ===== Toast messages (replace alert() pop-ups) ===== */
+#toast-stack {
+    position: fixed;
+    right: 20px;
+    bottom: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    z-index: 1000;
+    max-width: min(380px, calc(100vw - 40px));
+}
+.toast {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 12px 14px;
+    border-radius: var(--radius-sm);
+    font-size: 0.88em;
+    box-shadow: 0 6px 20px rgba(17, 24, 39, 0.15);
+    background: var(--danger-bg);
+    color: var(--danger-text);
+}
+.toast.success { background: var(--success-bg); color: var(--success-text); }
+.toast-close {
+    margin-left: auto;
+    background: none;
+    border: none;
+    color: inherit;
+    font-size: 1.2em;
+    line-height: 1;
+    padding: 0 2px;
+    cursor: pointer;
+    width: auto;
+}
+.toast-close:hover { background: none; transform: none; opacity: 0.7; }
+
+/* ===== Loading state ===== */
+.is-loading .kpi-value { color: var(--text-muted); }
+.loading-row td { color: var(--text-muted); text-align: center; padding: 22px; }
+.inline-error {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: var(--danger-bg);
+    color: var(--danger-text);
+    padding: 10px 14px;
+    border-radius: var(--radius-sm);
+    font-size: 0.88em;
+    margin-bottom: 20px;
+}
+.inline-error button { margin-left: auto; width: auto; padding: 6px 12px; font-size: 0.9em; }
