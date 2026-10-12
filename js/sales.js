@@ -16,7 +16,7 @@
     var errorBox = document.getElementById('popup-error');
     var canManageAll = user.role === 'admin' || user.role === 'manager';
 
-    var today = new Date().toISOString().slice(0, 10);
+    var today = localDateKey(); // browser's own date, not UTC
     var MAX_FILE_BYTES = 5 * 1024 * 1024;
     var STATUS_COLUMNS = ['Pending', 'Completed', 'Cancelled'];
 
@@ -155,10 +155,10 @@
         var res = await apiCall('getAttachment', { type: SALE_TYPE, id: saleId, kind: kind });
         if (res.error) {
             if (win) win.close();
-            alert(res.message || 'Could not load the screenshot.');
+            showToast(res.message || 'Could not load the screenshot.');
             return;
         }
-        if (!win) { alert('Please allow pop-ups for this site to view screenshots.'); return; }
+        if (!win) { showToast('Please allow pop-ups for this site to view screenshots.'); return; }
 
         var doc = win.document;
         doc.open();
@@ -234,7 +234,7 @@
     initUploadCard('bill');
     initUploadCard('payment');
 
-    // ===== Pharmacy product line-items (name / quantity / frequency) =====
+    // ===== Pharmacy product line-items (name / quantity / per dose / frequency) =====
     var productLinesContainer = document.getElementById('product-lines'); // only present on pharmacy.html
     var FREQUENCY_OPTIONS = ['Once a day', 'Twice a day', 'Thrice a day'];
 
@@ -246,6 +246,7 @@
         return '<div class="product-line">' +
             '<input type="text" class="product-name" placeholder="e.g. Paracetamol" value="' + escapeHtml(product.name || '') + '">' +
             '<input type="number" class="product-qty" placeholder="Qty" min="1" step="1" value="' + (product.quantity || '') + '">' +
+            '<input type="number" class="product-per-dose" placeholder="1" min="0.5" step="0.5" title="Units taken each time (e.g. 2 tablets)" value="' + (product.unitsPerDose || 1) + '">' +
             '<select class="product-frequency">' + freqOptions + '</select>' +
             '<button type="button" class="product-remove-btn" aria-label="Remove product">&times;</button>' +
             '</div>';
@@ -257,6 +258,7 @@
                 if (productLinesContainer.querySelectorAll('.product-line').length <= 1) {
                     row.querySelector('.product-name').value = '';
                     row.querySelector('.product-qty').value = '';
+                    row.querySelector('.product-per-dose').value = 1;
                     return;
                 }
                 row.remove();
@@ -282,7 +284,8 @@
             var name = row.querySelector('.product-name').value.trim();
             var qty = row.querySelector('.product-qty').value;
             var frequency = row.querySelector('.product-frequency').value;
-            if (name || qty) products.push({ name: name, quantity: qty, frequency: frequency });
+            var perDose = row.querySelector('.product-per-dose').value || 1;
+            if (name || qty) products.push({ name: name, quantity: qty, frequency: frequency, unitsPerDose: perDose });
         });
         return products;
     }
@@ -451,7 +454,8 @@
     async function deleteSale(id) {
         if (!confirm('Delete this sale entry? This cannot be undone.')) return;
         var res = await apiCall('deleteSale', { type: SALE_TYPE, id: id });
-        if (res.error) { alert(res.message || 'Could not delete sale.'); return; }
+        if (res.error) { showToast(res.message || 'Could not delete sale.'); return; }
+        showToast('Sale deleted.', 'success');
         load();
     }
 
@@ -629,7 +633,7 @@
         }
 
         var res = await apiCall('updateSale', { type: SALE_TYPE, id: id, data: { status: newStatus } });
-        if (res.error) alert(res.message || 'Could not update status.');
+        if (res.error) showToast(res.message || 'Could not update status.');
         load();
     }
 

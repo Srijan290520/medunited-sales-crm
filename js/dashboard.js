@@ -18,11 +18,50 @@
     }
 
     var salesChart, incentiveChart;
+    var refreshBtn = document.getElementById('refresh-btn');
+    var mainEl = document.querySelector('main');
+
+    // Inline error with a Retry button, shown above the KPIs when loading fails.
+    var errorBox = document.createElement('div');
+    errorBox.className = 'inline-error hidden';
+    errorBox.innerHTML = '<span class="inline-error-text"></span><button type="button" class="secondary">Retry</button>';
+    errorBox.querySelector('button').addEventListener('click', load);
+    mainEl.insertBefore(errorBox, mainEl.querySelector('.kpi-grid'));
+
+    var colCount = canSeeIncentives ? 6 : 5;
+
+    // While loading, show placeholders instead of ₹0 / 0 so nobody mistakes
+    // "not loaded yet" for "no sales".
+    function setLoading(on) {
+        mainEl.classList.toggle('is-loading', on);
+        refreshBtn.disabled = on;
+        refreshBtn.textContent = on ? 'Refreshing…' : 'Refresh';
+        if (!on) return;
+        ['total-medpass', 'total-pharmacy', 'total-medpass-amount', 'total-pharmacy-amount'].forEach(function (id) {
+            document.getElementById(id).textContent = '…';
+        });
+        document.getElementById('team-empty').classList.add('hidden');
+        document.getElementById('team-table-body').innerHTML =
+            '<tr class="loading-row"><td colspan="' + colCount + '">Loading…</td></tr>';
+    }
+
+    function showError(message) {
+        errorBox.querySelector('.inline-error-text').textContent = message;
+        errorBox.classList.remove('hidden');
+        ['total-medpass', 'total-pharmacy', 'total-medpass-amount', 'total-pharmacy-amount'].forEach(function (id) {
+            document.getElementById(id).textContent = '—';
+        });
+        document.getElementById('team-table-body').innerHTML =
+            '<tr class="loading-row"><td colspan="' + colCount + '">Couldn\'t load data.</td></tr>';
+    }
 
     async function load() {
+        errorBox.classList.add('hidden');
+        setLoading(true);
         var res = await apiCall('dashboardSummary');
+        setLoading(false);
         if (res.error) {
-            alert(res.message || 'Could not load dashboard.');
+            showError(res.message || 'Could not load the dashboard.');
             return;
         }
         var summary = res.summary;
@@ -91,6 +130,6 @@
         }
     }
 
-    document.getElementById('refresh-btn').addEventListener('click', load);
+    refreshBtn.addEventListener('click', load);
     load();
 })();

@@ -57,7 +57,9 @@
             ? '<span class="reminder-badge overdue small">Overdue</span>'
             : '<span class="reminder-badge upcoming small">' + p.daysRemaining + 'd left</span>';
         return '<div class="reminder-product-row"><span>' + escapeHtml(p.name) + '</span>' +
-            '<span class="reminder-product-meta">x' + p.quantity + ', ' + escapeHtml(p.frequency) + '</span>' + badge + '</div>';
+            '<span class="reminder-product-meta">x' + p.quantity + ', ' +
+            (p.unitsPerDose && p.unitsPerDose !== 1 ? p.unitsPerDose + ' per dose, ' : '') +
+            escapeHtml(p.frequency) + '</span>' + badge + '</div>';
     }
 
     // Always renders the same element (visible button or invisible placeholder)
@@ -193,14 +195,14 @@
 
     async function markContacted(id, outcome) {
         var res = await apiCall('markContacted', { id: id, data: { outcome: outcome } });
-        if (res.error) { alert(res.message || 'Could not update reminder.'); return; }
+        if (res.error) { showToast(res.message || 'Could not update reminder.'); return; }
         load();
     }
 
     async function reassign(id, agentEmail) {
         if (!agentEmail) return;
         var res = await apiCall('reassignReminder', { id: id, data: { agentEmail: agentEmail } });
-        if (res.error) { alert(res.message || 'Could not reassign.'); return; }
+        if (res.error) { showToast(res.message || 'Could not reassign.'); return; }
         load();
     }
 

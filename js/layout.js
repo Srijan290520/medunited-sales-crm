@@ -73,6 +73,32 @@ async function syncCurrentUser(cached) {
     }
 }
 
+// Small message in the corner instead of a blocking alert() pop-up.
+// type: 'error' (default) or 'success'. Errors stay a little longer.
+function showToast(message, type) {
+    type = type || 'error';
+    var box = document.getElementById('toast-stack');
+    if (!box) {
+        box = document.createElement('div');
+        box.id = 'toast-stack';
+        box.setAttribute('role', 'status');
+        box.setAttribute('aria-live', 'polite');
+        document.body.appendChild(box);
+    }
+    var toast = document.createElement('div');
+    toast.className = 'toast ' + type;
+    toast.textContent = message;
+    var close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'toast-close';
+    close.setAttribute('aria-label', 'Dismiss');
+    close.textContent = '\u00d7';
+    close.onclick = function () { toast.remove(); };
+    toast.appendChild(close);
+    box.appendChild(toast);
+    setTimeout(function () { toast.remove(); }, type === 'error' ? 7000 : 4000);
+}
+
 function escapeHtml(str) {
     var div = document.createElement('div');
     div.textContent = str === undefined || str === null ? '' : String(str);
@@ -97,9 +123,20 @@ function formatMoney(n) {
     return '₹' + n.toLocaleString('en-IN', { maximumFractionDigits: 2 });
 }
 
+// Today's date as 'yyyy-mm-dd' in the browser's own time zone. (Don't use
+// new Date().toISOString() for this — that's UTC, which is still
+// "yesterday" in India until 5:30 AM.)
+function localDateKey(d) {
+    d = d || new Date();
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+
 function formatDate(iso) {
     if (!iso) return '';
-    var d = new Date(iso);
+    // A plain 'yyyy-mm-dd' is a calendar day: build it as a local date so it
+    // never shifts by a day in time zones behind UTC.
+    var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso));
+    var d = m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : new Date(iso);
     if (isNaN(d.getTime())) return String(iso);
     return d.toLocaleDateString('en-IN', { year: 'numeric', month: 'short', day: 'numeric' });
 }
