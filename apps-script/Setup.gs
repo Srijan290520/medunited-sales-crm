@@ -12,6 +12,7 @@ function setupSpreadsheet() {
   ensureSheet(ss, 'Medpass', saleHeaders);
   ensureSheet(ss, 'Pharmacy', saleHeaders);
   ensureSheet(ss, 'Reminders', reminderHeaders);
+  getAuditSheet(); // creates + protects the AuditLog tab if it's missing
 
   Logger.log('Sheets are ready. Now edit and run createFirstAdmin() to create your admin login.');
 }
@@ -54,4 +55,29 @@ function createFirstAdmin() {
     CreatedAt: nowIso()
   });
   Logger.log('Admin user created: ' + email);
+}
+
+// ONE-TIME, after upgrading to the private-attachments version: makes every
+// screenshot already in the attachments folder private (they used to be
+// shared "anyone with the link"). The app keeps showing them — it now reads
+// them through the backend. Safe to run more than once.
+function lockDownExistingAttachments() {
+  var files = getAttachmentsFolder().getFiles();
+  var count = 0;
+  while (files.hasNext()) {
+    var file = files.next();
+    if (file.getSharingAccess() !== DriveApp.Access.PRIVATE) {
+      file.setSharing(DriveApp.Access.PRIVATE, DriveApp.Permission.NONE);
+      count++;
+    }
+  }
+  Logger.log('Made ' + count + ' attachment(s) private.');
+}
+
+// Rough timing check for PBKDF2_ITERATIONS. Run from the editor and look at
+// the log: aim for well under 1 second per hash.
+function timePasswordHash() {
+  var start = Date.now();
+  hashPassword('timing-test-password', generateSalt());
+  Logger.log('One password hash took ' + (Date.now() - start) + ' ms at ' + PBKDF2_ITERATIONS + ' iterations.');
 }

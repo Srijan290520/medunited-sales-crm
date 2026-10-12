@@ -1,90 +1,101 @@
 // Code.gs — HTTP entry point / action router.
 //
-// Every request carries an `action` and, except for `login`, a session
-// `token`. All authorization checks happen inside the svc_* functions in
-// SalesService.gs / UserService.gs — this router just dispatches.
+// Every request is a POST carrying an `action` and, except for `login`, a
+// session `token`. All authorization checks happen inside the svc_*
+// functions in SalesService.gs / UserService.gs — this router just
+// dispatches, and serializes every write behind a script lock so two people
+// saving at the same moment can't overwrite each other's rows.
 
-function doGet(e) { return handleRequest(e); }
+// GET is not used by the app. Rejecting it keeps passwords and tokens out of
+// URLs (and therefore out of browser history and server logs).
+function doGet() {
+  return jsonResponse({ error: true, message: 'This endpoint only accepts POST requests from the CRM app.' });
+}
+
 function doPost(e) { return handleRequest(e); }
+
+// Actions that change data. Each one runs entirely inside the script lock,
+// so its read-modify-write of the sheet can't interleave with another.
+var WRITE_ACTIONS = [
+  'createSale', 'updateSale', 'deleteSale',
+  'createUser', 'updateUser', 'updateIncentives',
+  'markContacted', 'reassignReminder'
+];
 
 function handleRequest(e) {
   var params = (e && e.parameter) || {};
-  var callback = params.callback || null;
   var action = params.action;
-  var token = params.token;
   var result;
 
   try {
-    var data = params.data ? JSON.parse(params.data) : {};
-
-    switch (action) {
-      case 'login':
-        result = login(params.email || data.email, params.password || data.password);
-        break;
-
-      case 'logout':
-        result = logout(token);
-        break;
-
-      case 'me':
-        result = { error: false, user: requireSession(token) };
-        break;
-
-      case 'listSales':
-        result = { error: false, sales: svc_listSales(requireSession(token), params.type) };
-        break;
-
-      case 'createSale':
-        result = { error: false, sale: svc_createSale(requireSession(token), params.type, data) };
-        break;
-
-      case 'updateSale':
-        result = { error: false, sale: svc_updateSale(requireSession(token), params.type, params.id, data) };
-        break;
-
-      case 'deleteSale':
-        result = svc_deleteSale(requireSession(token), params.type, params.id);
-        result.error = false;
-        break;
-
-      case 'dashboardSummary':
-        result = { error: false, summary: svc_dashboardSummary(requireSession(token)) };
-        break;
-
-      case 'listUsers':
-        result = { error: false, users: svc_listUsers(requireSession(token)) };
-        break;
-
-      case 'createUser':
-        result = { error: false, user: svc_createUser(requireSession(token), data) };
-        break;
-
-      case 'updateUser':
-        result = { error: false, user: svc_updateUser(requireSession(token), params.id, data) };
-        break;
-
-      case 'updateIncentives':
-        result = { error: false, user: svc_updateIncentives(requireSession(token), params.id, data) };
-        break;
-
-      case 'listReminders':
-        result = { error: false, reminders: svc_listReminders(requireSession(token), params.includeResolved === 'true') };
-        break;
-
-      case 'markContacted':
-        result = { error: false, reminder: svc_markContacted(requireSession(token), params.id, data.outcome) };
-        break;
-
-      case 'reassignReminder':
-        result = { error: false, reminder: svc_reassignReminder(requireSession(token), params.id, data.agentEmail) };
-        break;
-
-      default:
-        result = { error: true, message: 'Unknown action: ' + action };
+    if (WRITE_ACTIONS.indexOf(action) !== -1) {
+      result = withScriptLock(function () { return dispatch(action, params); });
+    } else {
+      result = dispatch(action, params);
     }
   } catch (err) {
     result = { error: true, message: err.message || String(err), authError: err.name === 'AuthError' };
   }
 
-  return jsonResponse(result, callback);
+  return jsonResponse(result);
+}
+
+function dispatch(action, params) {
+  var token = params.token;
+  var data = params.data ? JSON.parse(params.data) : {};
+
+  switch (action) {
+    case 'login':
+      return login(params.email || data.email, params.password || data.password);
+
+    case 'logout':
+      return logout(token);
+
+    case 'me':
+      return { error: false, user: publicSession(requireSession(token)) };
+
+    case 'listSales':
+      return { error: false, sales: svc_listSales(requireSession(token), params.type) };
+
+    case 'createSale':
+      return { error: false, sale: svc_createSale(requireSession(token), params.type, data) };
+
+    case 'updateSale':
+      return { error: false, sale: svc_updateSale(requireSession(token), params.type, params.id, data) };
+
+    case 'deleteSale':
+      var deleted = svc_deleteSale(requireSession(token), params.type, params.id);
+      deleted.error = false;
+      return deleted;
+
+    case 'getAttachment':
+      return { error: false, attachment: svc_getAttachment(requireSession(token), params.type, params.id, params.kind) };
+
+    case 'dashboardSummary':
+      return { error: false, summary: svc_dashboardSummary(requireSession(token)) };
+
+    case 'listUsers':
+      return { error: false, users: svc_listUsers(requireSession(token)) };
+
+    case 'createUser':
+      return { error: false, user: svc_createUser(requireSession(token), data) };
+
+    case 'updateUser':
+      return { error: false, user: svc_updateUser(requireSession(token), params.id, data) };
+
+    case 'updateIncentives':
+      return { error: false, user: svc_updateIncentives(requireSession(token), params.id, data) };
+
+    case 'listReminders':
+      return { error: false, reminders: svc_listReminders(requireSession(token), params.includeResolved === 'true') };
+
+    case 'markContacted':
+      return { error: false, reminder: svc_markContacted(requireSession(token), params.id, data.outcome) };
+
+    case 'reassignReminder':
+      return { error: false, reminder: svc_reassignReminder(requireSession(token), params.id, data.agentEmail) };
+
+    default:
+      return { error: true, message: 'Unknown action: ' + action };
+  }
 }

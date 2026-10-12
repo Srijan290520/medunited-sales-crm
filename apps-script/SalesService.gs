@@ -6,6 +6,19 @@
 // AgentEmail matches their own session.
 
 var SALE_TYPES = { medpass: 'Medpass', pharmacy: 'Pharmacy' };
+var SALE_STATUSES = ['Pending', 'Completed', 'Cancelled'];
+
+function validateStatus(status) {
+  if (SALE_STATUSES.indexOf(status) === -1) {
+    throw new Error('Status must be one of: ' + SALE_STATUSES.join(', ') + '.');
+  }
+}
+
+// Agents can only see/touch their own rows.
+function canAccessSale(session, sale) {
+  if (session.role !== 'agent') return true;
+  return String(sale.AgentEmail).toLowerCase() === String(session.email).toLowerCase();
+}
 
 function saleSheetName(type) {
   var name = SALE_TYPES[type];
@@ -15,11 +28,7 @@ function saleSheetName(type) {
 
 function svc_listSales(session, type) {
   var rows = sheetToObjects(getSheetByName(saleSheetName(type)));
-  if (session.role === 'agent') {
-    rows = rows.filter(function (r) {
-      return String(r.AgentEmail).toLowerCase() === String(session.email).toLowerCase();
-    });
-  }
+  rows = rows.filter(function (r) { return canAccessSale(session, r); });
   return rows.sort(function (a, b) { return new Date(b.CreatedAt) - new Date(a.CreatedAt); });
 }
 
@@ -50,6 +59,7 @@ function svc_createSale(session, type, data) {
   var priceType = String(data.priceType || '').trim();
 
   if (!customerName) throw new Error('Customer name is required.');
+  validateStatus(status);
   if (isNaN(amount) || amount < 0) throw new Error('Amount must be a non-negative number.');
   // Medpass incentive rates depend on this, so it's required at creation —
   // unlike payment proof, which is only required once a sale is Completed.
@@ -94,6 +104,7 @@ function svc_createSale(session, type, data) {
   };
   appendObject(sheet, sale);
   if (type === 'pharmacy') syncReminderForSale(sale);
+  audit(session, 'create', SALE_TYPES[type] + 'Sale', id, auditDiff(null, sale));
   return sale;
 }
 
@@ -103,9 +114,13 @@ function svc_updateSale(session, type, id, data) {
   var existing = rows.find(function (r) { return String(r.ID) === String(id); });
   if (!existing) throw new Error('Sale not found.');
 
-  var isOwner = String(existing.AgentEmail).toLowerCase() === String(session.email).toLowerCase();
-  if (session.role === 'agent' && !isOwner) {
-    throw new AuthError('You can only edit your own entries.');
+  if (!canAccessSale(session, existing)) {
+    throw new ForbiddenError('You can only edit your own entries.');
+  }
+  // Once a sale is Completed it drives revenue and incentive payouts, so
+  // agents can't change it any more — a manager or admin has to.
+  if (session.role === 'agent' && existing.Status === 'Completed') {
+    throw new ForbiddenError('This sale is Completed and locked. Ask a manager to make changes.');
   }
 
   var fieldMap = {
@@ -119,6 +134,7 @@ function svc_updateSale(session, type, id, data) {
     patch[fieldMap[key]] = key === 'amount' ? Number(data[key]) : String(data[key]).trim();
   });
 
+  if (patch.Status !== undefined) validateStatus(patch.Status);
   if (patch.Amount !== undefined && (isNaN(patch.Amount) || patch.Amount < 0)) {
     throw new Error('Amount must be a non-negative number.');
   }
@@ -151,17 +167,32 @@ function svc_updateSale(session, type, id, data) {
 
   var updated = updateObjectById(sheet, id, patch);
   if (type === 'pharmacy') syncReminderForSale(updated);
+  audit(session, 'update', SALE_TYPES[type] + 'Sale', id, auditDiff(existing, patch));
   return updated;
 }
 
 function svc_deleteSale(session, type, id) {
   requireRole(session, ['admin', 'manager']);
   var sheet = getSheetByName(saleSheetName(type));
+  var existing = sheetToObjects(sheet).find(function (r) { return String(r.ID) === String(id); });
   var rowIndex = findRowIndexById(sheet, id);
   if (rowIndex === -1) throw new Error('Sale not found.');
   sheet.deleteRow(rowIndex);
   if (type === 'pharmacy') removeReminderForSale(id);
+  audit(session, 'delete', SALE_TYPES[type] + 'Sale', id, auditDiff(existing, null));
   return { deleted: true };
+}
+
+// Streams a bill/payment screenshot back through the app after checking
+// that the viewer may see this sale (agents: only their own).
+function svc_getAttachment(session, type, id, kind) {
+  var rows = sheetToObjects(getSheetByName(saleSheetName(type)));
+  var sale = rows.find(function (r) { return String(r.ID) === String(id); });
+  if (!sale || !canAccessSale(session, sale)) throw new Error('Sale not found.');
+
+  var url = kind === 'bill' ? sale.BillScreenshotUrl : kind === 'payment' ? sale.PaymentScreenshotUrl : null;
+  if (!url) throw new Error('No screenshot attached.');
+  return readAttachmentAsDataUrl(url);
 }
 
 // Aggregated per-agent counts, amounts and computed incentive totals.
