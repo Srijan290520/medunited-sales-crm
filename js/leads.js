@@ -270,11 +270,12 @@
         clearPopupError();
         var res = await apiCall('getLead', { id: id });
         if (res.error) { showToast(res.message || 'Could not open lead.'); return; }
-        showLead(res.lead, res.activities);
+        showLead(res.lead, res.activities, res.linkedSales);
         openPanel();
     }
 
-    function showLead(lead, activities) {
+    function showLead(lead, activities, linkedSales) {
+        linkedSales = linkedSales || [];
         currentLead = lead;
         clearPopupError();
         form.reset();
@@ -317,7 +318,12 @@
         } else {
             $('convert-medpass-btn').classList.toggle('hidden', lead.Interest === 'Pharmacy');
             $('convert-pharmacy-btn').classList.toggle('hidden', lead.Interest === 'Medpass');
-            $('convert-hint').textContent = 'Opens the sale form with this customer filled in. The lead is marked Converted when the sale is saved.';
+            var hasPending = function (t) { return linkedSales.some(function (l) { return l.type === t && l.Status === 'Pending'; }); };
+            $('convert-medpass-btn').textContent = hasPending('medpass') ? 'Complete Medpass sale' : 'Medpass sale';
+            $('convert-pharmacy-btn').textContent = hasPending('pharmacy') ? 'Complete Pharmacy sale' : 'Pharmacy sale';
+            var summary = linkedSales.map(function (l) { return l.Type + ': ' + l.Status; }).join(' · ');
+            $('convert-hint').textContent = (summary ? 'Linked sales — ' + summary + '. ' : '') +
+                'Opens the sale with this customer filled in. The lead is marked Converted when the sale is Completed.';
         }
 
         $('act-type').value = 'Call';
@@ -397,7 +403,7 @@
         if (res.error) { showPopupError(res.message || 'Could not save lead.'); return; }
         if (currentLead) {
             showToast('Lead updated.', 'success');
-            showLead(res.lead, res.activities);
+            showLead(res.lead, res.activities, res.linkedSales);
         } else {
             showToast('Lead created.', 'success');
             await openLead(res.lead.ID);
@@ -422,7 +428,7 @@
         btn.disabled = false;
         if (res.error) { showPopupError(res.message || 'Could not log contact.'); return; }
         showToast(d.type === 'Note' ? 'Note added.' : 'Contact logged.', 'success');
-        showLead(res.lead, res.activities);
+        showLead(res.lead, res.activities, res.linkedSales);
         loadLeads();
     });
 
@@ -442,7 +448,7 @@
         var res = await apiCall('reassignLead', { id: currentLead.ID, data: { agentEmail: email } });
         if (res.error) { showPopupError(res.message || 'Could not reassign.'); return; }
         showToast('Lead reassigned to ' + res.lead.OwnerName + '.', 'success');
-        showLead(res.lead, res.activities);
+        showLead(res.lead, res.activities, res.linkedSales);
         loadLeads();
     });
 

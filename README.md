@@ -216,10 +216,25 @@ The **Leads** page tracks every enquiry before it becomes a sale:
   belongs to an open lead (yours or someone else's) or to an existing
   customer. A second open lead for the same number is blocked. Numbers are
   compared on their last 10 digits, so +91/0 prefixes and spaces don't matter.
-- **Convert to sale** opens the Medpass or Pharmacy form with the customer
-  filled in. Saving the sale marks the lead Converted and links the two. The
-  sale is credited to the lead's owner. Deleting that sale reopens the lead.
-  Sales can still be logged directly without a lead.
+- **Leads appear in their module automatically.** Creating a lead also
+  creates a linked **Pending** sale (tagged "Lead") in Medpass, Pharmacy, or
+  both, depending on what the lead is interested in. The sale has the
+  customer's name and phone and belongs to the lead's owner. The amount shows
+  as "—" until someone fills it in. Pending sales don't count toward dashboard
+  totals or incentives.
+- **The lead and its sales stay in sync:**
+  - Name, phone and owner changes are copied onto the lead's Pending sales.
+  - Marking the lead Lost cancels its Pending sales. Reopening the lead
+    brings them back.
+  - Removing a product from the lead's interest cancels that product's sale.
+    Adding it back restores the sale.
+  - Sales someone cancelled or deleted by hand are never brought back, and
+    Completed sales are never changed.
+- **Convert to sale** opens the lead's Pending sale with the customer filled
+  in. Marking it **Completed** (with payment proof) marks the lead Converted.
+  The sale stays credited to the lead's owner. Deleting the sale that
+  converted a lead reopens the lead. Sales can still be logged directly
+  without a lead.
 - **Consent and Do Not Call:** outgoing calls, WhatsApp and SMS are blocked
   for leads marked Do Not Call (TRAI DND rules).
 - **Ownership:** the person who logs a lead owns it. Agents see only their

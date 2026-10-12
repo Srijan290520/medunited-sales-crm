@@ -6,8 +6,11 @@
 //   LeadActivities  one row per call / WhatsApp / visit / note on a lead
 //
 // Contact attempts are never typed in — they're counted from LeadActivities.
-// A lead becomes "Converted" only by creating a sale from it (see
-// svc_createSale in SalesService.gs), so the sale and lead stay linked.
+//
+// Every lead gets a linked Pending sale in the module it's interested in
+// (Medpass, Pharmacy, or one in each for "Both"), created automatically and
+// kept in sync — see "Lead ↔ sales sync" below. The lead becomes "Converted"
+// when one of its linked sales is marked Completed.
 //
 // Access: agents see and edit only leads they own; managers and admins see
 // all leads and can reassign them. Enforced here, not just in the browser.
@@ -222,6 +225,116 @@ function duplicateLeadError(session, existing) {
     existing.OwnerName + ').' + (mine ? ' Open that lead instead of creating a new one.' : ' Ask a manager if it should be reassigned to you.'));
 }
 
+// ===== Lead ↔ sales sync =====
+// Rules (all automatic):
+//  - New lead → one Pending sale per product it's interested in, owned by the
+//    lead's owner and linked by LeadID.
+//  - Name / phone / owner changes → copied onto the lead's Pending sales.
+//  - Lead marked Lost, or a product dropped from its interest → that Pending
+//    sale is Cancelled with AUTO_CANCEL_NOTE. Reopening the lead (or adding the
+//    product back) restores sales that were cancelled this way.
+//  - A linked sale marked Completed → lead Converted (SalesService.gs).
+// Completed sales are never touched, and sales a person cancelled or deleted
+// by hand are never brought back.
+var LEAD_INTEREST_TYPES = { Medpass: ['medpass'], Pharmacy: ['pharmacy'], Both: ['medpass', 'pharmacy'] };
+var AUTO_CANCEL_NOTE = '[Cancelled automatically: lead lost or product no longer of interest]';
+var AUTO_SALE_NOTE = 'Created automatically from a lead.';
+
+function linkedSales(leadId) {
+  var out = [];
+  Object.keys(SALE_TYPES).forEach(function (type) {
+    var sheet = getSheetByName(SALE_TYPES[type]);
+    if (sheetHeaders(sheet).indexOf('LeadID') === -1) return;
+    sheetToObjects(sheet).forEach(function (row) {
+      if (String(row.LeadID) === String(leadId)) out.push({ type: type, sheet: sheet, row: row });
+    });
+  });
+  return out;
+}
+
+function createPendingSaleForLead(session, lead, type) {
+  var sheet = getSheetByName(saleSheetName(type));
+  ensureHeaders(sheet, ['LeadID']);
+  var sale = {
+    ID: newId(),
+    Date: todayKey(),
+    AgentEmail: lead.OwnerEmail,
+    AgentName: lead.OwnerName,
+    CustomerName: lead.Name,
+    Contact: lead.Contact,
+    Detail: '',
+    Products: type === 'pharmacy' ? '[]' : '',
+    Amount: '',
+    Status: 'Pending',
+    PriceType: '',
+    PaymentMethod: '',
+    UTR: '',
+    BillScreenshotUrl: '',
+    PaymentScreenshotUrl: '',
+    Notes: AUTO_SALE_NOTE,
+    LeadID: lead.ID,
+    CreatedAt: nowIso()
+  };
+  appendObject(sheet, sale);
+  audit(session, 'create_from_lead', SALE_TYPES[type] + 'Sale', sale.ID, auditDiff(null, sale));
+  return sale;
+}
+
+function stripAutoCancelNote(notes) {
+  return String(notes || '').replace(AUTO_CANCEL_NOTE, '').replace(/\s+$/, '');
+}
+
+// Brings the lead's linked sales in line with the lead. `addMissing`: also
+// create Pending sales for products that have none yet (on create, and when
+// the interest changes) — never otherwise, so a sale someone deleted on
+// purpose isn't recreated by an unrelated edit.
+function syncLeadSales(session, lead, addMissing) {
+  if (lead.Stage === 'Converted') return;
+  var wanted = LEAD_INTEREST_TYPES[lead.Interest] || [];
+  var isLost = lead.Stage === 'Lost';
+  var links = linkedSales(lead.ID);
+
+  links.forEach(function (link) {
+    var s = link.row;
+    if (s.Status === 'Completed') return;
+    var keep = !isLost && wanted.indexOf(link.type) !== -1;
+    var patch = {};
+    if (!keep && s.Status === 'Pending') {
+      patch.Status = 'Cancelled';
+      patch.Notes = (String(s.Notes || '') + ' ' + AUTO_CANCEL_NOTE).trim();
+    } else if (keep && s.Status === 'Cancelled' && String(s.Notes || '').indexOf(AUTO_CANCEL_NOTE) !== -1) {
+      patch.Status = 'Pending';
+      patch.Notes = stripAutoCancelNote(s.Notes);
+    }
+    var finalStatus = patch.Status || s.Status;
+    if (finalStatus === 'Pending') {
+      if (s.CustomerName !== lead.Name) patch.CustomerName = lead.Name;
+      if (String(s.Contact) !== String(lead.Contact)) patch.Contact = lead.Contact;
+      if (String(s.AgentEmail).toLowerCase() !== String(lead.OwnerEmail).toLowerCase()) {
+        patch.AgentEmail = lead.OwnerEmail;
+        patch.AgentName = lead.OwnerName;
+      }
+    }
+    if (Object.keys(patch).length) {
+      updateObjectById(link.sheet, s.ID, patch);
+      audit(session, 'sync_from_lead', SALE_TYPES[link.type] + 'Sale', s.ID, auditDiff(s, patch));
+    }
+  });
+
+  if (addMissing && !isLost) {
+    wanted.forEach(function (type) {
+      var has = links.some(function (l) { return l.type === type; });
+      if (!has) createPendingSaleForLead(session, lead, type);
+    });
+  }
+}
+
+function linkedSalesForClient(leadId) {
+  return linkedSales(leadId).map(function (l) {
+    return { Type: SALE_TYPES[l.type], type: l.type, ID: l.row.ID, Status: l.row.Status, Amount: l.row.Amount, AgentName: l.row.AgentName };
+  });
+}
+
 // ===== Reads =====
 function svc_listLeads(session) {
   var acts = activitiesByLead();
@@ -248,7 +361,7 @@ function svc_getLead(session, id) {
     .filter(function (a) { return String(a.LeadID) === String(lead.ID); });
   // Newest first; activities logged in the same second keep sheet order (later row = newer).
   acts.sort(function (a, b) { return (new Date(b.Date) - new Date(a.Date)) || (b._row - a._row); });
-  return { lead: leadForClient(lead, acts), activities: acts.map(activityForClient) };
+  return { lead: leadForClient(lead, acts), activities: acts.map(activityForClient), linkedSales: linkedSalesForClient(lead.ID) };
 }
 
 // Used by the New Lead form as soon as a phone number is typed: is this
@@ -265,7 +378,8 @@ function svc_checkContact(session, contact, exceptId) {
   });
   var salesCount = 0;
   ['Medpass', 'Pharmacy'].forEach(function (name) {
-    sheetToObjects(getSheetByName(name)).forEach(function (s) { if (phoneKey(s.Contact) === key) salesCount++; });
+    // Only completed sales make someone an existing customer (leads' own Pending sales don't count).
+    sheetToObjects(getSheetByName(name)).forEach(function (s) { if (s.Status === 'Completed' && phoneKey(s.Contact) === key) salesCount++; });
   });
   return { leads: leads, salesCount: salesCount };
 }
@@ -332,6 +446,7 @@ function svc_createLead(session, data) {
   }, fields);
   appendObject(getLeadsSheet(), lead);
   audit(session, 'create', 'Lead', lead.ID, auditDiff(null, lead));
+  syncLeadSales(session, lead, true);
   return leadForClient(lead, []);
 }
 
@@ -368,6 +483,8 @@ function svc_updateLead(session, id, data) {
   patch.UpdatedAt = nowIso();
   var updated = updateObjectById(getLeadsSheet(), lead.ID, patch);
   audit(session, 'update', 'Lead', lead.ID, auditDiff(lead, patch));
+  var interestChanged = patch.Interest !== undefined && patch.Interest !== lead.Interest;
+  syncLeadSales(session, updated, interestChanged);
   return svc_getLead(session, updated.ID);
 }
 
@@ -414,7 +531,8 @@ function svc_logActivity(session, leadId, data) {
     }
   }
   if (nextFollowUp && (patch.Stage || lead.Stage) !== 'Lost') patch.NextFollowUp = nextFollowUp;
-  updateObjectById(getLeadsSheet(), lead.ID, patch);
+  var updatedLead = updateObjectById(getLeadsSheet(), lead.ID, patch);
+  if (patch.Stage) syncLeadSales(session, updatedLead, false);
 
   audit(session, 'log_activity', 'Lead', lead.ID, auditDiff(lead, patch));
   return svc_getLead(session, lead.ID);
@@ -429,7 +547,8 @@ function svc_reassignLead(session, id, agentEmail) {
   });
   if (!agent) throw new Error('Target agent not found or inactive.');
   var patch = { OwnerEmail: agent.Email, OwnerName: agent.Name, UpdatedAt: nowIso() };
-  updateObjectById(getLeadsSheet(), lead.ID, patch);
+  var reassigned = updateObjectById(getLeadsSheet(), lead.ID, patch);
+  syncLeadSales(session, reassigned, false);
   addActivity(session, lead.ID, { Type: 'Note', Notes: 'Reassigned from ' + lead.OwnerName + ' to ' + agent.Name + '.' });
   audit(session, 'reassign', 'Lead', lead.ID, auditDiff(lead, patch));
   return svc_getLead(session, lead.ID);
@@ -451,9 +570,10 @@ function markLeadConverted(session, lead, saleType, sale) {
 }
 
 // If a sale created from a lead is deleted, reopen the lead.
-function unlinkLeadFromSale(session, leadId, saleType) {
+function unlinkLeadFromSale(session, leadId, saleType, saleId) {
   var lead = findLead(leadId);
   if (!lead || lead.Stage !== 'Converted') return;
+  if (saleId && String(lead.ConvertedSaleID) !== String(saleId)) return; // a different linked sale was deleted
   var patch = { Stage: 'Interested', ConvertedSaleType: '', ConvertedSaleID: '', UpdatedAt: nowIso() };
   updateObjectById(getLeadsSheet(), lead.ID, patch);
   addActivity(session, lead.ID, { Type: 'Note', Notes: 'Linked ' + saleType + ' sale was deleted — lead reopened.' });

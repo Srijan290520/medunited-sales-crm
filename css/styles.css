@@ -1025,3 +1025,4 @@ input:checked + .slider::before { transform: translateX(18px); }
     .form-row.three { grid-template-columns: 1fr; }
     .lead-tabs { overflow-x: auto; }
 }
+.lead-tag { display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 999px; font-size: 0.68em; font-weight: 700; background: var(--accent-light); color: var(--accent-dark); vertical-align: middle; }
