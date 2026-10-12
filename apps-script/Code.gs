@@ -19,7 +19,8 @@ function doPost(e) { return handleRequest(e); }
 var WRITE_ACTIONS = [
   'createSale', 'updateSale', 'deleteSale',
   'createUser', 'updateUser', 'updateIncentives',
-  'markContacted', 'reassignReminder'
+  'markContacted', 'reassignReminder',
+  'createLead', 'updateLead', 'logActivity', 'reassignLead', 'updateLists'
 ];
 
 function handleRequest(e) {
@@ -96,6 +97,33 @@ function dispatch(action, params) {
 
     case 'reassignReminder':
       return { error: false, reminder: svc_reassignReminder(requireSession(token), params.id, data.agentEmail) };
+
+    case 'listLeads':
+      return { error: false, leads: svc_listLeads(requireSession(token)) };
+
+    case 'getLead':
+      return Object.assign({ error: false }, svc_getLead(requireSession(token), params.id));
+
+    case 'checkContact':
+      return Object.assign({ error: false }, svc_checkContact(requireSession(token), params.contact, params.exceptId));
+
+    case 'createLead':
+      return { error: false, lead: svc_createLead(requireSession(token), data) };
+
+    case 'updateLead':
+      return Object.assign({ error: false }, svc_updateLead(requireSession(token), params.id, data));
+
+    case 'logActivity':
+      return Object.assign({ error: false }, svc_logActivity(requireSession(token), params.id, data));
+
+    case 'reassignLead':
+      return Object.assign({ error: false }, svc_reassignLead(requireSession(token), params.id, data.agentEmail));
+
+    case 'getLists':
+      return { error: false, lists: svc_getLists(requireSession(token)) };
+
+    case 'updateLists':
+      return { error: false, lists: svc_updateLists(requireSession(token), data) };
 
     default:
       return { error: true, message: 'Unknown action: ' + action };

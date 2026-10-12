@@ -5,7 +5,7 @@
 function setupSpreadsheet() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var usersHeaders = ['ID', 'Name', 'Email', 'PasswordHash', 'Salt', 'Role', 'MedpassFullRate', 'MedpassDiscountRate', 'PharmacyIncentivePercent', 'Active', 'CreatedAt'];
-  var saleHeaders = ['ID', 'Date', 'AgentEmail', 'AgentName', 'CustomerName', 'Contact', 'Detail', 'Products', 'Amount', 'Status', 'PriceType', 'PaymentMethod', 'UTR', 'BillScreenshotUrl', 'PaymentScreenshotUrl', 'Notes', 'CreatedAt'];
+  var saleHeaders = ['ID', 'Date', 'AgentEmail', 'AgentName', 'CustomerName', 'Contact', 'Detail', 'Products', 'Amount', 'Status', 'PriceType', 'PaymentMethod', 'UTR', 'BillScreenshotUrl', 'PaymentScreenshotUrl', 'Notes', 'LeadID', 'CreatedAt'];
   var reminderHeaders = ['ID', 'PharmacySaleID', 'AgentEmail', 'AgentName', 'Reassigned', 'CustomerName', 'Contact', 'Products', 'SaleDate', 'Status', 'ResolutionReason', 'AttemptCount', 'LastAttemptDate', 'CreatedAt', 'UpdatedAt'];
 
   ensureSheet(ss, 'Users', usersHeaders);
@@ -13,6 +13,7 @@ function setupSpreadsheet() {
   ensureSheet(ss, 'Pharmacy', saleHeaders);
   ensureSheet(ss, 'Reminders', reminderHeaders);
   getAuditSheet(); // creates + protects the AuditLog tab if it's missing
+  getLeadsSheet(); getActivitiesSheet(); getListsSheet(); // lead journey tabs (also created automatically on first use)
 
   Logger.log('Sheets are ready. Now edit and run createFirstAdmin() to create your admin login.');
 }
