@@ -198,6 +198,39 @@ countdown is always computed live (never stored), so it's never stale.
   unavailable. Reassignment sticks even if the underlying sale is later
   edited.
 
+## Leads (the lead journey)
+
+The **Leads** page tracks every enquiry before it becomes a sale:
+
+- **How they came to us:** who started the contact (Inbound or Outbound),
+  the channel, and, for inbound leads, how they heard about MedUnited.
+- **Temperature** (Hot/Warm/Cold) and **stage**: New → Contacted →
+  Interested → Follow-up → Converted, or Lost with a reason.
+- **Contact log:** every call, WhatsApp message, visit or note, with its
+  outcome and an optional next follow-up date. The **Attempts** count is the
+  number of outgoing contacts and is never typed in. Outcomes move the stage
+  automatically. For example, "Call back later" moves a lead to Follow-up,
+  and "Not interested" marks it Lost.
+- **Follow-ups due** tab: new leads, plus follow-ups due today or overdue.
+- **Duplicate check:** typing a phone number shows whether it already
+  belongs to an open lead (yours or someone else's) or to an existing
+  customer. A second open lead for the same number is blocked. Numbers are
+  compared on their last 10 digits, so +91/0 prefixes and spaces don't matter.
+- **Convert to sale** opens the Medpass or Pharmacy form with the customer
+  filled in. Saving the sale marks the lead Converted and links the two. The
+  sale is credited to the lead's owner. Deleting that sale reopens the lead.
+  Sales can still be logged directly without a lead.
+- **Consent and Do Not Call:** outgoing calls, WhatsApp and SMS are blocked
+  for leads marked Do Not Call (TRAI DND rules).
+- **Ownership:** the person who logs a lead owns it. Agents see only their
+  own leads. Managers and admins see all leads and can reassign them.
+- **Dropdown options** (channels, how they heard about us, lost reasons)
+  are edited by admins on the Incentives/Settings page.
+
+New tabs (`Leads`, `LeadActivities`, `Lists`) and the `LeadID` column on
+`Medpass`/`Pharmacy` are created automatically the first time they're
+needed. No manual sheet changes are required.
+
 ## Dates and time zone
 
 Sale dates are calendar days in India time (Asia/Kolkata). A sale logged

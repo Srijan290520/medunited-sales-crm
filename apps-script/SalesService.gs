@@ -92,6 +92,9 @@ function svc_createSale(session, type, data) {
     detail = summarizeProducts(products);
   }
 
+  // Converting a lead: check it before anything is saved.
+  var lead = data.leadId ? leadForConversion(session, data.leadId) : null;
+
   var id = newId();
   var billUrl = data.billScreenshot ? saveAttachmentFromDataUrl(data.billScreenshot, type + '_' + id + '_bill') : '';
   var paymentUrl = data.paymentScreenshot ? saveAttachmentFromDataUrl(data.paymentScreenshot, type + '_' + id + '_payment') : '';
@@ -101,8 +104,10 @@ function svc_createSale(session, type, data) {
   var sale = {
     ID: id,
     Date: data.date ? String(data.date).trim() : todayKey(),
-    AgentEmail: session.email,
-    AgentName: session.name,
+    // A sale converted from a lead is credited to the lead's owner (so a
+    // manager converting an agent's lead doesn't take the agent's incentive).
+    AgentEmail: lead ? lead.OwnerEmail : session.email,
+    AgentName: lead ? lead.OwnerName : session.name,
     CustomerName: customerName,
     Contact: String(data.contact || '').trim(),
     Detail: detail,
@@ -115,9 +120,12 @@ function svc_createSale(session, type, data) {
     BillScreenshotUrl: billUrl,
     PaymentScreenshotUrl: paymentUrl,
     Notes: String(data.notes || '').trim(),
+    LeadID: lead ? lead.ID : '',
     CreatedAt: nowIso()
   };
+  ensureHeaders(sheet, ['LeadID']); // sheets created before leads existed get the column added
   appendObject(sheet, sale);
+  if (lead) markLeadConverted(session, lead, SALE_TYPES[type], sale);
   if (type === 'pharmacy') syncReminderForSale(sale);
   audit(session, 'create', SALE_TYPES[type] + 'Sale', id, auditDiff(null, sale));
   return sale;
@@ -195,6 +203,7 @@ function svc_deleteSale(session, type, id) {
   if (rowIndex === -1) throw new Error('Sale not found.');
   sheet.deleteRow(rowIndex);
   if (type === 'pharmacy') removeReminderForSale(id);
+  if (existing && existing.LeadID) unlinkLeadFromSale(session, existing.LeadID, SALE_TYPES[type]);
   audit(session, 'delete', SALE_TYPES[type] + 'Sale', id, auditDiff(existing, null));
   return { deleted: true };
 }

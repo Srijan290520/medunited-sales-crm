@@ -346,6 +346,35 @@
     function closePopup() {
         overlay.classList.remove('open');
         popup.classList.remove('open');
+        if (convertLeadId) {
+            convertLeadId = null;
+            convertNote.classList.remove('show');
+            var url = new URL(window.location.href);
+            url.searchParams.delete('fromLead');
+            history.replaceState(null, '', url);
+        }
+    }
+
+    // ===== Converting a lead into a sale (leads.html → "Convert to sale") =====
+    var convertLeadId = null;
+    var convertNote = document.createElement('div');
+    convertNote.className = 'form-error';
+    convertNote.style.cssText = 'background:var(--accent-light);color:var(--accent-dark);margin-bottom:16px;';
+    form.insertBefore(convertNote, form.firstChild);
+
+    async function startConversionFromUrl() {
+        var leadId = new URLSearchParams(window.location.search).get('fromLead');
+        if (!leadId) return;
+        var res = await apiCall('getLead', { id: leadId });
+        if (res.error) { showToast(res.message || 'Could not load that lead.'); return; }
+        if (res.lead.Stage === 'Converted') { showToast('That lead has already been converted to a sale.'); return; }
+        openPopup(null);
+        convertLeadId = res.lead.ID;
+        document.getElementById('sale-customer').value = res.lead.Name;
+        document.getElementById('sale-contact').value = res.lead.Contact;
+        convertNote.textContent = 'Converting lead: ' + res.lead.Name + '. Saving this sale marks the lead as Converted' +
+            (res.lead.OwnerName && res.lead.OwnerEmail.toLowerCase() !== String(user.email).toLowerCase() ? ' and credits the sale to ' + res.lead.OwnerName : '') + '.';
+        convertNote.classList.add('show');
     }
 
     document.getElementById('new-sale-btn').addEventListener('click', function () { openPopup(null); });
@@ -419,6 +448,7 @@
             utr: utr,
             notes: document.getElementById('sale-notes').value.trim()
         };
+        if (convertLeadId && !id) payload.leadId = convertLeadId;
         if (productLinesContainer) {
             payload.products = products;
         } else {
@@ -447,6 +477,11 @@
             return;
         }
 
+        if (payload.leadId) {
+            // Back to the lead, which now shows as Converted.
+            window.location.href = 'leads.html?open=' + encodeURIComponent(payload.leadId);
+            return;
+        }
         closePopup();
         load();
     });
@@ -657,4 +692,5 @@
     }
 
     load();
+    startConversionFromUrl();
 })();

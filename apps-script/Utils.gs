@@ -10,6 +10,30 @@ function getSheetByName(name) {
   return sheet;
 }
 
+// Returns the named tab, creating it (with a frozen header row) if it
+// doesn't exist yet, and appending any missing header columns to the end if
+// it does. Lets new features add tabs/columns without anyone hand-editing
+// the spreadsheet after a deploy.
+function getOrCreateSheet(name, headers) {
+  var ss = getSpreadsheet();
+  var sheet = ss.getSheetByName(name);
+  if (!sheet) {
+    sheet = ss.insertSheet(name);
+    sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+    sheet.setFrozenRows(1);
+    return sheet;
+  }
+  ensureHeaders(sheet, headers);
+  return sheet;
+}
+
+function ensureHeaders(sheet, headers) {
+  var existing = sheetHeaders(sheet);
+  var missing = headers.filter(function (h) { return existing.indexOf(h) === -1; });
+  if (missing.length === 0) return;
+  sheet.getRange(1, existing.length + 1, 1, missing.length).setValues([missing]);
+}
+
 function sheetHeaders(sheet) {
   var lastCol = sheet.getLastColumn();
   if (lastCol === 0) return [];
