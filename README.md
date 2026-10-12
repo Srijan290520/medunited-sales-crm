@@ -179,8 +179,12 @@ Version, then **Deploy**. Editing the file alone does not update the live
 ## Refill reminders (Pharmacy)
 
 Each product on a Pharmacy sale gets a "runs out on" date computed from
-quantity ÷ doses-per-day (Once/Twice/Thrice a day), starting from the sale
-date. A reminder is created automatically once a Pharmacy sale is saved as
+quantity ÷ (doses per day × units per dose), starting from the sale date.
+Doses per day comes from the frequency (Once/Twice/Thrice a day). Units per
+dose is how many tablets or capsules are taken each time (default 1; half
+tablets like 0.5 are allowed). For example, 60 tablets taken 2 at a time,
+twice a day, lasts 15 days. Products saved before the "Per dose" field
+existed count as 1 per dose. A reminder is created automatically once a Pharmacy sale is saved as
 **Completed** with at least one product, and shows up on the **Reminders**
 page for the agent who made the sale — overdue reminders sort first, and the
 countdown is always computed live (never stored), so it's never stale.
@@ -193,3 +197,17 @@ countdown is always computed live (never stored), so it's never stale.
   different agent from the card — useful if the original agent is
   unavailable. Reassignment sticks even if the underlying sale is later
   edited.
+
+## Dates and time zone
+
+Sale dates are calendar days in India time (Asia/Kolkata). A sale logged
+at 1 AM IST is dated that day, not the previous UTC day. The backend always
+sends dates to the browser as plain `YYYY-MM-DD`, so the edit form shows
+the same date that was saved.
+
+## Dashboard caching
+
+The dashboard summary is cached for 2 minutes. Any save through the app
+(sale, user, incentive rate or reminder) clears the cache immediately, so
+new sales show up at once. Edits typed directly into the Google Sheet show
+up within 2 minutes.

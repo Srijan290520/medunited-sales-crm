@@ -24,7 +24,7 @@
         var pharmacyIncentivePercent = document.getElementById('bulk-pharmacy-percent').value;
 
         if (medpassFullRate === '' && medpassDiscountRate === '' && pharmacyIncentivePercent === '') {
-            alert('Enter at least one rate to apply.');
+            showToast('Enter at least one rate to apply.');
             return;
         }
         if (!confirm('Apply these rates to all ' + agentIds.length + ' agent(s)? This overwrites their current rates.')) return;
@@ -48,7 +48,7 @@
         btn.textContent = 'Apply to All Agents';
 
         if (failed > 0) {
-            alert('Applied, but ' + failed + ' agent(s) failed to update.');
+            showToast('Applied, but ' + failed + ' agent(s) failed to update.');
         }
         load();
     });
@@ -99,7 +99,7 @@
                 btn.textContent = 'Save';
 
                 if (res.error) {
-                    alert(res.message || 'Could not update incentive.');
+                    showToast(res.message || 'Could not update incentive.');
                     return;
                 }
                 btn.textContent = 'Saved ✓';

@@ -75,7 +75,7 @@
 
     async function toggleActive(id, active) {
         var res = await apiCall('updateUser', { id: id, data: { active: active } });
-        if (res.error) { alert(res.message || 'Could not update user.'); load(); return; }
+        if (res.error) { showToast(res.message || 'Could not update user.'); load(); return; }
         load();
     }
 
