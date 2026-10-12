@@ -35,6 +35,7 @@ four tabs: `Medpass`, `Pharmacy`, `Users`, `Reminders`.
    - `SalesService.gs`
    - `UserService.gs`
    - `Attachments.gs`
+   - `Audit.gs`
    - `Reminders.gs`
    - `Setup.gs`
 4. Save the project (Ctrl+S). Give it a name like "MedUnited Sales CRM Backend".
@@ -108,6 +109,30 @@ Existing Pharmacy sales logged before this change won't have structured
 product data, so they won't generate a reminder until you edit and re-save
 them with at least one product line.
 
+## Upgrading to the security update (Phase 1)
+
+If your sheet was deployed before the security update, do this once:
+
+1. In Apps Script, add a new file `Audit.gs` and paste in its content. Replace
+   every other `.gs` file with the new version.
+2. **Deploy → Manage deployments → pencil → New version → Deploy.** The
+   `/exec` URL stays the same.
+3. Select `lockDownExistingAttachments` in the function dropdown and **Run**
+   it. This makes the screenshots that were shared by link private. The app
+   keeps showing them.
+4. Select `timePasswordHash` and **Run** it, then check the log. If one hash
+   takes more than about 1 second, lower `PBKDF2_ITERATIONS` in `Auth.gs`.
+   If it takes under 200 ms, you can raise it.
+5. Push the updated `js/` files to GitHub Pages.
+
+What users will notice:
+
+- **Everyone gets logged out once** after the deploy. Sessions now carry
+  extra data, so older ones aren't accepted.
+- Old password hashes keep working. Each one is upgraded to the stronger
+  hash the next time that person logs in.
+- The `AuditLog` tab appears the first time someone saves something.
+
 ## Redeploying after code changes
 
 Every time you edit a `.gs` file, go back to **Deploy → Manage deployments**,
@@ -117,26 +142,39 @@ Version, then **Deploy**. Editing the file alone does not update the live
 
 ## Notes on security
 
-- Passwords are never stored in plain text — only a salted SHA-256 hash.
-- Session tokens live in Apps Script's `CacheService` (server memory), not in
-  the sheet, and expire after 6 hours of inactivity.
-- Anyone with edit access to the underlying Google Sheet can still see/edit
-  raw rows directly in Sheets — keep sheet sharing limited to admins who
-  understand not to hand-edit `PasswordHash`/`Salt`. The app itself is the
-  intended way for everyone else to interact with the data.
-- Bill/payment screenshots are stored in a Drive folder named
-  **"MedUnited Sales CRM Attachments"** (created automatically, owned by
-  whichever Google account you deployed as). Each uploaded file is shared as
-  **"anyone with the link can view"** — so the app can display it without a
-  separate sign-in, but also so anyone who gets hold of a link could view that
-  one screenshot. If your MedUnited account is on Google Workspace and you'd
-  rather restrict this to people in your organization, open
-  `apps-script/Attachments.gs` and change `DriveApp.Access.ANYONE_WITH_LINK`
-  to `DriveApp.Access.DOMAIN_WITH_LINK`, then redeploy.
+- **Passwords** are hashed with PBKDF2-HMAC-SHA256: many rounds and a
+  per-user salt. They are never stored in plain text.
+- **Login lockout:** 5 wrong passwords for an email lock it for 15 minutes.
+  The lockout is recorded in `AuditLog`.
+- **Sessions** live in Apps Script's `CacheService`, not in the sheet, and
+  expire after 6 hours of inactivity. Every request re-checks the user's row
+  in `Users`. Deactivating someone, changing their role, or resetting their
+  password takes effect on their next request.
+- **Simultaneous saves:** every write runs under a script lock, so two people
+  saving at once can't overwrite each other's rows.
+- **Completed sales are locked for agents.** Once a sale is Completed, only
+  a manager or admin can change it, because it counts toward revenue and
+  incentives. Status must be Pending, Completed or Cancelled.
+- **Audit log:** every create, update and delete of a sale, user, incentive
+  rate or reminder is written to the `AuditLog` tab. Each row records who
+  made the change, when, and each changed field's old and new value. The
+  tab is protected so only the sheet owner can edit it. Password hashes are
+  never logged.
+- **Formula injection:** text starting with `= + - @` is stored as plain
+  text, so a customer name can't run as a spreadsheet formula.
+- **Last admin:** the only active admin can't be deactivated or demoted.
+- **POST only:** the backend rejects GET requests, so passwords and tokens
+  never appear in URLs.
+- **Bill/payment screenshots** are stored **privately** in a Drive folder
+  named **"MedUnited Sales CRM Attachments"**, owned by the deploying
+  account. They are not shared by link. The app fetches each one through
+  the backend, which checks that the viewer may see that sale. Agents can
+  only see their own sales' screenshots.
+- Anyone with edit access to the Google Sheet can still see and edit raw
+  rows directly in Sheets. Keep sheet sharing limited to admins.
 - A sale can only be marked **Completed** once payment method, a bill
-  screenshot, and a payment screenshot are attached (and a UTR, if the
-  payment method is UPI) — enforced in `SalesService.gs`, not just the form,
-  so it can't be bypassed by calling the API directly.
+  screenshot, and a payment screenshot are attached, plus a UTR if the
+  payment method is UPI. This is enforced in `SalesService.gs`.
 
 ## Refill reminders (Pharmacy)
 
