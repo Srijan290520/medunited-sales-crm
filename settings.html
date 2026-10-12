@@ -58,6 +58,26 @@
                     </table>
                     <div id="rates-empty" class="empty-state hidden">No agent accounts yet.</div>
                 </div>
+
+                <div class="card hidden" id="lead-lists-card" style="margin-top:24px;">
+                    <div class="card-title">Lead dropdown options</div>
+                    <p class="field-hint" style="margin-top:-8px;">One option per line. These are the choices agents see on the Leads page. Removing an option doesn't change leads that already use it.</p>
+                    <div class="lists-grid">
+                        <div class="form-field">
+                            <label for="list-channels">Channels</label>
+                            <textarea id="list-channels" rows="9"></textarea>
+                        </div>
+                        <div class="form-field">
+                            <label for="list-heard-from">How they heard about us</label>
+                            <textarea id="list-heard-from" rows="9"></textarea>
+                        </div>
+                        <div class="form-field">
+                            <label for="list-lost-reasons">Lost reasons</label>
+                            <textarea id="list-lost-reasons" rows="9"></textarea>
+                        </div>
+                    </div>
+                    <button type="button" id="save-lists-btn">Save options</button>
+                </div>
             </main>
         </div>
     </div>
@@ -65,5 +85,6 @@
     <script src="js/api.js"></script>
     <script src="js/layout.js"></script>
     <script src="js/settings.js"></script>
+    <script src="js/lead-lists.js"></script>
 </body>
 </html>
