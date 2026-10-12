@@ -20,36 +20,38 @@ function frequencyOptions() {
   return Object.keys(FREQUENCY_DOSES_PER_DAY);
 }
 
-// One product line: { name, quantity, frequency }. Returns the same shape
-// plus computed daysSupply / expiryDate / daysRemaining / overdue.
-// Sheets silently turns a "YYYY-MM-DD" string into a real Date-typed cell,
-// so by the time we read it back it may be a Date object instead of a
-// string — normalize either shape to a time-zone-safe, time-of-day-free Date.
-function normalizeDateOnly(value) {
-  var d = (Object.prototype.toString.call(value) === '[object Date]')
-    ? value
-    : new Date(String(value).length <= 10 ? value + 'T00:00:00' : value);
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+// One product line: { name, quantity, frequency, unitsPerDose }. Returns
+// the same shape plus computed daysSupply / expiryDate / daysRemaining /
+// overdue. unitsPerDose is how many tablets/capsules are taken each time
+// (e.g. "2 tablets twice a day"); products saved before this field existed
+// count as 1 per dose, which is what the old calculation assumed.
+//
+// All date maths is on whole calendar days in India time (see dateKey /
+// todayKey in Utils.gs), so the countdown never shifts by a day because of
+// time zones.
+function unitsPerDoseOf(product) {
+  var n = Number(product.unitsPerDose);
+  return n > 0 ? n : 1;
 }
 
-function computeProductStatus(product, saleDateStr) {
+function computeProductStatus(product, saleDateValue) {
   var dosesPerDay = FREQUENCY_DOSES_PER_DAY[product.frequency] || 1;
+  var unitsPerDose = unitsPerDoseOf(product);
   var quantity = Number(product.quantity) || 0;
-  var daysSupply = Math.floor(quantity / dosesPerDay);
+  var daysSupply = Math.floor(quantity / (dosesPerDay * unitsPerDose));
 
-  var saleDate = normalizeDateOnly(saleDateStr);
-  var expiryDate = new Date(saleDate.getTime() + daysSupply * 24 * 60 * 60 * 1000);
-
-  var today = new Date();
-  today = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-  var daysRemaining = Math.round((expiryDate.getTime() - today.getTime()) / (24 * 60 * 60 * 1000));
+  var saleKey = dateKey(saleDateValue);
+  if (!isDateKey(saleKey)) saleKey = todayKey(); // unreadable date: treat as sold today rather than crash
+  var expiryDay = keyToDayNumber(saleKey) + daysSupply;
+  var daysRemaining = expiryDay - keyToDayNumber(todayKey());
 
   return {
     name: product.name,
     quantity: quantity,
     frequency: product.frequency,
+    unitsPerDose: unitsPerDose,
     daysSupply: daysSupply,
-    expiryDate: expiryDate.toISOString().slice(0, 10),
+    expiryDate: dayNumberToKey(expiryDay),
     daysRemaining: daysRemaining,
     overdue: daysRemaining < 1
   };
@@ -70,7 +72,10 @@ function computeReminderUrgency(products, saleDateStr) {
 }
 
 function summarizeProducts(products) {
-  return products.map(function (p) { return p.name + ' (x' + p.quantity + ', ' + p.frequency + ')'; }).join('; ');
+  return products.map(function (p) {
+    var perDose = unitsPerDoseOf(p);
+    return p.name + ' (x' + p.quantity + ', ' + (perDose !== 1 ? perDose + ' per dose, ' : '') + p.frequency + ')';
+  }).join('; ');
 }
 
 function validateProducts(products) {
@@ -82,9 +87,13 @@ function validateProducts(products) {
     var qty = Number(p.quantity);
     if (isNaN(qty) || qty <= 0) throw new Error('Every product needs a quantity greater than 0.');
     if (frequencyOptions().indexOf(p.frequency) === -1) throw new Error('Every product needs a valid frequency.');
+    if (p.unitsPerDose !== undefined && p.unitsPerDose !== null && p.unitsPerDose !== '') {
+      var per = Number(p.unitsPerDose);
+      if (isNaN(per) || per <= 0 || per > 50) throw new Error('Units per dose must be a number between 0 and 50 (e.g. 1, 2 or 0.5).');
+    }
   });
   return products.map(function (p) {
-    return { name: String(p.name).trim(), quantity: Number(p.quantity), frequency: p.frequency };
+    return { name: String(p.name).trim(), quantity: Number(p.quantity), frequency: p.frequency, unitsPerDose: unitsPerDoseOf(p) };
   });
 }
 
@@ -115,7 +124,7 @@ function syncReminderForSale(sale) {
       CustomerName: sale.CustomerName,
       Contact: sale.Contact,
       Products: sale.Products,
-      SaleDate: sale.Date,
+      SaleDate: dateKey(sale.Date),
       UpdatedAt: nowIso()
     };
     if (!isActive(existing.Reassigned)) {
@@ -133,7 +142,7 @@ function syncReminderForSale(sale) {
       CustomerName: sale.CustomerName,
       Contact: sale.Contact,
       Products: sale.Products,
-      SaleDate: sale.Date,
+      SaleDate: dateKey(sale.Date),
       Status: 'Active',
       ResolutionReason: '',
       AttemptCount: 0,

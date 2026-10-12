@@ -30,6 +30,8 @@ function handleRequest(e) {
   try {
     if (WRITE_ACTIONS.indexOf(action) !== -1) {
       result = withScriptLock(function () { return dispatch(action, params); });
+      // Data changed — invalidate cached dashboard summaries.
+      if (result && !result.error) bumpDataVersion();
     } else {
       result = dispatch(action, params);
     }

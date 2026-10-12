@@ -14,6 +14,19 @@ function validateStatus(status) {
   }
 }
 
+// Sale rows as the browser should see them: the Date column as a plain
+// 'yyyy-MM-dd' string (see dateKey in Utils.gs), never a UTC timestamp.
+function saleForClient(row) {
+  if (!row) return row;
+  var out = Object.assign({}, row);
+  out.Date = dateKey(row.Date);
+  return out;
+}
+
+function validateSaleDate(value) {
+  if (!isDateKey(value)) throw new Error('Date must be a valid date (YYYY-MM-DD).');
+}
+
 // Agents can only see/touch their own rows.
 function canAccessSale(session, sale) {
   if (session.role !== 'agent') return true;
@@ -29,7 +42,8 @@ function saleSheetName(type) {
 function svc_listSales(session, type) {
   var rows = sheetToObjects(getSheetByName(saleSheetName(type)));
   rows = rows.filter(function (r) { return canAccessSale(session, r); });
-  return rows.sort(function (a, b) { return new Date(b.CreatedAt) - new Date(a.CreatedAt); });
+  rows.sort(function (a, b) { return new Date(b.CreatedAt) - new Date(a.CreatedAt); });
+  return rows.map(saleForClient);
 }
 
 // A sale can only be marked Completed once there's proof: payment method,
@@ -60,6 +74,7 @@ function svc_createSale(session, type, data) {
 
   if (!customerName) throw new Error('Customer name is required.');
   validateStatus(status);
+  if (data.date) validateSaleDate(String(data.date).trim());
   if (isNaN(amount) || amount < 0) throw new Error('Amount must be a non-negative number.');
   // Medpass incentive rates depend on this, so it's required at creation —
   // unlike payment proof, which is only required once a sale is Completed.
@@ -85,7 +100,7 @@ function svc_createSale(session, type, data) {
 
   var sale = {
     ID: id,
-    Date: data.date || nowIso().slice(0, 10),
+    Date: data.date ? String(data.date).trim() : todayKey(),
     AgentEmail: session.email,
     AgentName: session.name,
     CustomerName: customerName,
@@ -135,6 +150,7 @@ function svc_updateSale(session, type, id, data) {
   });
 
   if (patch.Status !== undefined) validateStatus(patch.Status);
+  if (patch.Date !== undefined) validateSaleDate(patch.Date);
   if (patch.Amount !== undefined && (isNaN(patch.Amount) || patch.Amount < 0)) {
     throw new Error('Amount must be a non-negative number.');
   }
@@ -168,7 +184,7 @@ function svc_updateSale(session, type, id, data) {
   var updated = updateObjectById(sheet, id, patch);
   if (type === 'pharmacy') syncReminderForSale(updated);
   audit(session, 'update', SALE_TYPES[type] + 'Sale', id, auditDiff(existing, patch));
-  return updated;
+  return saleForClient(updated);
 }
 
 function svc_deleteSale(session, type, id) {
@@ -195,6 +211,49 @@ function svc_getAttachment(session, type, id, kind) {
   return readAttachmentAsDataUrl(url);
 }
 
+// ===== Dashboard cache =====
+// Building the summary reads every row of Medpass, Pharmacy and Users, which
+// gets slow as the sheets grow. The result is cached for a couple of
+// minutes. Every successful write through the app changes the "data
+// version" (see Code.gs), which changes the cache key — so a new sale shows
+// up on the dashboard immediately. Edits typed straight into the sheet
+// don't bump the version; they appear once the cache expires.
+var DASHBOARD_CACHE_SECONDS = 120;
+var DATA_VERSION_KEY = 'data_version';
+
+function getDataVersion() {
+  var cache = CacheService.getScriptCache();
+  var v = cache.get(DATA_VERSION_KEY);
+  if (!v) {
+    v = Utilities.getUuid();
+    cache.put(DATA_VERSION_KEY, v, 6 * 60 * 60);
+  }
+  return v;
+}
+
+function bumpDataVersion() {
+  CacheService.getScriptCache().put(DATA_VERSION_KEY, Utilities.getUuid(), 6 * 60 * 60);
+}
+
+function svc_dashboardSummary(session) {
+  // Agents get a summary of only their own sales; managers and admins all
+  // see the same team-wide summary, so they share one cache entry.
+  var scope = session.role === 'agent' ? 'agent_' + String(session.email).toLowerCase() : 'team';
+  var key = 'dash_' + getDataVersion() + '_' + scope;
+  var cache = CacheService.getScriptCache();
+
+  var hit = cache.get(key);
+  if (hit) return JSON.parse(hit);
+
+  var summary = computeDashboardSummary(session);
+  try {
+    cache.put(key, JSON.stringify(summary), DASHBOARD_CACHE_SECONDS);
+  } catch (e) {
+    // Values over 100KB can't be cached — just serve it uncached.
+  }
+  return summary;
+}
+
 // Aggregated per-agent counts, amounts and computed incentive totals.
 // Agents only ever see their own row here too, because svc_listSales
 // already filtered the underlying rows for them. Only Completed sales
@@ -206,7 +265,7 @@ function svc_getAttachment(session, type, id, kind) {
 // depends on whether it was Full Price or Discounted; Pharmacy pays a
 // percentage of the sale amount. Both are per-agent rates set on the
 // Incentives page.
-function svc_dashboardSummary(session) {
+function computeDashboardSummary(session) {
   function onlyCompleted(rows) {
     return rows.filter(function (r) { return r.Status === 'Completed'; });
   }

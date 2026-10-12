@@ -85,6 +85,48 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+// ===== Calendar dates =====
+// Sale dates are calendar days ("2026-10-12"), not moments in time. They are
+// always handled as 'yyyy-MM-dd' strings in India time, so a sale logged at
+// 1 AM IST lands on the right day (new Date().toISOString() is UTC and would
+// give yesterday's date until 5:30 AM).
+var APP_TIMEZONE = 'Asia/Kolkata';
+var DAY_MS = 24 * 60 * 60 * 1000;
+var spreadsheetTimeZone_ = null;
+
+function todayKey() {
+  return Utilities.formatDate(new Date(), APP_TIMEZONE, 'yyyy-MM-dd');
+}
+
+// Sheets turns a typed "2026-10-12" into a Date cell (midnight in the
+// spreadsheet's time zone). Reading it back gives a Date object, which
+// JSON-encodes as UTC — e.g. "2026-10-11T18:30:00.000Z" — and shows up a day
+// early in the edit form. This turns either shape back into 'yyyy-MM-dd'.
+function dateKey(value) {
+  if (Object.prototype.toString.call(value) === '[object Date]') {
+    if (isNaN(value.getTime())) return '';
+    if (!spreadsheetTimeZone_) spreadsheetTimeZone_ = getSpreadsheet().getSpreadsheetTimeZone() || APP_TIMEZONE;
+    return Utilities.formatDate(value, spreadsheetTimeZone_, 'yyyy-MM-dd');
+  }
+  var s = String(value || '').trim();
+  return /^\d{4}-\d{2}-\d{2}/.test(s) ? s.slice(0, 10) : s;
+}
+
+function isDateKey(s) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(String(s)) && !isNaN(keyToDayNumber(s));
+}
+
+// Whole days since 1970-01-01 for a 'yyyy-MM-dd' key — lets us add and
+// subtract days without any time-zone or daylight-saving surprises.
+function keyToDayNumber(key) {
+  var p = String(key).split('-');
+  return Date.UTC(Number(p[0]), Number(p[1]) - 1, Number(p[2])) / DAY_MS;
+}
+
+function dayNumberToKey(n) {
+  return new Date(n * DAY_MS).toISOString().slice(0, 10);
+}
+
 // Runs fn while holding the script-wide lock, so read-modify-write sequences
 // on the sheet (find row → change → write back, or delete a row) can't
 // interleave between two requests and land on the wrong row.
