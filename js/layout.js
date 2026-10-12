@@ -49,11 +49,28 @@ function renderLayout(activePage) {
         '  </div>' +
         '</div>';
 
+    syncCurrentUser(user);
+
     document.getElementById('logout-btn').addEventListener('click', async function () {
         await apiCall('logout');
         clearSession();
         window.location.href = 'index.html';
     });
+}
+
+// The server re-checks the user's role on every request, but the copy kept
+// in the browser (used to show/hide menu items) can be stale — e.g. right
+// after an admin changes someone's role. Refresh it once per page; if it
+// changed, reload so the page and menu match the new role. A deactivated
+// account gets an authError here and apiCall sends it to the login page.
+async function syncCurrentUser(cached) {
+    var res = await apiCall('me');
+    if (res.error || !res.user) return;
+    var fresh = res.user;
+    if (fresh.role !== cached.role || fresh.name !== cached.name || fresh.email !== cached.email) {
+        setSession(getToken(), fresh);
+        window.location.reload();
+    }
 }
 
 function escapeHtml(str) {

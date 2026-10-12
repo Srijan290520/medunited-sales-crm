@@ -144,6 +144,34 @@
         btn.addEventListener('click', function () { setStatusValue(btn.dataset.value); });
     });
 
+    // ===== Viewing screenshots =====
+    // Screenshots are private in Drive, so they're fetched through the
+    // backend (which checks this user may see the sale) and shown in a new
+    // tab. The tab is opened synchronously on click so popup blockers allow it.
+    async function viewAttachment(saleId, kind) {
+        var win = window.open('', '_blank');
+        if (win) win.document.write('<p style="font-family:sans-serif;padding:24px;">Loading screenshot…</p>');
+
+        var res = await apiCall('getAttachment', { type: SALE_TYPE, id: saleId, kind: kind });
+        if (res.error) {
+            if (win) win.close();
+            alert(res.message || 'Could not load the screenshot.');
+            return;
+        }
+        if (!win) { alert('Please allow pop-ups for this site to view screenshots.'); return; }
+
+        var doc = win.document;
+        doc.open();
+        doc.write('<!DOCTYPE html><title></title><body style="margin:0;background:#111;display:flex;justify-content:center;"></body>');
+        doc.close();
+        doc.title = res.attachment.name;
+        var img = doc.createElement('img');
+        img.src = res.attachment.dataUrl;
+        img.alt = res.attachment.name;
+        img.style.maxWidth = '100%';
+        doc.body.appendChild(img);
+    }
+
     // ===== Drag-and-drop upload cards (bill / payment screenshots) =====
     function setUploadState(prefix, opts) {
         opts = opts || {};
@@ -162,7 +190,7 @@
             card.classList.add('has-file');
             labelEl.textContent = defaultLabel + ' attached';
             hintEl.textContent = 'Click or drag to replace';
-            linkEl.href = opts.existingUrl;
+            linkEl.href = '#';
             linkEl.classList.remove('hidden');
         } else {
             card.classList.remove('has-file');
@@ -176,6 +204,14 @@
         var card = document.getElementById(prefix + '-upload-card');
         var dropzone = card.querySelector('.upload-dropzone');
         var input = document.getElementById('sale-' + prefix + '-screenshot');
+        var linkEl = document.getElementById(prefix + '-upload-link');
+
+        linkEl.removeAttribute('target');
+        linkEl.addEventListener('click', function (e) {
+            e.preventDefault();
+            var saleId = document.getElementById('sale-id').value;
+            if (saleId) viewAttachment(saleId, prefix);
+        });
 
         input.addEventListener('change', function () {
             var file = input.files[0];
@@ -258,8 +294,25 @@
         });
     }
 
+    // Shown above the form when the sale can't be edited (e.g. an agent
+    // opening a Completed sale, which only managers can change).
+    var lockNote = document.createElement('div');
+    lockNote.className = 'form-error';
+    lockNote.style.cssText = 'background:#eff6ff;color:#1e40af;margin-bottom:16px;';
+    form.insertBefore(lockNote, form.firstChild);
+
+    function setPopupLocked(locked) {
+        lockNote.textContent = locked ? 'This sale is Completed and locked. Ask a manager if something needs to change.' : '';
+        lockNote.classList.toggle('show', locked);
+        document.getElementById('popup-save').classList.toggle('hidden', locked);
+        Array.prototype.forEach.call(form.querySelectorAll('input, select, textarea, button'), function (el) {
+            el.disabled = locked;
+        });
+    }
+
     function openPopup(sale, presetStatus) {
         errorBox.classList.remove('show');
+        setPopupLocked(false);
         form.reset();
         document.getElementById('sale-id').value = sale ? sale.ID : '';
         document.getElementById('popup-title').textContent = sale ? ('Edit ' + SALE_LABEL + ' Sale') : ('New ' + SALE_LABEL + ' Sale');
@@ -281,6 +334,7 @@
         setUploadState('bill', currentBillUrl ? { existingUrl: currentBillUrl } : {});
         setUploadState('payment', currentPaymentUrl ? { existingUrl: currentPaymentUrl } : {});
         toggleUtrField();
+        setPopupLocked(!!sale && !canEditSale(sale));
 
         overlay.classList.add('open');
         popup.classList.add('open');
@@ -421,17 +475,22 @@
 
     function proofCell(s) {
         var bill = s.BillScreenshotUrl
-            ? '<a class="proof-link" href="' + s.BillScreenshotUrl + '" target="_blank" rel="noopener">Bill</a>'
+            ? '<a class="proof-link proof-view" href="#" data-id="' + escapeHtml(s.ID) + '" data-kind="bill">Bill</a>'
             : '<span class="proof-link disabled">Bill</span>';
         var payment = s.PaymentScreenshotUrl
-            ? '<a class="proof-link" href="' + s.PaymentScreenshotUrl + '" target="_blank" rel="noopener">Payment</a>'
+            ? '<a class="proof-link proof-view" href="#" data-id="' + escapeHtml(s.ID) + '" data-kind="payment">Payment</a>'
             : '<span class="proof-link disabled">Payment</span>';
         return '<div class="row-actions">' + bill + payment + '</div>';
     }
 
     function canEditSale(s) {
+        if (canManageAll) return true;
         var isOwner = String(s.AgentEmail).toLowerCase() === String(user.email).toLowerCase();
-        return canManageAll || isOwner;
+        return isOwner && s.Status !== 'Completed'; // Completed sales are locked for agents
+    }
+
+    function canViewSale(s) {
+        return canManageAll || String(s.AgentEmail).toLowerCase() === String(user.email).toLowerCase();
     }
 
     function renderTable(sales) {
@@ -451,6 +510,7 @@
         tbody.innerHTML = sales.map(function (s) {
             var actions = '';
             if (canEditSale(s)) actions += '<button type="button" class="secondary edit-btn" data-id="' + s.ID + '">Edit</button>';
+            else if (canViewSale(s)) actions += '<button type="button" class="secondary edit-btn" data-id="' + s.ID + '">View</button>';
             if (canManageAll) actions += '<button type="button" class="danger delete-btn" data-id="' + s.ID + '">Delete</button>';
 
             return '<tr>' +
@@ -476,6 +536,12 @@
         });
         Array.prototype.forEach.call(tbody.querySelectorAll('.delete-btn'), function (btn) {
             btn.addEventListener('click', function () { deleteSale(btn.dataset.id); });
+        });
+        Array.prototype.forEach.call(tbody.querySelectorAll('.proof-view'), function (link) {
+            link.addEventListener('click', function (e) {
+                e.preventDefault();
+                viewAttachment(link.dataset.id, link.dataset.kind);
+            });
         });
     }
 

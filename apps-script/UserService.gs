@@ -52,12 +52,16 @@ function svc_createUser(session, data) {
     CreatedAt: nowIso()
   };
   appendObject(sheet, user);
+  audit(session, 'create', 'User', user.ID, auditDiff(null, user));
   return sanitizeUser(user);
 }
 
 function svc_updateUser(session, id, data) {
   requireRole(session, ['admin']);
   var sheet = getSheetByName('Users');
+  var users = sheetToObjects(sheet);
+  var existing = users.find(function (u) { return String(u.ID) === String(id); });
+  if (!existing) throw new Error('User not found.');
   var patch = {};
 
   if (data.name !== undefined) patch.Name = String(data.name).trim();
@@ -73,8 +77,23 @@ function svc_updateUser(session, id, data) {
     patch.PasswordHash = hashPassword(String(data.password), salt);
   }
 
+  // Never leave the CRM without an active admin — nobody could manage users.
+  var losingAdmin = existing.Role === 'admin' && isActive(existing.Active) &&
+    ((patch.Role !== undefined && patch.Role !== 'admin') || patch.Active === false);
+  if (losingAdmin) {
+    var otherActiveAdmins = users.filter(function (u) {
+      return String(u.ID) !== String(id) && u.Role === 'admin' && isActive(u.Active);
+    });
+    if (otherActiveAdmins.length === 0) {
+      throw new Error('This is the only active admin. Make someone else an admin first.');
+    }
+  }
+
   var updated = updateObjectById(sheet, id, patch);
   if (!updated) throw new Error('User not found.');
+  var changes = auditDiff(existing, patch);
+  if (patch.PasswordHash) changes.Password = { from: '', to: '(reset)' };
+  audit(session, 'update', 'User', id, changes);
   return sanitizeUser(updated);
 }
 
@@ -103,7 +122,9 @@ function svc_updateIncentives(session, id, data) {
     patch.PharmacyIncentivePercent = p;
   }
 
+  var existing = sheetToObjects(sheet).find(function (u) { return String(u.ID) === String(id); });
+  if (!existing) throw new Error('User not found.');
   var updated = updateObjectById(sheet, id, patch);
-  if (!updated) throw new Error('User not found.');
+  audit(session, 'update_incentives', 'User', id, auditDiff(existing, patch));
   return sanitizeUser(updated);
 }

@@ -202,7 +202,7 @@ function svc_markContacted(session, id, outcome) {
 
   var isOwner = String(existing.AgentEmail).toLowerCase() === String(session.email).toLowerCase();
   if (session.role === 'agent' && !isOwner) {
-    throw new AuthError('You can only update your own reminders.');
+    throw new ForbiddenError('You can only update your own reminders.');
   }
 
   if (['not_interested', 'could_not_connect'].indexOf(outcome) === -1) {
@@ -222,6 +222,7 @@ function svc_markContacted(session, id, outcome) {
   }
 
   var updated = updateObjectById(sheet, id, patch);
+  audit(session, 'mark_contacted', 'Reminder', id, auditDiff(existing, patch));
   return sanitizeReminder(updated);
 }
 
@@ -234,12 +235,15 @@ function svc_reassignReminder(session, id, agentEmail) {
   });
   if (!agent) throw new Error('Target agent not found.');
 
-  var updated = updateObjectById(sheet, id, {
+  var existing = sheetToObjects(sheet).find(function (r) { return String(r.ID) === String(id); });
+  if (!existing) throw new Error('Reminder not found.');
+  var patch = {
     AgentEmail: agent.Email,
     AgentName: agent.Name,
     Reassigned: true,
     UpdatedAt: nowIso()
-  });
-  if (!updated) throw new Error('Reminder not found.');
+  };
+  var updated = updateObjectById(sheet, id, patch);
+  audit(session, 'reassign', 'Reminder', id, auditDiff(existing, patch));
   return sanitizeReminder(updated);
 }

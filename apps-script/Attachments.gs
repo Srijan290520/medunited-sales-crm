@@ -1,12 +1,14 @@
-// Attachments.gs — stores bill/payment screenshots in Google Drive and
-// returns a link to save in the sheet. Images arrive from the browser as
-// base64 data URLs (e.g. "data:image/png;base64,AAAA...").
+// Attachments.gs — stores bill/payment screenshots in Google Drive.
 //
-// Files are shared as "anyone with the link can view" so the app can show
-// them without asking the viewer to sign in separately. If your MedUnited
-// Google account is on Workspace and you'd rather restrict this to people in
-// your organization, change DriveApp.Access.ANYONE_WITH_LINK below to
-// DriveApp.Access.DOMAIN_WITH_LINK.
+// Files are PRIVATE to the account the script runs as — they are never
+// shared by link. The app shows a screenshot by asking the backend for it
+// (action "getAttachment"), which checks the viewer's session and that they
+// are allowed to see that sale before returning the image. So a copied or
+// leaked Drive link is useless to anyone outside the sheet owner's account.
+//
+// Screenshots uploaded before this change were shared "anyone with the
+// link". Run lockDownExistingAttachments() once from the Apps Script editor
+// (see Setup.gs) to make those private too.
 
 var ATTACHMENTS_FOLDER_NAME = 'MedUnited Sales CRM Attachments';
 var ATTACHMENT_MAX_BYTES = 5 * 1024 * 1024; // 5MB
@@ -39,6 +41,34 @@ function saveAttachmentFromDataUrl(dataUrl, filenamePrefix) {
   var ext = mimeType.split('/')[1];
   var blob = Utilities.newBlob(bytes, mimeType, filenamePrefix + '.' + ext);
   var file = getAttachmentsFolder().createFile(blob);
-  file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+  file.setSharing(DriveApp.Access.PRIVATE, DriveApp.Permission.NONE);
   return file.getUrl();
+}
+
+// Pulls the Drive file ID out of the URL stored in the sheet
+// (https://drive.google.com/file/d/<id>/view... or ...?id=<id>).
+function driveFileIdFromUrl(url) {
+  var m = /\/d\/([a-zA-Z0-9_-]+)/.exec(String(url)) || /[?&]id=([a-zA-Z0-9_-]+)/.exec(String(url));
+  return m ? m[1] : null;
+}
+
+// Returns the image as a data URL. Caller must already have checked that
+// the viewer is allowed to see the sale this file belongs to.
+function readAttachmentAsDataUrl(url) {
+  var fileId = driveFileIdFromUrl(url);
+  if (!fileId) throw new Error('Attachment link is not a Drive file.');
+
+  var file = DriveApp.getFileById(fileId);
+  var parents = file.getParents();
+  var inFolder = false;
+  while (parents.hasNext()) {
+    if (parents.next().getName() === ATTACHMENTS_FOLDER_NAME) { inFolder = true; break; }
+  }
+  if (!inFolder) throw new Error('Attachment is not in the CRM attachments folder.');
+
+  var blob = file.getBlob();
+  return {
+    name: file.getName(),
+    dataUrl: 'data:' + blob.getContentType() + ';base64,' + Utilities.base64Encode(blob.getBytes())
+  };
 }

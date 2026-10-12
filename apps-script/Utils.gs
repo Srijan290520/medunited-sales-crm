@@ -33,9 +33,19 @@ function sheetToObjects(sheet) {
   return out;
 }
 
+// Sheets treats any text starting with = + - @ as a formula, so a customer
+// name like "=IMPORTXML(...)" would run instead of being stored. A leading
+// apostrophe forces plain text; Sheets hides it and doesn't return it from
+// getValues(), so the value reads back exactly as typed. (This also stops
+// phone numbers like "+91 98480 12345" from being parsed as a formula.)
+function safeCellValue(v) {
+  if (typeof v === 'string' && /^[=+\-@\t\r]/.test(v)) return "'" + v;
+  return v;
+}
+
 function appendObject(sheet, obj) {
   var headers = sheetHeaders(sheet);
-  var row = headers.map(function (h) { return (obj[h] !== undefined) ? obj[h] : ''; });
+  var row = headers.map(function (h) { return safeCellValue((obj[h] !== undefined) ? obj[h] : ''); });
   sheet.appendRow(row);
   return obj;
 }
@@ -62,7 +72,7 @@ function updateObjectById(sheet, id, patch) {
   var current = {};
   headers.forEach(function (h, i) { current[h] = currentValues[i]; });
   var updated = Object.assign({}, current, patch);
-  var newRow = headers.map(function (h) { return updated[h] !== undefined ? updated[h] : ''; });
+  var newRow = headers.map(function (h) { return safeCellValue(updated[h] !== undefined ? updated[h] : ''); });
   sheet.getRange(rowIndex, 1, 1, lastCol).setValues([newRow]);
   return updated;
 }
@@ -75,14 +85,23 @@ function nowIso() {
   return new Date().toISOString();
 }
 
-function jsonResponse(obj, callback) {
-  var output = ContentService.createTextOutput();
-  if (callback) {
-    output.setMimeType(ContentService.MimeType.JAVASCRIPT);
-    output.setContent(callback + '(' + JSON.stringify(obj) + ');');
-  } else {
-    output.setMimeType(ContentService.MimeType.JSON);
-    output.setContent(JSON.stringify(obj));
+// Runs fn while holding the script-wide lock, so read-modify-write sequences
+// on the sheet (find row → change → write back, or delete a row) can't
+// interleave between two requests and land on the wrong row.
+function withScriptLock(fn) {
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) {
+    throw new Error('The server is busy saving other changes. Please try again in a few seconds.');
   }
-  return output;
+  try {
+    return fn();
+  } finally {
+    SpreadsheetApp.flush();
+    lock.releaseLock();
+  }
+}
+
+function jsonResponse(obj) {
+  return ContentService.createTextOutput(JSON.stringify(obj))
+    .setMimeType(ContentService.MimeType.JSON);
 }
