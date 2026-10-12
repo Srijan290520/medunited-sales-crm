@@ -13,7 +13,7 @@
 var SESSION_TTL_SECONDS = 6 * 60 * 60; // 6 hours — CacheService's own max
 var SESSION_CACHE_PREFIX = 'sess_';
 
-var PBKDF2_ITERATIONS = 5000; // raise if logins stay fast; each login costs this many HMACs
+var PBKDF2_ITERATIONS = 1500; // ~0.75s per login on Apps Script (5000 measured at ~2.5s); each login costs this many HMACs
 var HASH_PREFIX = 'pbkdf2$';  // stored as pbkdf2$<iterations>$<hex>
 
 var LOGIN_MAX_FAILURES = 5;
