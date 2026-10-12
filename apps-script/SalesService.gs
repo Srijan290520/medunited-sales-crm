@@ -125,7 +125,9 @@ function svc_createSale(session, type, data) {
   };
   ensureHeaders(sheet, ['LeadID']); // sheets created before leads existed get the column added
   appendObject(sheet, sale);
-  if (lead) markLeadConverted(session, lead, SALE_TYPES[type], sale);
+  // Linked to the lead either way; the lead only becomes Converted once the
+  // sale is Completed (here, or later in svc_updateSale).
+  if (lead && status === 'Completed') markLeadConverted(session, lead, SALE_TYPES[type], sale);
   if (type === 'pharmacy') syncReminderForSale(sale);
   audit(session, 'create', SALE_TYPES[type] + 'Sale', id, auditDiff(null, sale));
   return sale;
@@ -190,6 +192,11 @@ function svc_updateSale(session, type, id, data) {
   );
 
   var updated = updateObjectById(sheet, id, patch);
+  // A lead's sale just became Completed → the lead is Converted.
+  if (updated.LeadID && updated.Status === 'Completed' && existing.Status !== 'Completed') {
+    var lead = findLead(updated.LeadID);
+    if (lead && lead.Stage !== 'Converted') markLeadConverted(session, lead, SALE_TYPES[type], updated);
+  }
   if (type === 'pharmacy') syncReminderForSale(updated);
   audit(session, 'update', SALE_TYPES[type] + 'Sale', id, auditDiff(existing, patch));
   return saleForClient(updated);
@@ -203,7 +210,7 @@ function svc_deleteSale(session, type, id) {
   if (rowIndex === -1) throw new Error('Sale not found.');
   sheet.deleteRow(rowIndex);
   if (type === 'pharmacy') removeReminderForSale(id);
-  if (existing && existing.LeadID) unlinkLeadFromSale(session, existing.LeadID, SALE_TYPES[type]);
+  if (existing && existing.LeadID) unlinkLeadFromSale(session, existing.LeadID, SALE_TYPES[type], existing.ID);
   audit(session, 'delete', SALE_TYPES[type] + 'Sale', id, auditDiff(existing, null));
   return { deleted: true };
 }
