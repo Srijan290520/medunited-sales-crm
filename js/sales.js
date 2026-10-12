@@ -362,12 +362,27 @@
     convertNote.style.cssText = 'background:var(--accent-light);color:var(--accent-dark);margin-bottom:16px;';
     form.insertBefore(convertNote, form.firstChild);
 
+    var returnToLeadId = null; // after saving, go back to this lead
+
     async function startConversionFromUrl() {
         var leadId = new URLSearchParams(window.location.search).get('fromLead');
         if (!leadId) return;
         var res = await apiCall('getLead', { id: leadId });
         if (res.error) { showToast(res.message || 'Could not load that lead.'); return; }
         if (res.lead.Stage === 'Converted') { showToast('That lead has already been converted to a sale.'); return; }
+        returnToLeadId = res.lead.ID;
+
+        // Leads get a Pending sale automatically — open that one rather than
+        // creating a second sale for the same customer.
+        var linked = (res.linkedSales || []).find(function (l) { return l.type === SALE_TYPE && l.Status === 'Pending'; });
+        var existingSale = linked && allSales.find(function (s) { return s.ID === linked.ID; });
+        if (existingSale) {
+            openPopup(existingSale);
+            convertNote.textContent = 'Lead: ' + res.lead.Name + '. Fill in the sale details and mark it Completed (with payment proof) to convert the lead.';
+            convertNote.classList.add('show');
+            return;
+        }
+
         openPopup(null);
         convertLeadId = res.lead.ID;
         document.getElementById('sale-customer').value = res.lead.Name;
@@ -477,9 +492,9 @@
             return;
         }
 
-        if (payload.leadId) {
-            // Back to the lead, which now shows as Converted.
-            window.location.href = 'leads.html?open=' + encodeURIComponent(payload.leadId);
+        if (payload.leadId || returnToLeadId) {
+            // Back to the lead (Converted once its sale is Completed).
+            window.location.href = 'leads.html?open=' + encodeURIComponent(payload.leadId || returnToLeadId);
             return;
         }
         closePopup();
@@ -555,10 +570,10 @@
             return '<tr>' +
                 '<td>' + formatDate(s.Date) + '</td>' +
                 '<td>' + avatarHtml(s.AgentName) + '</td>' +
-                '<td>' + escapeHtml(s.CustomerName) + '</td>' +
+                '<td>' + escapeHtml(s.CustomerName) + leadTag(s) + '</td>' +
                 '<td>' + escapeHtml(s.Contact) + '</td>' +
                 '<td>' + escapeHtml(s.Detail) + '</td>' +
-                '<td>' + formatMoney(s.Amount) + '</td>' +
+                '<td>' + amountText(s) + '</td>' +
                 (priceTypeField ? '<td>' + priceTypeCell(s) + '</td>' : '') +
                 '<td><span class="status-pill ' + statusClass(s.Status) + '">' + escapeHtml(s.Status) + '</span></td>' +
                 '<td>' + paymentCell(s) + '</td>' +
@@ -584,6 +599,10 @@
         });
     }
 
+    // Sales created automatically from a lead have no amount until someone fills it in.
+    function amountText(s) { return s.Amount === '' || s.Amount === null || s.Amount === undefined ? '—' : formatMoney(s.Amount); }
+    function leadTag(s) { return s.LeadID ? ' <span class="lead-tag" title="Linked to a lead">Lead</span>' : ''; }
+
     function isReadyToComplete(sale) {
         return !!sale.PaymentMethod && !!sale.BillScreenshotUrl && !!sale.PaymentScreenshotUrl &&
             (sale.PaymentMethod !== 'UPI' || !!sale.UTR);
@@ -600,8 +619,8 @@
             : '';
 
         return '<div class="kanban-card" draggable="' + (canEditSale(sale) ? 'true' : 'false') + '" data-id="' + sale.ID + '">' +
-            '<div class="kanban-card-top"><span class="kanban-amount">' + formatMoney(sale.Amount) + '</span>' + proofDots + '</div>' +
-            '<div class="kanban-customer">' + escapeHtml(sale.CustomerName) + '</div>' +
+            '<div class="kanban-card-top"><span class="kanban-amount">' + amountText(sale) + '</span>' + proofDots + '</div>' +
+            '<div class="kanban-customer">' + escapeHtml(sale.CustomerName) + leadTag(sale) + '</div>' +
             '<div class="kanban-detail">' + escapeHtml(sale.Detail || '—') + priceTag + '</div>' +
             '<div class="kanban-card-footer">' + avatarHtml(sale.AgentName) +
             '<span class="kanban-payment-tag">' + (sale.PaymentMethod ? escapeHtml(sale.PaymentMethod) : '') + '</span>' +
@@ -691,6 +710,5 @@
         renderAll();
     }
 
-    load();
-    startConversionFromUrl();
+    load().then(startConversionFromUrl); // needs the sales list to find a lead's existing sale
 })();
