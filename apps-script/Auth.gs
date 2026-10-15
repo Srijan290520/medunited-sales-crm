@@ -10,7 +10,8 @@
 // still work and are upgraded to PBKDF2 automatically the next time that
 // person logs in successfully.
 
-var SESSION_TTL_SECONDS = 6 * 60 * 60; // 6 hours — CacheService's own max
+var SESSION_TTL_SECONDS = 2 * 60 * 60; // idle timeout: 2 hours without any request ends the session
+var SESSION_MAX_AGE_MS = 12 * 60 * 60 * 1000; // absolute limit, however active
 var SESSION_CACHE_PREFIX = 'sess_';
 
 var PBKDF2_ITERATIONS = 1500; // ~0.75s per login on Apps Script (5000 measured at ~2.5s); each login costs this many HMACs
@@ -95,7 +96,7 @@ function verifyPassword(password, user) {
 }
 
 function isActive(value) {
-  return value === true || String(value).toUpperCase() === 'TRUE';
+  return asBool(value);
 }
 
 function loginFailureCount(email) {
@@ -112,7 +113,8 @@ function recordLoginFailure(email) {
 }
 
 function login(email, password) {
-  email = String(email || '').trim().toLowerCase();
+  email = cleanEmail(email);
+  password = String(password || '').slice(0, 128);
   if (!email || !password) return { error: true, message: 'Email and password are required.' };
 
   if (loginFailureCount(email) >= LOGIN_MAX_FAILURES) {
@@ -142,16 +144,69 @@ function login(email, password) {
     });
   }
 
-  var token = Utilities.getUuid();
-  var session = { id: user.ID, email: user.Email, name: user.Name, role: user.Role, salt: user.Salt };
-  CacheService.getScriptCache().put(SESSION_CACHE_PREFIX + token, JSON.stringify(session), SESSION_TTL_SECONDS);
-
-  return { error: false, token: token, user: publicSession(session) };
+  var session = startSession(user);
+  audit(session, 'login', 'User', user.ID, null);
+  return { error: false, token: session.token, user: publicSession(session) };
 }
 
-// What the browser gets to see (no salt).
+// Issues a fresh opaque token for this user. Tokens are two UUIDs (244 bits
+// of randomness) and live only in CacheService, never in the sheet.
+function startSession(user) {
+  var token = Utilities.getUuid() + Utilities.getUuid().replace(/-/g, '');
+  var session = {
+    token: token,
+    id: user.ID, email: user.Email, name: user.Name, role: user.Role, salt: user.Salt,
+    mustChangePassword: asBool(user.MustChangePassword),
+    startedAt: Date.now()
+  };
+  CacheService.getScriptCache().put(SESSION_CACHE_PREFIX + token, JSON.stringify(session), SESSION_TTL_SECONDS);
+  return session;
+}
+
+// What the browser gets to see (no salt, no token).
 function publicSession(session) {
-  return { id: session.id, email: session.email, name: session.name, role: session.role };
+  return {
+    id: session.id, email: session.email, name: session.name, role: session.role,
+    mustChangePassword: !!session.mustChangePassword
+  };
+}
+
+// ===== Password policy =====
+var PASSWORD_MIN_LENGTH = 10;
+
+function validatePasswordStrength(password, email) {
+  var pw = String(password || '');
+  if (pw.length < PASSWORD_MIN_LENGTH) throw new Error('Password must be at least ' + PASSWORD_MIN_LENGTH + ' characters.');
+  if (pw.length > 128) throw new Error('Password must be 128 characters or fewer.');
+  if (!/[A-Za-z]/.test(pw) || !/[0-9]/.test(pw)) throw new Error('Password must contain both letters and numbers.');
+  var local = String(email || '').split('@')[0].toLowerCase();
+  if (local.length >= 4 && pw.toLowerCase().indexOf(local) !== -1) throw new Error('Password must not contain your email name.');
+  if (/^(password|medunited|welcome|qwerty|admin)/i.test(pw)) throw new Error('That password is too easy to guess.');
+}
+
+// Self-service password change. Verifies the current password, stores a new
+// hash with a new salt (which ends every other session for this user), and
+// hands back a fresh token so the person who changed it stays logged in.
+function svc_changePassword(session, currentPassword, newPassword) {
+  var sheet = getSheetByName('Users');
+  var user = sheetToObjects(sheet).find(function (u) { return String(u.ID) === String(session.id); });
+  if (!user) throw new AuthError('Your session has ended. Please log in again.');
+  if (!verifyPassword(String(currentPassword || ''), user)) {
+    recordLoginFailure(String(user.Email).toLowerCase());
+    throw new Error('Current password is incorrect.');
+  }
+  if (String(currentPassword) === String(newPassword)) throw new Error('New password must be different from the current one.');
+  validatePasswordStrength(newPassword, user.Email);
+
+  var salt = generateSalt();
+  ensureHeaders(sheet, ['MustChangePassword']);
+  var updated = updateObjectById(sheet, user.ID, {
+    Salt: salt, PasswordHash: hashPassword(String(newPassword), salt), MustChangePassword: false
+  });
+  CacheService.getScriptCache().remove(SESSION_CACHE_PREFIX + session.token);
+  audit(session, 'change_password', 'User', user.ID, { Password: { from: '', to: '(changed)' } });
+  var fresh = startSession(updated);
+  return { token: fresh.token, user: publicSession(fresh) };
 }
 
 function logout(token) {
@@ -177,12 +232,20 @@ function requireSession(token) {
     throw new AuthError('Your session has ended. Please log in again.');
   }
 
+  // Hard cap: even an active session must log in again after 12 hours.
+  if (session.startedAt && Date.now() - session.startedAt > SESSION_MAX_AGE_MS) {
+    CacheService.getScriptCache().remove(SESSION_CACHE_PREFIX + token);
+    throw new AuthError('Your session has expired. Please log in again.');
+  }
+
   // Role/name changes apply right away.
+  session.token = token;
   session.role = user.Role;
   session.name = user.Name;
   session.email = user.Email;
+  session.mustChangePassword = asBool(user.MustChangePassword);
 
-  // Sliding expiration: any activity extends the session another 6 hours.
+  // Sliding expiration: any activity extends the idle timeout.
   CacheService.getScriptCache().put(SESSION_CACHE_PREFIX + token, JSON.stringify(session), SESSION_TTL_SECONDS);
   return session;
 }

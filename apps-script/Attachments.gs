@@ -33,16 +33,32 @@ function saveAttachmentFromDataUrl(dataUrl, filenamePrefix) {
     throw new Error('Only image files (PNG, JPG, WEBP, GIF) are allowed for screenshots.');
   }
 
+  if (match[2].length > Math.ceil(ATTACHMENT_MAX_BYTES * 4 / 3) + 8) {
+    throw new Error('Image is too large (max 5MB). Please compress or crop the screenshot.');
+  }
   var bytes = Utilities.base64Decode(match[2]);
   if (bytes.length > ATTACHMENT_MAX_BYTES) {
     throw new Error('Image is too large (max 5MB). Please compress or crop the screenshot.');
   }
+  // Check the file really is the image type it claims to be, so nothing
+  // else (HTML, scripts, documents) can be smuggled into Drive.
+  if (!looksLikeImage(bytes, mimeType)) throw new Error('That file is not a valid image.');
 
-  var ext = mimeType.split('/')[1];
+  var ext = mimeType === 'image/jpg' ? 'jpeg' : mimeType.split('/')[1];
   var blob = Utilities.newBlob(bytes, mimeType, filenamePrefix + '.' + ext);
   var file = getAttachmentsFolder().createFile(blob);
   file.setSharing(DriveApp.Access.PRIVATE, DriveApp.Permission.NONE);
   return file.getUrl();
+}
+
+function looksLikeImage(bytes, mimeType) {
+  function b(i) { return bytes[i] & 0xFF; }
+  if (bytes.length < 12) return false;
+  if (mimeType === 'image/png') return b(0) === 0x89 && b(1) === 0x50 && b(2) === 0x4E && b(3) === 0x47;
+  if (mimeType === 'image/jpeg' || mimeType === 'image/jpg') return b(0) === 0xFF && b(1) === 0xD8 && b(2) === 0xFF;
+  if (mimeType === 'image/gif') return b(0) === 0x47 && b(1) === 0x49 && b(2) === 0x46;
+  if (mimeType === 'image/webp') return b(0) === 0x52 && b(1) === 0x49 && b(2) === 0x46 && b(3) === 0x46 && b(8) === 0x57 && b(9) === 0x45 && b(10) === 0x42 && b(11) === 0x50;
+  return false;
 }
 
 // Pulls the Drive file ID out of the URL stored in the sheet
@@ -67,6 +83,7 @@ function readAttachmentAsDataUrl(url) {
   if (!inFolder) throw new Error('Attachment is not in the CRM attachments folder.');
 
   var blob = file.getBlob();
+  if (ALLOWED_IMAGE_TYPES.indexOf(blob.getContentType()) === -1) throw new Error('Attachment is not an image.');
   return {
     name: file.getName(),
     dataUrl: 'data:' + blob.getContentType() + ';base64,' + Utilities.base64Encode(blob.getBytes())

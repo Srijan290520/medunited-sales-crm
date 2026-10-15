@@ -1,10 +1,19 @@
 // Code.gs — HTTP entry point / action router.
 //
-// Every request is a POST carrying an `action` and, except for `login`, a
-// session `token`. All authorization checks happen inside the svc_*
-// functions in SalesService.gs / UserService.gs — this router just
-// dispatches, and serializes every write behind a script lock so two people
-// saving at the same moment can't overwrite each other's rows.
+// Every request is a POST (form-encoded, so browsers send it without a CORS
+// preflight) carrying:
+//   action   which handler to run
+//   token    the session token (all actions except login)
+//   payload  a JSON object with that action's arguments
+//
+// Authorization happens inside the svc_* functions; this router only checks
+// that a session exists, applies rate limits, refuses everything except a
+// password change while a password change is required, and serializes every
+// write behind the script lock so two people saving at once can't overwrite
+// each other's rows.
+
+var API_VERSION = '2.0.0';
+var MAX_REQUEST_BYTES = 12 * 1024 * 1024; // two 5MB screenshots as base64 + form data
 
 // GET is not used by the app. Rejecting it keeps passwords and tokens out of
 // URLs (and therefore out of browser history and server logs).
@@ -14,118 +23,143 @@ function doGet() {
 
 function doPost(e) { return handleRequest(e); }
 
-// Actions that change data. Each one runs entirely inside the script lock,
-// so its read-modify-write of the sheet can't interleave with another.
+// Actions that change data. Each runs entirely inside the script lock.
 var WRITE_ACTIONS = [
-  'createSale', 'updateSale', 'deleteSale',
-  'createUser', 'updateUser', 'updateIncentives',
+  'changePassword',
+  'createSale', 'importSales', 'updateSale', 'deleteSale', 'reopenSale', 'reassignSale', 'logSaleActivity',
+  'createUser', 'updateUser', 'deleteUser', 'updateIncentives',
   'markContacted', 'reassignReminder',
-  'createLead', 'updateLead', 'logActivity', 'reassignLead', 'updateLists'
+  'updateLists', 'updateMonthlyTarget'
 ];
+
+// Allowed while the user still has to replace an admin-set password.
+var PASSWORD_CHANGE_ALLOWED = ['me', 'logout', 'changePassword'];
 
 function handleRequest(e) {
   var params = (e && e.parameter) || {};
-  var action = params.action;
+  var action = String(params.action || '');
   var result;
 
   try {
+    var size = e && e.postData && e.postData.length;
+    if (size && size > MAX_REQUEST_BYTES) throw new Error('Request is too large. Attach smaller screenshots (max 5MB each).');
+
+    var payload = {};
+    if (params.payload) {
+      try { payload = JSON.parse(params.payload); } catch (err) { throw new Error('Malformed request.'); }
+      if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new Error('Malformed request.');
+    }
+
     if (WRITE_ACTIONS.indexOf(action) !== -1) {
-      result = withScriptLock(function () { return dispatch(action, params); });
-      // Data changed — invalidate cached dashboard summaries.
-      if (result && !result.error) bumpDataVersion();
+      result = withScriptLock(function () { return dispatch(action, params.token, payload); });
+      if (result && !result.error) bumpDataVersion(); // invalidate cached dashboards
     } else {
-      result = dispatch(action, params);
+      result = dispatch(action, params.token, payload);
     }
   } catch (err) {
-    result = { error: true, message: err.message || String(err), authError: err.name === 'AuthError' };
+    result = errorResult(err, action);
   }
 
   return jsonResponse(result);
 }
 
-function dispatch(action, params) {
-  var token = params.token;
-  var data = params.data ? JSON.parse(params.data) : {};
+// Messages we throw ourselves are written for the user. Anything else
+// (an Apps Script "Exception: …", a bug) is logged and replaced with a
+// generic message, so internals never reach the browser.
+function errorResult(err, action) {
+  var name = err && err.name;
+  var msg = String((err && err.message) || err || '');
+  var internal = !msg || /^Exception:|is not defined|Cannot read prop|undefined|null is not|TypeError|ReferenceError|Service invoked too many times|Sheet not found/i.test(msg);
+  if (internal) {
+    console.error('Action ' + action + ' failed: ' + msg + (err && err.stack ? '\n' + err.stack : ''));
+    msg = 'Something went wrong on the server. Please try again; if it keeps happening, tell your admin.';
+  }
+  return { error: true, message: msg, authError: name === 'AuthError', forbidden: name === 'ForbiddenError' };
+}
+
+function dispatch(action, token, p) {
+  if (action === 'login') {
+    checkRateLimit('login_' + cleanEmail(p.email));
+    return login(p.email, p.password);
+  }
+  if (action === 'ping') return { error: false, version: API_VERSION };
+
+  var session = requireSession(token);
+  checkRateLimit('u_' + session.id);
+  if (session.mustChangePassword && PASSWORD_CHANGE_ALLOWED.indexOf(action) === -1) {
+    return { error: true, mustChangePassword: true, message: 'Please set a new password before continuing.' };
+  }
 
   switch (action) {
-    case 'login':
-      return login(params.email || data.email, params.password || data.password);
-
+    // ----- Session -----
     case 'logout':
       return logout(token);
-
     case 'me':
-      return { error: false, user: publicSession(requireSession(token)) };
+      return { error: false, user: publicSession(session) };
+    case 'changePassword':
+      return Object.assign({ error: false }, svc_changePassword(session, p.currentPassword, p.newPassword));
 
+    // ----- Medpass & Pharmacy records -----
     case 'listSales':
-      return { error: false, sales: svc_listSales(requireSession(token), params.type) };
-
+      return { error: false, sales: svc_listSales(session, p.type) };
+    case 'getSale':
+      return Object.assign({ error: false }, svc_getSale(session, p.type, p.id));
     case 'createSale':
-      return { error: false, sale: svc_createSale(requireSession(token), params.type, data) };
-
+      return { error: false, sale: svc_createSale(session, p.type, p.data || {}) };
+    case 'importSales':
+      return Object.assign({ error: false }, svc_importSales(session, p.type, p.rows, { dryRun: p.dryRun === true, agentEmail: p.agentEmail, fileName: p.fileName }));
     case 'updateSale':
-      return { error: false, sale: svc_updateSale(requireSession(token), params.type, params.id, data) };
-
+      return { error: false, sale: svc_updateSale(session, p.type, p.id, p.data || {}) };
     case 'deleteSale':
-      var deleted = svc_deleteSale(requireSession(token), params.type, params.id);
-      deleted.error = false;
-      return deleted;
-
-    case 'getAttachment':
-      return { error: false, attachment: svc_getAttachment(requireSession(token), params.type, params.id, params.kind) };
-
-    case 'dashboardSummary':
-      return { error: false, summary: svc_dashboardSummary(requireSession(token)) };
-
-    case 'listUsers':
-      return { error: false, users: svc_listUsers(requireSession(token)) };
-
-    case 'createUser':
-      return { error: false, user: svc_createUser(requireSession(token), data) };
-
-    case 'updateUser':
-      return { error: false, user: svc_updateUser(requireSession(token), params.id, data) };
-
-    case 'updateIncentives':
-      return { error: false, user: svc_updateIncentives(requireSession(token), params.id, data) };
-
-    case 'listReminders':
-      return { error: false, reminders: svc_listReminders(requireSession(token), params.includeResolved === 'true') };
-
-    case 'markContacted':
-      return { error: false, reminder: svc_markContacted(requireSession(token), params.id, data.outcome) };
-
-    case 'reassignReminder':
-      return { error: false, reminder: svc_reassignReminder(requireSession(token), params.id, data.agentEmail) };
-
-    case 'listLeads':
-      return { error: false, leads: svc_listLeads(requireSession(token)) };
-
-    case 'getLead':
-      return Object.assign({ error: false }, svc_getLead(requireSession(token), params.id));
-
+      return Object.assign({ error: false }, svc_deleteSale(session, p.type, p.id, p.reason));
+    case 'reopenSale':
+      return { error: false, sale: svc_reopenSale(session, p.type, p.id, p.reason) };
+    case 'reassignSale':
+      return { error: false, sale: svc_reassignSale(session, p.type, p.id, p.agentEmail) };
+    case 'logSaleActivity':
+      return Object.assign({ error: false }, svc_logSaleActivity(session, p.type, p.id, p.data || {}));
+    case 'getAuditHistory':
+      return { error: false, auditHistory: svc_getAuditHistory(session, p.type, p.id) };
     case 'checkContact':
-      return Object.assign({ error: false }, svc_checkContact(requireSession(token), params.contact, params.exceptId));
+      return Object.assign({ error: false }, svc_checkContact(session, p.contact, p.exceptId));
+    case 'getAttachment':
+      return { error: false, attachment: svc_getAttachment(session, p.type, p.id, p.kind) };
 
-    case 'createLead':
-      return { error: false, lead: svc_createLead(requireSession(token), data) };
+    // ----- Dashboard -----
+    case 'dashboardSummary':
+      return { error: false, summary: svc_dashboardSummary(session) };
 
-    case 'updateLead':
-      return Object.assign({ error: false }, svc_updateLead(requireSession(token), params.id, data));
+    // ----- Users & incentives -----
+    case 'listUsers':
+      return { error: false, users: svc_listUsers(session) };
+    case 'createUser':
+      return { error: false, user: svc_createUser(session, p.data || {}) };
+    case 'updateUser':
+      return { error: false, user: svc_updateUser(session, p.id, p.data || {}) };
+    case 'deleteUser':
+      return Object.assign({ error: false }, svc_deleteUser(session, p.id, p.reason));
+    case 'updateIncentives':
+      return { error: false, user: svc_updateIncentives(session, p.id, p.data || {}) };
 
-    case 'logActivity':
-      return Object.assign({ error: false }, svc_logActivity(requireSession(token), params.id, data));
+    // ----- Refill reminders -----
+    case 'listReminders':
+      return { error: false, reminders: svc_listReminders(session, p.includeResolved === true) };
+    case 'markContacted':
+      return { error: false, reminder: svc_markContacted(session, p.id, p.outcome) };
+    case 'reassignReminder':
+      return { error: false, reminder: svc_reassignReminder(session, p.id, p.agentEmail) };
 
-    case 'reassignLead':
-      return Object.assign({ error: false }, svc_reassignLead(requireSession(token), params.id, data.agentEmail));
-
+    // ----- Settings -----
     case 'getLists':
-      return { error: false, lists: svc_getLists(requireSession(token)) };
-
+      return { error: false, lists: svc_getLists(session) };
     case 'updateLists':
-      return { error: false, lists: svc_updateLists(requireSession(token), data) };
+      return { error: false, lists: svc_updateLists(session, p.data || {}) };
+    case 'getMonthlyTarget':
+      return { error: false, target: svc_getMonthlyTarget(session) };
+    case 'updateMonthlyTarget':
+      return { error: false, target: svc_updateMonthlyTarget(session, p.amount) };
 
     default:
-      return { error: true, message: 'Unknown action: ' + action };
+      return { error: true, message: 'Unknown action.' };
   }
 }
