@@ -1,261 +1,193 @@
 # MedUnited Sales CRM
 
-Tracks Medpass and Pharmacy (home delivery) sales for the sales team,
-replacing the Google Form + manual Excel incentive tracking.
+Tracks Medpass and Pharmacy (home delivery) enquiries from first contact to
+completed sale, with refill reminders, incentives and a full audit trail.
 
-- **Agents** — see and log only their own sales.
-- **Managers** — see everyone's sales and set incentive rates per agent.
-- **Admins** — everything managers can do, plus creating/editing user accounts.
+- **Agents** see and work only their own leads and sales.
+- **Managers** see the whole team, reassign work, set incentive rates and the monthly target.
+- **Admins** do everything managers can, plus user accounts, dropdown lists and deletions.
 
-All of that is enforced on the server (Apps Script), not just hidden in the
-browser — an agent's session token literally cannot fetch another agent's
-rows.
+Every rule is enforced on the server (Apps Script), not just hidden in the
+browser — an agent's session cannot fetch another agent's records.
 
-## Stack
+## What's in v2
 
-Static HTML/CSS/JS frontend (no build step, no Node needed) talking to a
-Google Apps Script Web App backend, which reads/writes a Google Sheet with
-four tabs: `Medpass`, `Pharmacy`, `Users`, `Reminders`.
+- New React + TypeScript frontend (Kanban board and table, 3-step record form,
+  activity log, history panel, dashboard charts, CSV export).
+- Leads and sales are one record: a lead is a **Pending** record with
+  temperature, channel, follow-up date and contact log; it becomes a sale when
+  marked **Completed** (with payment proof) or **Cancelled** with a lost reason.
+- **Bulk import** of leads from Excel (.xlsx) or CSV, with a row-by-row preview.
+- Medicine forms (tablet, syrup, inhaler, drops, cream, injection, sachet,
+  course) with correct refill-day calculations.
+- Monthly revenue target (this month's completed sales), top medicines,
+  payment-method breakdown, urgent follow-ups.
+- Admin-only deletion with a mandatory reason; reopen for cancelled and
+  (manager-only, with reason) completed sales.
+- Security hardening — see [SECURITY.md](SECURITY.md).
 
-## 1. Create the Google Sheet
+## How it fits together
 
-1. Go to [sheets.google.com](https://sheets.google.com) and create a new blank spreadsheet.
-2. Name it something like "MedUnited Sales CRM Data".
-3. You don't need to create the tabs yourself — a setup script does that (step 3 below).
-
-## 2. Attach the Apps Script project
-
-1. In the spreadsheet, go to **Extensions → Apps Script**.
-2. Delete the default `Code.gs` content.
-3. Create these files in the Apps Script editor (use the `+` next to Files) and
-   paste in the matching content from this project's `apps-script/` folder:
-   - `Code.gs`
-   - `Auth.gs`
-   - `Utils.gs`
-   - `SalesService.gs`
-   - `UserService.gs`
-   - `Attachments.gs`
-   - `Audit.gs`
-   - `Reminders.gs`
-   - `Setup.gs`
-4. Save the project (Ctrl+S). Give it a name like "MedUnited Sales CRM Backend".
-
-## 3. Create the sheet tabs and your admin login
-
-1. In the Apps Script editor, select `setupSpreadsheet` from the function
-   dropdown (top toolbar) and click **Run**. First run will ask you to
-   authorize the script — approve it (it's your own script, only touching
-   your own spreadsheet and, for bill/payment screenshots, your own Drive).
-2. Check the spreadsheet — you should now see `Users`, `Medpass`, and
-   `Pharmacy` tabs with headers.
-3. Open `Setup.gs`, edit the `email` and `password` in `createFirstAdmin()`
-   to your real login, then select `createFirstAdmin` from the function
-   dropdown and click **Run**.
-4. Confirm a row appeared in the `Users` tab with `Role = admin`.
-
-## 4. Deploy as a Web App
-
-1. In the Apps Script editor, click **Deploy → New deployment**.
-2. Click the gear icon next to "Select type" and choose **Web app**.
-3. Set:
-   - **Execute as**: Me
-   - **Who has access**: Anyone (the app itself requires login — this setting
-     just controls who can reach the URL at all)
-4. Click **Deploy**, authorize again if prompted, and copy the **Web app URL**
-   (ends in `/exec`).
-
-## 5. Point the frontend at your deployment
-
-Open [js/api.js](js/api.js) and replace this line:
-
-```js
-var API_URL = window.API_URL || 'PASTE_YOUR_APPS_SCRIPT_WEB_APP_URL_HERE';
+```
+Browser (static React app, any host)
+   │  HTTPS POST  action + token + JSON payload
+   ▼
+Google Apps Script Web App  (apps-script/*.gs)
+   │
+   ├── Google Sheet: Users, Medpass, Pharmacy, Reminders, SaleActivities,
+   │                 Lists, Settings, AuditLog (protected)
+   └── Google Drive: "MedUnited Sales CRM Attachments" (private screenshots)
 ```
 
-with your actual `/exec` URL.
+The frontend is plain static files, so it can be hosted anywhere. It reads the
+backend URL at runtime from `config.js`, so the same build works with any
+Apps Script deployment without rebuilding.
 
-## 6. Run it
+---
 
-This is a static site — no server needed. Easiest options:
+## 1. Set up the backend (Google Sheet + Apps Script)
 
-- Open `index.html` directly in a browser, **or**
-- Serve the folder locally (avoids some browser file:// quirks). This machine
-  doesn't have Python or Node installed, so a small PowerShell server is
-  included — run `powershell -ExecutionPolicy Bypass -File _serve.ps1` from
-  this folder, then visit `http://localhost:8080`. (If you do have Python or
-  Node available elsewhere, `python -m http.server 8080` or `npx serve` work
-  too.)
+1. Create a new Google Sheet (e.g. "MedUnited Sales CRM Data"), using the
+   Google account that should **own** the data (ideally a MedUnited
+   workspace account, not a personal one).
+2. **Extensions → Apps Script.** Delete the default `Code.gs`, then create one
+   file per `.gs` file in `apps-script/` and paste each in:
+   `Activities, Attachments, Audit, Auth, Code, Import, Lists, Reminders,
+   SalesService, Setup, UserService, Utils`.
+3. **Project Settings (gear) → "Show appsscript.json manifest file"** → open
+   `appsscript.json` and replace it with `apps-script/appsscript.json`.
+   *(Or use [clasp](https://github.com/google/clasp): `clasp push` from the
+   `apps-script/` folder.)*
+4. Select **`setupSpreadsheet`** in the function dropdown → **Run** →
+   authorize. All tabs are created; the AuditLog tab is protected.
+5. Create the first admin **without putting a password in code**:
+   **Project Settings → Script properties → Add**:
+   - `ADMIN_EMAIL` = your work email
+   - `ADMIN_PASSWORD` = a temporary password (10+ chars, letters and numbers)
+   - `ADMIN_NAME` (optional)
 
-Log in with the admin account you created in step 3. From there:
+   Then run **`createFirstAdmin`**. The password property is deleted
+   automatically, and you'll be asked to choose a new password at first login.
+6. **Deploy → New deployment → Web app**
+   - Execute as: **Me**
+   - Who has access: **Anyone** (the app has its own login; this only lets the
+     browser reach the URL)
 
-- **Users** page (admin only) → create manager and agent accounts.
-- **Incentives** page (manager/admin) → set ₹ per sale for each agent.
-- **Medpass** / **Pharmacy** pages → log and view sales.
-- **Dashboard** → team performance, charts, incentive totals.
+   Copy the **Web app URL** (ends in `/exec`).
 
-## Upgrading an already-deployed sheet
+> **After any `.gs` change:** Deploy → Manage deployments → ✏️ → Version:
+> **New version** → Deploy. The `/exec` URL stays the same.
 
-`setupSpreadsheet()` only sets headers on a *brand-new* sheet — it won't add
-columns to a sheet that already has data. If you deployed this app before the
-Pharmacy refill-reminders feature was added, do this once:
+## 2. Point the frontend at the backend
 
-- **Pharmacy** sheet: add a `Products` column (anywhere is fine).
-- **Reminders** sheet: create a new tab named exactly `Reminders` with this
-  header row: `ID, PharmacySaleID, AgentEmail, AgentName, Reassigned,
-  CustomerName, Contact, Products, SaleDate, Status, ResolutionReason,
-  AttemptCount, LastAttemptDate, CreatedAt, UpdatedAt`
+Edit `public/config.js` (or `config.js` next to `index.html` on the server):
 
-Existing Pharmacy sales logged before this change won't have structured
-product data, so they won't generate a reminder until you edit and re-save
-them with at least one product line.
+```js
+window.__CRM_CONFIG__ = {
+  apiUrl: 'https://script.google.com/macros/s/XXXXXXXX/exec',
+  appName: 'MedUnited CRM'
+};
+```
 
-## Upgrading to the security update (Phase 1)
+## 3. Build and host the frontend
 
-If your sheet was deployed before the security update, do this once:
+```bash
+npm ci
+npm run test:backend   # backend tests against mocked Google services
+npm run build          # → dist/
+```
 
-1. In Apps Script, add a new file `Audit.gs` and paste in its content. Replace
-   every other `.gs` file with the new version.
-2. **Deploy → Manage deployments → pencil → New version → Deploy.** The
-   `/exec` URL stays the same.
-3. Select `lockDownExistingAttachments` in the function dropdown and **Run**
-   it. This makes the screenshots that were shared by link private. The app
-   keeps showing them.
-4. Select `timePasswordHash` and **Run** it, then check the log. If one hash
-   takes more than about 1 second, lower `PBKDF2_ITERATIONS` in `Auth.gs`.
-   If it takes under 200 ms, you can raise it.
-5. Push the updated `js/` files to GitHub Pages.
+`dist/` is the whole app. Hosting options:
 
-What users will notice:
+| Option | How |
+|---|---|
+| **GitHub Pages** (current) | Repo Settings → Pages → Source: **GitHub Actions**. Every push to `master` runs `.github/workflows/deploy-pages.yml` (tests → build → publish). |
+| **Any web server / intranet** | Copy `dist/` to the server. Use `deploy/nginx.conf` for nginx (security headers, caching). |
+| **Docker** | `docker build -f deploy/Dockerfile -t medunited-crm .` then `docker run -p 8080:8080 -e CRM_API_URL="https://script.google.com/macros/s/XXXX/exec" medunited-crm` behind your HTTPS proxy. |
+| **Netlify / Cloudflare Pages** | Build command `npm run build`, output `dist`. Security headers come from `public/_headers`. |
+| **S3 / Azure Static Web Apps / Firebase Hosting** | Upload `dist/`; add the headers from `deploy/nginx.conf` in that host's config. |
 
-- **Everyone gets logged out once** after the deploy. Sessions now carry
-  extra data, so older ones aren't accepted.
-- Old password hashes keep working. Each one is upgraded to the stronger
-  hash the next time that person logs in.
-- The `AuditLog` tab appears the first time someone saves something.
+The build uses relative paths, so it works from a sub-folder (e.g. `/crm/`).
+Always serve it over **HTTPS**.
 
-## Redeploying after code changes
+## 4. First login
 
-Every time you edit a `.gs` file, go back to **Deploy → Manage deployments**,
-click the pencil icon on your deployment, and choose **New version** under
-Version, then **Deploy**. Editing the file alone does not update the live
-`/exec` URL.
+Log in with the admin email and temporary password → choose your own
+password → **Users** page → create managers and agents (each gets a temporary
+password and must change it at first login) → **Incentives** page → set rates
+and the monthly target.
 
-## Notes on security
+---
 
-- **Passwords** are hashed with PBKDF2-HMAC-SHA256: many rounds and a
-  per-user salt. They are never stored in plain text.
-- **Login lockout:** 5 wrong passwords for an email lock it for 15 minutes.
-  The lockout is recorded in `AuditLog`.
-- **Sessions** live in Apps Script's `CacheService`, not in the sheet, and
-  expire after 6 hours of inactivity. Every request re-checks the user's row
-  in `Users`. Deactivating someone, changing their role, or resetting their
-  password takes effect on their next request.
-- **Simultaneous saves:** every write runs under a script lock, so two people
-  saving at once can't overwrite each other's rows.
-- **Completed sales are locked for agents.** Once a sale is Completed, only
-  a manager or admin can change it, because it counts toward revenue and
-  incentives. Status must be Pending, Completed or Cancelled.
-- **Audit log:** every create, update and delete of a sale, user, incentive
-  rate or reminder is written to the `AuditLog` tab. Each row records who
-  made the change, when, and each changed field's old and new value. The
-  tab is protected so only the sheet owner can edit it. Password hashes are
-  never logged.
-- **Formula injection:** text starting with `= + - @` is stored as plain
-  text, so a customer name can't run as a spreadsheet formula.
-- **Last admin:** the only active admin can't be deactivated or demoted.
-- **POST only:** the backend rejects GET requests, so passwords and tokens
-  never appear in URLs.
-- **Bill/payment screenshots** are stored **privately** in a Drive folder
-  named **"MedUnited Sales CRM Attachments"**, owned by the deploying
-  account. They are not shared by link. The app fetches each one through
-  the backend, which checks that the viewer may see that sale. Agents can
-  only see their own sales' screenshots.
-- Anyone with edit access to the Google Sheet can still see and edit raw
-  rows directly in Sheets. Keep sheet sharing limited to admins.
-- A sale can only be marked **Completed** once payment method, a bill
-  screenshot, and a payment screenshot are attached, plus a UTR if the
-  payment method is UPI. This is enforced in `SalesService.gs`.
+## Bulk import (Medpass / Pharmacy page → **Import**)
+
+- Excel **.xlsx** or **.csv**, up to **500 rows** and 5 MB per file
+  (old `.xls`: save as `.xlsx` first). Use **Download the template** in the dialog.
+- Required columns: **Customer Name**, **Phone**. Optional: Temperature,
+  Direction, Channel, Heard From, Next Follow-up, Notes, Details, Price Type
+  (Medpass), Amount, Agent Email, Date, Consent, Do Not Call. Common header
+  names are recognised ("Mobile Number", "Lead Source", "Remarks", …).
+- Dates: `YYYY-MM-DD` or `DD/MM/YYYY`.
+- Nothing is saved until you've seen the preview. Rows with problems (missing
+  name, bad phone, duplicate in the file, number that already has an open
+  record, unknown agent, bad date) are listed and skipped; you can download
+  them as a CSV, fix, and import again. Re-importing the same file never
+  creates duplicates.
+- Every imported row is a **Pending** lead. Managers/admins choose who gets
+  rows without an Agent Email; agents always import for themselves.
 
 ## Refill reminders (Pharmacy)
 
-Each product on a Pharmacy sale gets a "runs out on" date computed from
-quantity ÷ (doses per day × units per dose), starting from the sale date.
-Doses per day comes from the frequency (Once/Twice/Thrice a day). Units per
-dose is how many tablets or capsules are taken each time (default 1; half
-tablets like 0.5 are allowed). For example, 60 tablets taken 2 at a time,
-twice a day, lasts 15 days. Products saved before the "Per dose" field
-existed count as 1 per dose. A reminder is created automatically once a Pharmacy sale is saved as
-**Completed** with at least one product, and shows up on the **Reminders**
-page for the agent who made the sale — overdue reminders sort first, and the
-countdown is always computed live (never stored), so it's never stale.
+A reminder is created when a Pharmacy sale is **Completed** with at least one
+medicine. Days of supply by form:
 
-- Marking a reminder **"Doesn't want medicines"** resolves it permanently.
-- **"Wants medicines, couldn't connect"** logs the attempt and keeps the
-  reminder active; after 3+ days of failed attempts it's flagged
-  ("no contact in 3+ days") so a manager knows to step in.
-- **Managers/admins** see every agent's reminders and can reassign one to a
-  different agent from the card — useful if the original agent is
-  unavailable. Reassignment sticks even if the underlying sale is later
-  edited.
+| Form | Days |
+|---|---|
+| tablet / sachet | quantity ÷ (doses per day × units per dose) |
+| syrup | (bottle ml × bottles) ÷ (ml per dose × doses per day) |
+| inhaler | puffs ÷ (puffs per dose × doses per day) |
+| injection | units ÷ units per dose |
+| cream / drops | 15 days per unit |
+| course / custom days | the number of days given |
 
-## Leads (the lead journey)
+Countdowns are computed live in India time. "Couldn't connect" attempts are
+logged; after 3+ days without contact the reminder is flagged for a manager.
 
-The **Leads** page tracks every enquiry before it becomes a sale:
+## Upgrading from v1 (the static HTML version)
 
-- **How they came to us:** who started the contact (Inbound or Outbound),
-  the channel, and, for inbound leads, how they heard about MedUnited.
-- **Temperature** (Hot/Warm/Cold) and **stage**: New → Contacted →
-  Interested → Follow-up → Converted, or Lost with a reason.
-- **Contact log:** every call, WhatsApp message, visit or note, with its
-  outcome and an optional next follow-up date. The **Attempts** count is the
-  number of outgoing contacts and is never typed in. Outcomes move the stage
-  automatically. For example, "Call back later" moves a lead to Follow-up,
-  and "Not interested" marks it Lost.
-- **Follow-ups due** tab: new leads, plus follow-ups due today or overdue.
-- **Duplicate check:** typing a phone number shows whether it already
-  belongs to an open lead (yours or someone else's) or to an existing
-  customer. A second open lead for the same number is blocked. Numbers are
-  compared on their last 10 digits, so +91/0 prefixes and spaces don't matter.
-- **Leads appear in their module automatically.** Creating a lead also
-  creates a linked **Pending** sale (tagged "Lead") in Medpass, Pharmacy, or
-  both, depending on what the lead is interested in. The sale has the
-  customer's name and phone and belongs to the lead's owner. The amount shows
-  as "—" until someone fills it in. Pending sales don't count toward dashboard
-  totals or incentives.
-- **The lead and its sales stay in sync:**
-  - Name, phone and owner changes are copied onto the lead's Pending sales.
-  - Marking the lead Lost cancels its Pending sales. Reopening the lead
-    brings them back.
-  - Removing a product from the lead's interest cancels that product's sale.
-    Adding it back restores the sale.
-  - Sales someone cancelled or deleted by hand are never brought back, and
-    Completed sales are never changed.
-- **Convert to sale** opens the lead's Pending sale with the customer filled
-  in. Marking it **Completed** (with payment proof) marks the lead Converted.
-  The sale stays credited to the lead's owner. Deleting the sale that
-  converted a lead reopens the lead. Sales can still be logged directly
-  without a lead.
-- **Consent and Do Not Call:** outgoing calls, WhatsApp and SMS are blocked
-  for leads marked Do Not Call (TRAI DND rules).
-- **Ownership:** the person who logs a lead owns it. Agents see only their
-  own leads. Managers and admins see all leads and can reassign them.
-- **Dropdown options** (channels, how they heard about us, lost reasons)
-  are edited by admins on the Incentives/Settings page.
+The data so far is test data, so the simplest path is a fresh Sheet (section 1).
+To keep the existing Sheet instead:
 
-New tabs (`Leads`, `LeadActivities`, `Lists`) and the `LeadID` column on
-`Medpass`/`Pharmacy` are created automatically the first time they're
-needed. No manual sheet changes are required.
+1. Replace every `.gs` file with the v2 versions, add the new files
+   (`Activities`, `Import`, `Lists`), delete `Leads.gs`, update the manifest.
+2. Run `setupSpreadsheet` — it adds the new columns and tabs and never deletes data.
+3. Deploy a **new version** of the existing deployment (URL stays the same).
+4. Deploy the new frontend at the same time — the v1 pages can't talk to the
+   v2 backend.
 
-## Dates and time zone
+Old `Leads` / `LeadActivities` tabs are no longer used and can be deleted once
+you no longer need them. Existing users keep their passwords.
 
-Sale dates are calendar days in India time (Asia/Kolkata). A sale logged
-at 1 AM IST is dated that day, not the previous UTC day. The backend always
-sends dates to the browser as plain `YYYY-MM-DD`, so the edit form shows
-the same date that was saved.
+## Development
 
-## Dashboard caching
+```bash
+npm run dev            # http://127.0.0.1:3000 (set VITE_API_URL or public/config.js)
+npm run test:backend   # node --test, no Google account needed
+node tests/e2e/server.cjs 4173   # serves dist/ + a mocked backend for browser testing
+```
 
-The dashboard summary is cached for 2 minutes. Any save through the app
-(sale, user, incentive rate or reminder) clears the cache immediately, so
-new sales show up at once. Edits typed directly into the Google Sheet show
-up within 2 minutes.
+`tests/backend/gas-mock.cjs` runs the real `.gs` files under Node with
+in-memory Sheets, Drive, Cache and Lock services.
+
+## Operations checklist
+
+- **Backups:** File → Version history in the Sheet, plus a scheduled copy
+  (e.g. a time-driven trigger that `makeCopy`s the file weekly).
+- **Sheet sharing:** only admins should have edit access to the Sheet itself;
+  anyone with Sheet access can read every row.
+- **Owner leaving:** the script runs as the deploying account. Transfer the
+  Sheet, the attachments folder and the deployment before that account is removed.
+- **Limits:** Apps Script handles roughly 30 requests at the same time and
+  every save waits for a script-wide lock, and Sheets slows down past tens
+  of thousands of rows. That's fine for a sales team of a few dozen people;
+  beyond that, plan a move to a dedicated server and database.

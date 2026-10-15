@@ -1,0 +1,35 @@
+{
+  "name": "medunited-sales-crm",
+  "private": true,
+  "version": "2.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "lint": "tsc --noEmit",
+    "preview": "vite preview --port 3000",
+    "test": "node --test tests/backend/backend.test.cjs",
+    "test:backend": "node --test tests/backend/backend.test.cjs",
+    "build:demo": "node scripts/build-demo-backend.mjs && tsc --noEmit && vite build --config vite.demo.config.ts"
+  },
+  "dependencies": {
+    "chart.js": "^4.4.8",
+    "lucide-react": "^1.16.0",
+    "papaparse": "^5.7.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "read-excel-file": "^5.8.8"
+  },
+  "devDependencies": {
+    "@types/papaparse": "^5.5.2",
+    "@types/react": "^19.0.10",
+    "@types/react-dom": "^19.0.4",
+    "@vitejs/plugin-react": "^4.3.4",
+    "typescript": "^5.7.3",
+    "vite": "^6.2.0",
+    "vite-plugin-singlefile": "^2.3.3"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

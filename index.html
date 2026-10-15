@@ -3,32 +3,22 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Login — MedUnited Sales CRM</title>
-    <link rel="stylesheet" href="css/styles.css">
+    <!--
+      Content Security Policy: the app may only load its own files and talk to
+      Google Apps Script. If you move the backend somewhere else, add that
+      origin to connect-src here (and in deploy/nginx.conf).
+    -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' https://script.google.com https://script.googleusercontent.com; object-src 'none'; base-uri 'self'; form-action 'self'">
+    <meta name="referrer" content="no-referrer">
+    <meta name="robots" content="noindex, nofollow">
+    <title>MedUnited Sales CRM</title>
+    <meta name="description" content="Medpass & Pharmacy sales tracking, lead management, and refill reminders for the sales team.">
+    <!-- Runtime settings (backend URL). Edit config.js on the server; no rebuild needed. -->
+    <script src="./config.js"></script>
 </head>
 <body>
-    <div class="login-wrap">
-        <div class="login-card">
-            <div class="login-brand"><span class="logo-mark">M</span></div>
-            <h1>MedUnited CRM</h1>
-            <p class="subtitle">Medpass &amp; Pharmacy sales tracking</p>
-
-            <div id="login-error" class="form-error"></div>
-            <div id="login-info" class="form-error" style="background:#eff6ff;color:#1e40af;"></div>
-
-            <form id="login-form">
-                <label for="email">Email</label>
-                <input type="email" id="email" name="email" autocomplete="username" required>
-
-                <label for="password">Password</label>
-                <input type="password" id="password" name="password" autocomplete="current-password" required>
-
-                <button type="submit" id="login-btn">Log in</button>
-            </form>
-        </div>
-    </div>
-
-    <script src="js/api.js"></script>
-    <script src="js/login.js"></script>
+    <noscript>This app needs JavaScript enabled.</noscript>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
 </body>
 </html>
