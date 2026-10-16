@@ -3,8 +3,9 @@
 // the production build.
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const dir = path.join(root, 'apps-script');
 const files = fs.readdirSync(dir).filter((f) => f.endsWith('.gs')).sort();
 const body = files.map((f) => `// ---- ${f} ----\n${fs.readFileSync(path.join(dir, f), 'utf8')}`).join('\n\n');
