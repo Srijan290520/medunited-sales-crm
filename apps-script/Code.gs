@@ -28,6 +28,7 @@ var WRITE_ACTIONS = [
   'changePassword',
   'createSale', 'importSales', 'updateSale', 'deleteSale', 'reopenSale', 'reassignSale', 'logSaleActivity',
   'saveDashboardLayout', 'resetDashboardLayout', 'saveRoleDefaultLayout',
+  'saveTargets', 'copyTargets', 'setTargetMeasure', 'updateHomekareCatalogue',
   'reassignPatient', 'bulkReassign', 'importReassignments', 'handoverAgent', 'migratePatients', 'resolvePatientConflict', 'decideMedpassDiscount', 'updateMedpassSettings',
   'createUser', 'updateUser', 'deleteUser', 'updateIncentives', 'requestDeactivation', 'decideUserRequest',
   'markContacted', 'reassignReminder',
@@ -154,6 +155,22 @@ function dispatch(action, token, p) {
       return Object.assign({ error: false }, svc_checkContact(session, p.contact, p.exceptId));
     case 'getAttachment':
       return { error: false, attachment: svc_getAttachment(session, p.type, p.id, p.kind) };
+
+    // ----- Targets, incentives, audit log -----
+    case 'getTargets':
+      return Object.assign({ error: false }, svc_getTargets(session, p.month));
+    case 'saveTargets':
+      return Object.assign({ error: false }, svc_saveTargets(session, p));
+    case 'copyTargets':
+      return Object.assign({ error: false }, svc_copyTargets(session, p));
+    case 'setTargetMeasure':
+      return { error: false, measures: svc_setTargetMeasure(session, p) };
+    case 'incentiveReport':
+      return { error: false, report: svc_incentiveReport(session, p.month) };
+    case 'listAuditLog':
+      return Object.assign({ error: false }, svc_listAuditLog(session, p));
+    case 'updateHomekareCatalogue':
+      return { error: false, services: svc_updateHomekareCatalogue(session, p) };
 
     // ----- Dashboard -----
     case 'getDashboardLayout':

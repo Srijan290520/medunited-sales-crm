@@ -64,8 +64,9 @@ function sheetToObjects(sheet) {
 // phone numbers like "+91 98480 12345" from being parsed as a formula.)
 // Digit strings with a leading zero or more than 15 digits (phone numbers,
 // UTRs) would be turned into numbers and lose digits, so keep them as text.
+// Months like "2026-10" (targets) would become dates; keep those as text too.
 function safeCellValue(v) {
-  if (typeof v === 'string' && (/^[=+\-@\t\r]/.test(v) || /^0\d+$/.test(v) || /^\d{16,}$/.test(v))) return "'" + v;
+  if (typeof v === 'string' && (/^[=+\-@\t\r]/.test(v) || /^0\d+$/.test(v) || /^\d{16,}$/.test(v) || /^\d{4}-\d{2}$/.test(v))) return "'" + v;
   return v;
 }
 

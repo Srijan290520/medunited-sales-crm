@@ -4,7 +4,7 @@ import { MODULE_ICONS } from '../modules';
 import { isTeamRole } from '../utils/roles';
 import { initials } from '../utils/date';
 
-export type ActivePage = 'dashboard' | SaleType | 'reminders' | 'settings' | 'users';
+export type ActivePage = 'dashboard' | SaleType | 'reminders' | 'incentives' | 'settings' | 'users';
 
 interface SidebarProps {
   user: User;
@@ -149,12 +149,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
         {canSeeIncentives && (
           <a
-            href="#settings"
-            className={activePage === 'settings' ? 'active' : ''}
+            href="#incentives"
+            className={activePage === 'incentives' ? 'active' : ''}
             data-tooltip="Incentives"
             onClick={(e) => {
               e.preventDefault();
-              handleNav('settings');
+              handleNav('incentives');
             }}
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -166,23 +166,22 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </a>
         )}
 
+        {/* Settings holds rates, targets, lists, catalogues, users and the audit log. */}
         {canSeeUsers && (
           <a
-            href="#users"
-            className={activePage === 'users' ? 'active' : ''}
-            data-tooltip="User Management"
+            href="#settings"
+            className={activePage === 'settings' || activePage === 'users' ? 'active' : ''}
+            data-tooltip="Settings"
             onClick={(e) => {
               e.preventDefault();
-              handleNav('users');
+              handleNav('settings');
             }}
           >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
-              <circle cx="9" cy="7" r="4"></circle>
-              <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
-              <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="3"></circle>
+              <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"></path>
             </svg>
-            <span>Users</span>
+            <span>Settings</span>
           </a>
         )}
       </nav>

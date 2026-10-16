@@ -21,8 +21,9 @@ const SPANS: LayoutItem['span'][] = [4, 6, 8, 12];
 const SIZE_NAMES: Record<number, string> = { 4: 'Small', 6: 'Medium', 8: 'Large', 12: 'Full width' };
 const MODULE_COLORS: Record<string, string> = { medpass: '#3730a3', pharmacy: '#0e7490', homekare: '#9d174d', lab: '#b45309' };
 
-const Bars: React.FC<{ rows: { label: string; value: number; color: string; text?: string }[] }> = ({ rows }) => {
-  const max = Math.max(1, ...rows.map((r) => r.value));
+// Bars scale to the largest value, or to `max` (e.g. 100 for % of target).
+const Bars: React.FC<{ rows: { label: string; value: number; color: string; text?: string }[]; max?: number }> = ({ rows, max: fixedMax }) => {
+  const max = fixedMax ?? Math.max(1, ...rows.map((r) => r.value));
   return (
     <div className="dw-bars">
       {rows.map((r) => (
@@ -128,6 +129,19 @@ export const Dashboard: React.FC<DashboardProps> = ({ user, onToast, onNavigate 
     if (!summary) return <div className="mp-muted">Loading…</div>;
     switch (id) {
       case 'target': {
+        // Agents: their own targets per module (Settings → Monthly targets).
+        if (!isTeam) {
+          const mine = summary.myTargets || [];
+          if (!mine.length) return <div className="mp-muted">No target set for you this month yet.</div>;
+          return (
+            <Bars max={100} rows={mine.map((r) => ({
+              label: r.moduleLabel,
+              value: Math.min(100, r.percent ?? 0),
+              color: MODULE_COLORS[r.module] || '#374151',
+              text: `${r.measure === 'count' ? r.achieved : formatMoney(r.achieved)} / ${r.measure === 'count' ? r.target : formatMoney(r.target || 0)}`,
+            }))} />
+          );
+        }
         const t = summary.monthlyTarget;
         if (!t) return <div className="mp-muted">No target set.</div>;
         return (

@@ -3139,3 +3139,18 @@ input:checked + .slider::before { transform: translateX(18px); }
 .mp-icon-btn:hover, .dw-tools button:hover:not(:disabled) { background: #f7f8fc; color: var(--text-primary); }
 .dw-item:hover { background: #f7f8fc; color: inherit; }
 .mp-btn:hover:not(:disabled) { background: #f7f8fc; color: var(--text-primary); }
+
+/* ===== Phase 5: Settings page (st-*) ===== */
+.st-layout { display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start; }
+.st-menu { flex: 1 1 220px; max-width: 260px; display: flex; flex-direction: column; gap: 2px; background: #fff; border: 1px solid var(--border); border-radius: 12px; padding: 6px; position: sticky; top: 16px; }
+.st-item { display: flex; flex-direction: column; gap: 1px; text-align: left; padding: 10px 12px; border: 0; border-radius: 8px; background: transparent; color: var(--text-primary); font-weight: 600; font-size: 0.92rem; cursor: pointer; }
+.st-item small { font-weight: 400; color: #4b5563; font-size: 0.78rem; }
+.st-item:hover { background: #f7f8fc; color: var(--text-primary); transform: none; }
+.st-item.active, .st-item.active:hover { background: #eef0fb; color: #312e81; }
+.st-content { flex: 999 1 560px; min-width: 0; }
+.st-content .topbar { padding-left: 0; padding-right: 0; }
+@media (max-width: 760px) {
+  .st-menu { max-width: none; flex-direction: row; overflow-x: auto; position: static; }
+  .st-item small { display: none; }
+  .st-item { white-space: nowrap; }
+}

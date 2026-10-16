@@ -395,6 +395,46 @@ function auditHistoryFor(entityIds, limit) {
   return limit ? out.slice(0, limit) : out;
 }
 
+// ===== Audit log viewer (Settings → Audit log) =====
+// Admins and senior managers only: summaries name patients and amounts.
+// Filters: q (text in summary, entity id or user), user (email), action,
+// from / to ('yyyy-MM-dd', India time). Newest first, in pages.
+function svc_listAuditLog(session, data) {
+  requireRole(session, SENIOR_ROLES);
+  data = data || {};
+  var q = cleanText(data.q, 100).toLowerCase();
+  var userEmail = cleanEmail(data.user);
+  var action = cleanText(data.action, 40);
+  var from = optionalDateKey(data.from, 'From');
+  var to = optionalDateKey(data.to, 'To');
+  var limit = Math.min(200, Math.max(1, Number(data.limit) || 50));
+  var offset = Math.max(0, Number(data.offset) || 0);
+  var rows = sheetToObjects(getAuditSheet()).map(function (r, i) { r._i = i; return r; }).filter(function (r) {
+    if (userEmail && lowerEmail(r.UserEmail) !== userEmail) return false;
+    if (action && String(r.Action) !== action) return false;
+    var day = r.Timestamp ? Utilities.formatDate(new Date(r.Timestamp), APP_TIMEZONE, 'yyyy-MM-dd') : '';
+    if (from && day < from) return false;
+    if (to && day > to) return false;
+    if (q && (String(r.Summary) + ' ' + r.EntityID + ' ' + r.UserName + ' ' + r.UserEmail + ' ' + r.Entity).toLowerCase().indexOf(q) === -1) return false;
+    return true;
+  });
+  rows.sort(function (a, b) { return (new Date(b.Timestamp) - new Date(a.Timestamp)) || (b._i - a._i); });
+  var actions = {};
+  sheetToObjects(getAuditSheet()).forEach(function (r) { if (r.Action) actions[String(r.Action)] = true; });
+  return {
+    total: rows.length,
+    offset: offset,
+    actions: Object.keys(actions).sort(),
+    rows: rows.slice(offset, offset + limit).map(function (r) {
+      return {
+        id: String(r.ID || ''), date: isoString(r.Timestamp), userName: String(r.UserName || ''), userEmail: String(r.UserEmail || ''),
+        role: String(r.Role || ''), action: String(r.Action || ''), entity: String(r.Entity || ''), entityId: String(r.EntityID || ''),
+        summary: String(r.Summary || defaultAuditSummary(r)), changes: auditChangesForClient(r.Changes)
+      };
+    })
+  };
+}
+
 
 // ---- Auth.gs ----
 // Auth.gs — login/logout and session handling
@@ -922,6 +962,7 @@ var WRITE_ACTIONS = [
   'changePassword',
   'createSale', 'importSales', 'updateSale', 'deleteSale', 'reopenSale', 'reassignSale', 'logSaleActivity',
   'saveDashboardLayout', 'resetDashboardLayout', 'saveRoleDefaultLayout',
+  'saveTargets', 'copyTargets', 'setTargetMeasure', 'updateHomekareCatalogue',
   'reassignPatient', 'bulkReassign', 'importReassignments', 'handoverAgent', 'migratePatients', 'resolvePatientConflict', 'decideMedpassDiscount', 'updateMedpassSettings',
   'createUser', 'updateUser', 'deleteUser', 'updateIncentives', 'requestDeactivation', 'decideUserRequest',
   'markContacted', 'reassignReminder',
@@ -1048,6 +1089,22 @@ function dispatch(action, token, p) {
       return Object.assign({ error: false }, svc_checkContact(session, p.contact, p.exceptId));
     case 'getAttachment':
       return { error: false, attachment: svc_getAttachment(session, p.type, p.id, p.kind) };
+
+    // ----- Targets, incentives, audit log -----
+    case 'getTargets':
+      return Object.assign({ error: false }, svc_getTargets(session, p.month));
+    case 'saveTargets':
+      return Object.assign({ error: false }, svc_saveTargets(session, p));
+    case 'copyTargets':
+      return Object.assign({ error: false }, svc_copyTargets(session, p));
+    case 'setTargetMeasure':
+      return { error: false, measures: svc_setTargetMeasure(session, p) };
+    case 'incentiveReport':
+      return { error: false, report: svc_incentiveReport(session, p.month) };
+    case 'listAuditLog':
+      return Object.assign({ error: false }, svc_listAuditLog(session, p));
+    case 'updateHomekareCatalogue':
+      return { error: false, services: svc_updateHomekareCatalogue(session, p) };
 
     // ----- Dashboard -----
     case 'getDashboardLayout':
@@ -1466,17 +1523,78 @@ var HOMEKARE_SERVICES = [
   ['HOMEKARE VITALS AND GRBS', 'Per visit', false]
 ];
 
-function homekareCatalogue() {
-  return HOMEKARE_SERVICES.map(function (s) { return { name: s[0], unit: s[1], monthly: s[2] }; });
+// The list in use: the built-in services above, plus any added in Settings
+// (homekareServicesExtra), with some hidden from the picker
+// (homekareServicesHidden). Hidden services stay valid, so older records
+// that use them still save. Nothing is ever deleted.
+var homekareListCache_ = null; // one read per request; cleared when the list changes
+
+function serviceKey(name) { return cleanText(name, 200).toLowerCase().replace(/\s+/g, ' '); }
+
+function readSettingList(key) {
+  try {
+    var v = JSON.parse(getSetting(key, '[]') || '[]');
+    return Array.isArray(v) ? v : [];
+  } catch (e) {
+    return [];
+  }
 }
 
-// Matching ignores case and repeated spaces, then returns the official name.
+function homekareServiceList() {
+  if (homekareListCache_) return homekareListCache_;
+  var hidden = {};
+  readSettingList('homekareServicesHidden').forEach(function (n) { hidden[serviceKey(n)] = true; });
+  var list = HOMEKARE_SERVICES.map(function (s) { return { name: s[0], unit: s[1], monthly: s[2], builtIn: true }; });
+  readSettingList('homekareServicesExtra').forEach(function (x) {
+    if (x && x.name) list.push({ name: String(x.name), unit: String(x.unit || ''), monthly: x.monthly === true, builtIn: false });
+  });
+  list.forEach(function (x) { x.hidden = !!hidden[serviceKey(x.name)]; });
+  homekareListCache_ = list;
+  return list;
+}
+
+function homekareCatalogue() {
+  return homekareServiceList().map(function (s) {
+    return { name: s.name, unit: s.unit, monthly: s.monthly, hidden: s.hidden, builtIn: s.builtIn };
+  });
+}
+
+// Matching ignores case and repeated spaces, then returns [name, unit, monthly].
 function findHomekareService(name) {
-  var key = cleanText(name, 200).toLowerCase().replace(/\s+/g, ' ');
-  for (var i = 0; i < HOMEKARE_SERVICES.length; i++) {
-    if (HOMEKARE_SERVICES[i][0].toLowerCase().replace(/\s+/g, ' ') === key) return HOMEKARE_SERVICES[i];
+  var key = serviceKey(name);
+  var list = homekareServiceList();
+  for (var i = 0; i < list.length; i++) {
+    if (serviceKey(list[i].name) === key) return [list[i].name, list[i].unit, list[i].monthly];
   }
   return null;
+}
+
+// Admin or senior manager: { add: { name, unit, monthly } } | { hide: name } | { show: name }.
+function svc_updateHomekareCatalogue(session, data) {
+  requireRole(session, SENIOR_ROLES);
+  data = data || {};
+  var summary;
+  if (data.add) {
+    var name = cleanText(data.add.name, 120);
+    if (name.length < 3) throw new Error('Give the service a name (at least 3 characters).');
+    if (findHomekareService(name)) throw new Error('"' + name + '" is already in the list.');
+    var extra = readSettingList('homekareServicesExtra');
+    extra.push({ name: name, unit: cleanText(data.add.unit, 40), monthly: data.add.monthly === true });
+    setSetting(session, 'homekareServicesExtra', JSON.stringify(extra));
+    summary = 'Added Homekare service ' + name + (data.add.monthly === true ? ' (monthly package)' : '');
+  } else if (data.hide || data.show) {
+    var s = findHomekareService(data.hide || data.show);
+    if (!s) throw new Error('That service is not in the list.');
+    var hidden = readSettingList('homekareServicesHidden').filter(function (n) { return serviceKey(n) !== serviceKey(s[0]); });
+    if (data.hide) hidden.push(s[0]);
+    setSetting(session, 'homekareServicesHidden', JSON.stringify(hidden));
+    summary = (data.hide ? 'Hid' : 'Showed again') + ' Homekare service ' + s[0];
+  } else {
+    throw new Error('Nothing to change.');
+  }
+  homekareListCache_ = null;
+  audit(session, 'update_settings', 'Settings', 'homekareServices', null, summary);
+  return homekareCatalogue();
 }
 
 function parseLines(value) {
@@ -1830,6 +1948,265 @@ function svc_importSales(session, type, rows, options) {
     (summary.invalid ? ' (' + summary.invalid + ' rows skipped)' : ''));
   summary.imported = toSave.length;
   return summary;
+}
+
+
+// ---- Incentives.gs ----
+// Incentives.gs — monthly targets per agent and module, and the incentive
+// report behind payouts.
+//
+// Targets (Targets tab): one row per month + agent + module. Each module's
+// target is measured either as revenue (₹ of completed sales, the default)
+// or as a number of completed sales — a setting per module
+// (Settings: targetMeasure_<module>). Managers and above set targets and can
+// copy last month's; agents only ever see their own targets and progress.
+// Hitting a target does not change incentives (to be decided later).
+//
+// Incentive report: completed sales in a month, per agent and module, with
+// the incentive each earned under the agent's rates (Users tab) and the
+// module's rule (Modules.gs). Managers and above only — agents never see
+// incentive amounts. Rates are the current ones: a rate change also changes
+// what earlier months show.
+
+var TARGET_HEADERS = ['ID', 'Month', 'AgentEmail', 'Module', 'Target', 'UpdatedAt', 'UpdatedBy'];
+var TARGET_MEASURES = ['revenue', 'count'];
+
+function getTargetsSheet() { return getOrCreateSheet('Targets', TARGET_HEADERS); }
+
+// 'yyyy-MM'; blank means this month (India time).
+function cleanMonth(value) {
+  var m = cleanText(value, 7);
+  if (!m) return todayKey().slice(0, 7);
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(m)) throw new Error('Month must look like 2026-10.');
+  return m;
+}
+
+// A Month cell back as 'yyyy-MM' (even if Sheets turned it into a date).
+function monthOf(value) {
+  return Object.prototype.toString.call(value) === '[object Date]' ? dateKey(value).slice(0, 7) : String(value || '').slice(0, 7);
+}
+
+function previousMonth(month) {
+  var p = month.split('-').map(Number);
+  return p[1] === 1 ? (p[0] - 1) + '-12' : p[0] + '-' + ('0' + (p[1] - 1)).slice(-2);
+}
+
+function targetMeasure(type) {
+  var v = String(getSetting('targetMeasure_' + type, 'revenue'));
+  return TARGET_MEASURES.indexOf(v) !== -1 ? v : 'revenue';
+}
+
+function targetMeasures() {
+  var out = {};
+  moduleIds().forEach(function (t) { out[t] = targetMeasure(t); });
+  return out;
+}
+
+// Completed sales of a month: { agentEmail: { module: { count, amount, sales: [...] } } }.
+function completedInMonth(month, onlyEmail) {
+  var out = {};
+  moduleIds().forEach(function (type) {
+    sheetToObjects(getSaleSheet(type)).forEach(function (r) {
+      if (!r.ID || r.Status !== 'Completed' || dateKey(r.Date).slice(0, 7) !== month) return;
+      var e = lowerEmail(r.AgentEmail);
+      if (onlyEmail && e !== lowerEmail(onlyEmail)) return;
+      var a = out[e] = out[e] || { name: String(r.AgentName) };
+      var m = a[type] = a[type] || { count: 0, amount: 0, rows: [] };
+      m.count++;
+      m.amount += Number(r.Amount) || 0;
+      m.rows.push(r);
+    });
+  });
+  return out;
+}
+
+// People who can have targets: active agents and managers.
+function targetPeople() {
+  return sheetToObjects(getUsersSheet()).filter(function (u) {
+    return u.ID && isActive(u.Active) && (u.Role === 'agent' || u.Role === 'manager');
+  });
+}
+
+function svc_getTargets(session, month) {
+  month = cleanMonth(month);
+  var isAgent = session.role === 'agent';
+  var measures = targetMeasures();
+  var stored = {};
+  sheetToObjects(getTargetsSheet()).forEach(function (t) {
+    if (monthOf(t.Month) !== month || t.Target === '' || t.Target === null) return;
+    stored[lowerEmail(t.AgentEmail) + '|' + t.Module] = Number(t.Target) || 0;
+  });
+  var done = completedInMonth(month, isAgent ? session.email : null);
+  var people = isAgent ? [{ Email: session.email, Name: session.name }] : targetPeople();
+  var rows = [];
+  people.forEach(function (u) {
+    var e = lowerEmail(u.Email);
+    moduleIds().forEach(function (type) {
+      var target = stored.hasOwnProperty(e + '|' + type) ? stored[e + '|' + type] : null;
+      var got = (done[e] && done[e][type]) || { count: 0, amount: 0 };
+      var achieved = measures[type] === 'count' ? got.count : Math.round(got.amount * 100) / 100;
+      rows.push({
+        agentEmail: String(u.Email), agentName: String(u.Name), module: type, moduleLabel: SALE_TYPES[type],
+        measure: measures[type], target: target, achieved: achieved,
+        percent: target ? Math.round((achieved / target) * 100) : null
+      });
+    });
+  });
+  return { month: month, measures: measures, rows: rows, canEdit: !isAgent };
+}
+
+// entries: [{ agentEmail, module, target }] — a blank target clears it.
+function svc_saveTargets(session, data) {
+  requireRole(session, TEAM_ROLES);
+  data = data || {};
+  var month = cleanMonth(data.month);
+  var entries = Array.isArray(data.entries) ? data.entries : [];
+  if (!entries.length) throw new Error('Nothing to save.');
+  if (entries.length > 2000) throw new Error('Too many targets at once.');
+  var people = {};
+  targetPeople().forEach(function (u) { people[lowerEmail(u.Email)] = u; });
+
+  var clean = entries.map(function (x) {
+    x = x && typeof x === 'object' ? x : {};
+    var u = people[cleanEmail(x.agentEmail)];
+    if (!u) throw new Error('"' + cleanText(x.agentEmail, 80) + '" is not an active agent or manager.');
+    getModule(x.module);
+    var raw = x.target;
+    var value = '';
+    if (raw !== '' && raw !== null && raw !== undefined) {
+      value = Number(raw);
+      if (!isFinite(value) || value < 0 || value > 1e9) throw new Error('Targets must be numbers between 0 and 1,00,00,00,000.');
+      if (targetMeasure(x.module) === 'count' && Math.round(value) !== value) throw new Error(SALE_TYPES[x.module] + ' targets are a number of sales — use whole numbers.');
+      value = Math.round(value * 100) / 100;
+    }
+    return { email: u.Email, module: x.module, target: value };
+  });
+
+  var sheet = getTargetsSheet();
+  var rows = sheetToObjects(sheet);
+  var index = {};
+  rows.forEach(function (r, i) { if (monthOf(r.Month) === month) index[lowerEmail(r.AgentEmail) + '|' + r.Module] = { at: i + 2, row: r }; });
+  var changed = 0;
+  clean.forEach(function (c) {
+    var key = lowerEmail(c.email) + '|' + c.module;
+    var hit = index[key];
+    if (hit) {
+      var before = hit.row.Target === '' ? '' : Number(hit.row.Target);
+      if (before === c.target) return;
+      updateObjectById(sheet, hit.row.ID, { Target: c.target, UpdatedAt: nowIso(), UpdatedBy: session.email });
+      changed++;
+    } else if (c.target !== '') {
+      appendObject(sheet, { ID: newId(), Month: month, AgentEmail: c.email, Module: c.module, Target: c.target, UpdatedAt: nowIso(), UpdatedBy: session.email });
+      changed++;
+    }
+  });
+  if (changed) audit(session, 'update_targets', 'Targets', month, { Changed: { from: '', to: changed } }, 'Updated ' + changed + ' monthly target(s) for ' + month);
+  var out = svc_getTargets(session, month);
+  out.changed = changed;
+  return out;
+}
+
+// Copies one month's targets into another; existing ones are kept unless overwrite.
+function svc_copyTargets(session, data) {
+  requireRole(session, TEAM_ROLES);
+  data = data || {};
+  var to = cleanMonth(data.toMonth);
+  var from = data.fromMonth ? cleanMonth(data.fromMonth) : previousMonth(to);
+  if (from === to) throw new Error('Choose a different month to copy from.');
+  var people = {};
+  targetPeople().forEach(function (u) { people[lowerEmail(u.Email)] = true; });
+  var entries = [];
+  var existing = {};
+  sheetToObjects(getTargetsSheet()).forEach(function (t) {
+    if (monthOf(t.Month) === to && t.Target !== '') existing[lowerEmail(t.AgentEmail) + '|' + t.Module] = true;
+  });
+  var skipped = 0;
+  sheetToObjects(getTargetsSheet()).forEach(function (t) {
+    if (monthOf(t.Month) !== from || t.Target === '' || !people[lowerEmail(t.AgentEmail)] || !MODULES.hasOwnProperty(t.Module)) return;
+    if (existing[lowerEmail(t.AgentEmail) + '|' + t.Module] && data.overwrite !== true) { skipped++; return; }
+    entries.push({ agentEmail: t.AgentEmail, module: t.Module, target: t.Target });
+  });
+  if (!entries.length) {
+    var none = svc_getTargets(session, to);
+    none.copied = 0;
+    none.skipped = skipped;
+    return none;
+  }
+  var out = svc_saveTargets(session, { month: to, entries: entries });
+  out.copied = entries.length;
+  out.skipped = skipped;
+  return out;
+}
+
+function svc_setTargetMeasure(session, data) {
+  requireRole(session, SENIOR_ROLES);
+  data = data || {};
+  getModule(data.module);
+  requireOneOf(String(data.measure), TARGET_MEASURES, 'Target measure');
+  var before = targetMeasure(data.module);
+  if (before !== data.measure) {
+    setSetting(session, 'targetMeasure_' + data.module, data.measure);
+    audit(session, 'update_settings', 'Settings', 'targetMeasure_' + data.module, { Measure: { from: before, to: data.measure } },
+      SALE_TYPES[data.module] + ' targets are now measured as ' + (data.measure === 'count' ? 'number of sales' : 'revenue'));
+  }
+  return targetMeasures();
+}
+
+// ===== Incentive report =====
+function svc_incentiveReport(session, month) {
+  requireRole(session, TEAM_ROLES);
+  month = cleanMonth(month);
+  var rates = {};
+  sheetToObjects(getUsersSheet()).forEach(function (u) { rates[lowerEmail(u.Email)] = u; });
+  var done = completedInMonth(month, null);
+  var round = function (n) { return Math.round(n * 100) / 100; };
+  var totals = { count: 0, amount: 0, incentive: 0, modules: {} };
+  moduleIds().forEach(function (t) { totals.modules[t] = { count: 0, amount: 0, incentive: 0 }; });
+
+  var agents = Object.keys(done).map(function (e) {
+    var a = { agentEmail: e, agentName: done[e].name, modules: {}, count: 0, amount: 0, incentive: 0, sales: [] };
+    moduleIds().forEach(function (type) {
+      var m = done[e][type];
+      var slot = a.modules[type] = { count: 0, amount: 0, incentive: 0 };
+      if (!m) return;
+      var mod = getModule(type);
+      m.rows.forEach(function (r) {
+        var inc = round(incentiveForSale(mod, r, rates[e]));
+        slot.count++;
+        slot.amount += Number(r.Amount) || 0;
+        slot.incentive += inc;
+        a.sales.push({
+          id: String(r.ID), module: type, moduleLabel: SALE_TYPES[type], date: dateKey(r.Date), customerName: String(r.CustomerName),
+          amount: Number(r.Amount) || 0, priceType: String(r.PriceType || ''), detail: String(r.Detail || '').slice(0, 200), incentive: inc
+        });
+      });
+      slot.amount = round(slot.amount);
+      slot.incentive = round(slot.incentive);
+      a.count += slot.count;
+      a.amount += slot.amount;
+      a.incentive += slot.incentive;
+      totals.modules[type].count += slot.count;
+      totals.modules[type].amount += slot.amount;
+      totals.modules[type].incentive += slot.incentive;
+    });
+    a.amount = round(a.amount);
+    a.incentive = round(a.incentive);
+    a.sales.sort(function (x, y) { return x.date < y.date ? -1 : x.date > y.date ? 1 : 0; });
+    totals.count += a.count;
+    totals.amount += a.amount;
+    totals.incentive += a.incentive;
+    return a;
+  }).sort(function (x, y) { return y.incentive - x.incentive || y.amount - x.amount; });
+  totals.amount = round(totals.amount);
+  totals.incentive = round(totals.incentive);
+  moduleIds().forEach(function (t) { totals.modules[t].amount = round(totals.modules[t].amount); totals.modules[t].incentive = round(totals.modules[t].incentive); });
+
+  return {
+    month: month,
+    modules: moduleIds().map(function (t) { return { id: t, label: SALE_TYPES[t], incentive: (MODULES[t].incentive || {}).kind || 'none' }; }),
+    agents: agents,
+    totals: totals
+  };
 }
 
 
@@ -4303,6 +4680,8 @@ function computeDashboardSummary(session) {
       daysRemaining: r.DaysRemaining, overdue: !!r.Overdue, agentName: String(r.AgentName) };
   });
   var pendingDiscounts = isAgent ? null : svc_listPendingDiscounts(session).slice(0, 6);
+  // An agent's own targets for this month (managers see the team target above).
+  var myTargets = isAgent ? svc_getTargets(session, monthPrefix).rows.filter(function (r) { return r.target !== null; }) : null;
 
   return {
     totals: totals,
@@ -4310,6 +4689,7 @@ function computeDashboardSummary(session) {
     modules: modulesList,
     remindersDue: remindersDue,
     pendingDiscounts: pendingDiscounts,
+    myTargets: myTargets,
     agents: agentsArray,
     pipeline: {
       completed: counts.Completed, pending: counts.Pending, cancelled: counts.Cancelled, totalLeads: total,
@@ -4343,6 +4723,7 @@ function setupSpreadsheet() {
   getPatientsSheet();
   getUserRequestsSheet();
   getUserLayoutsSheet();
+  getTargetsSheet();
   getRemindersSheet();
   getActivitiesSheet();
   getListsSheet();
@@ -4468,7 +4849,7 @@ function smokeTestV2() {
     var miss = moduleHeaders(t).filter(function (x) { return h.indexOf(x) === -1; });
     check(n + ' has all its columns', miss.length === 0, miss.join(','));
   });
-  ['SaleActivities', 'Settings', 'Lists', 'AuditLog', 'Reminders', 'Users', 'Patients', 'UserRequests', 'UserLayouts'].forEach(function (n) {
+  ['SaleActivities', 'Settings', 'Lists', 'AuditLog', 'Reminders', 'Users', 'Patients', 'UserRequests', 'UserLayouts', 'Targets'].forEach(function (n) {
     check('tab ' + n + ' exists', !!getSpreadsheet().getSheetByName(n));
   });
   var admin = sheetToObjects(getSheetByName('Users')).filter(function (u) {
@@ -4753,8 +5134,9 @@ function sheetToObjects(sheet) {
 // phone numbers like "+91 98480 12345" from being parsed as a formula.)
 // Digit strings with a leading zero or more than 15 digits (phone numbers,
 // UTRs) would be turned into numbers and lose digits, so keep them as text.
+// Months like "2026-10" (targets) would become dates; keep those as text too.
 function safeCellValue(v) {
-  if (typeof v === 'string' && (/^[=+\-@\t\r]/.test(v) || /^0\d+$/.test(v) || /^\d{16,}$/.test(v))) return "'" + v;
+  if (typeof v === 'string' && (/^[=+\-@\t\r]/.test(v) || /^0\d+$/.test(v) || /^\d{16,}$/.test(v) || /^\d{4}-\d{2}$/.test(v))) return "'" + v;
   return v;
 }
 

@@ -1257,3 +1257,110 @@ test('dashboard widget data stays filtered by role, whatever the layout', () => 
   assert.equal(m.pendingDiscounts.length, 1);
   assert.equal(m.pendingDiscounts[0].DiscountAmount, 100);
 });
+
+// ===== Phase 5: targets, incentives, audit log, catalogue =====
+const thisMonth = () => new Date(Date.now() + 5.5 * 3600 * 1000).toISOString().slice(0, 7);
+const nextMonthOf = (m) => { const [y, mo] = m.split('-').map(Number); return mo === 12 ? `${y + 1}-01` : `${y}-${String(mo + 1).padStart(2, '0')}`; };
+
+test('monthly targets per agent and module: revenue or number of sales, copy last month, agents see only their own', () => {
+  const { call, ctx, admin, arjun, manager } = world();
+  const month = thisMonth();
+  assert.equal(ctx.safeCellValue('2026-10'), "'2026-10", 'months are stored as text, not dates');
+  assert.match(call('getTargets', manager, { month: '2026-13' }).message, /Month must look like/);
+  assert.equal(call('saveTargets', arjun, { month, entries: [{ agentEmail: 'arjun@medunited.in', module: 'medpass', target: 1 }] }).forbidden, true);
+
+  assert.equal(call('setTargetMeasure', manager, { module: 'pharmacy', measure: 'count' }).forbidden, true);
+  ok(call('setTargetMeasure', admin, { module: 'pharmacy', measure: 'count' }));
+  assert.match(call('saveTargets', manager, { month, entries: [{ agentEmail: 'arjun@medunited.in', module: 'pharmacy', target: 2.5 }] }).message, /whole numbers/);
+  assert.match(call('saveTargets', manager, { month, entries: [{ agentEmail: 'ghost@x.in', module: 'medpass', target: 1 }] }).message, /not an active agent/);
+  const saved = ok(call('saveTargets', manager, { month, entries: [
+    { agentEmail: 'arjun@medunited.in', module: 'medpass', target: 2998 },
+    { agentEmail: 'arjun@medunited.in', module: 'pharmacy', target: 4 },
+    { agentEmail: 'divya@medunited.in', module: 'medpass', target: 1499 },
+  ] }));
+  assert.equal(saved.changed, 3);
+
+  // Progress comes from completed sales this month.
+  ok(call('createSale', arjun, { type: 'medpass', data: lead({ status: 'Completed', paymentMethod: 'Cash', billScreenshot: PNG, paymentScreenshot: PNG, members: FAMILY }) }));
+  const mine = ok(call('getTargets', arjun, { month }));
+  assert.equal(mine.canEdit, false);
+  assert.ok(mine.rows.every((r) => r.agentEmail === 'arjun@medunited.in'), 'agents only see their own');
+  const mp = mine.rows.find((r) => r.module === 'medpass');
+  assert.deepEqual([mp.target, mp.achieved, mp.percent, mp.measure], [2998, 1499, 50, 'revenue']);
+  assert.equal(mine.rows.find((r) => r.module === 'pharmacy').measure, 'count');
+  const dash = ok(call('dashboardSummary', arjun)).summary;
+  assert.equal(dash.myTargets.length, 2);
+  assert.equal(ok(call('dashboardSummary', manager)).summary.myTargets, null);
+
+  // Copy into next month; again without overwrite skips; a blank clears.
+  const next = nextMonthOf(month);
+  const copy = ok(call('copyTargets', manager, { toMonth: next }));
+  assert.equal(copy.copied, 3);
+  const again = ok(call('copyTargets', manager, { toMonth: next }));
+  assert.equal(again.copied, 0);
+  assert.equal(again.skipped, 3);
+  ok(call('saveTargets', manager, { month: next, entries: [{ agentEmail: 'divya@medunited.in', module: 'medpass', target: '' }] }));
+  assert.equal(ok(call('getTargets', manager, { month: next })).rows.find((r) => r.agentEmail === 'divya@medunited.in' && r.module === 'medpass').target, null);
+  assert.equal(ok(call('getTargets', manager, { month })).rows.filter((r) => r.target !== null).length, 3, 'the source month is unchanged');
+});
+
+test('incentive report: per agent and module with the sales behind it; never for agents', () => {
+  const { call, admin, arjun, manager } = world();
+  const month = thisMonth();
+  ok(call('updateIncentives', manager, { id: findUser(call, admin, 'arjun@medunited.in').ID, data: { medpassFullRate: 500, medpassDiscountRate: 300, pharmacyIncentivePercent: 10 } }));
+  const done = { status: 'Completed', paymentMethod: 'Cash', billScreenshot: PNG, paymentScreenshot: PNG };
+  const products = [{ name: 'Amlodipine 5mg', quantity: 30, frequency: 'Once a day', unitsPerDose: 1, formType: 'tablet' }];
+  ok(call('createSale', arjun, { type: 'medpass', data: lead({ ...done, members: FAMILY }) }));
+  ok(call('createSale', arjun, { type: 'pharmacy', data: { ...lead({ contact: '9850000001' }), ...done, products, amount: 640 } }));
+  ok(call('createSale', arjun, { type: 'homekare', data: { ...lead({ contact: '9850000002' }), ...done, services: [{ service: 'HOMEKARE - ECG', price: 800 }] } }));
+  ok(call('createSale', arjun, { type: 'pharmacy', data: { ...lead({ contact: '9850000003' }), ...done, products, amount: 999, date: '2020-01-10' } }));
+
+  assert.equal(call('incentiveReport', arjun, { month }).forbidden, true);
+  const rep = ok(call('incentiveReport', manager, { month })).report;
+  assert.equal(rep.month, month);
+  assert.equal(rep.modules.find((m) => m.id === 'homekare').incentive, 'none');
+  const a = rep.agents.find((x) => x.agentEmail === 'arjun@medunited.in');
+  assert.equal(a.modules.medpass.incentive, 500);
+  assert.equal(a.modules.pharmacy.incentive, 64);
+  assert.equal(a.modules.homekare.incentive, 0);
+  assert.equal(a.incentive, 564);
+  assert.equal(a.amount, 1499 + 640 + 800);
+  assert.equal(a.sales.length, 3, 'only this month');
+  assert.equal(rep.totals.incentive, 564);
+  assert.equal(ok(call('incentiveReport', manager, { month: '2020-01' })).report.agents[0].modules.pharmacy.amount, 999);
+});
+
+test('audit log viewer: admins and senior managers, with filters and pages', () => {
+  const { call, admin, arjun, manager } = world();
+  ok(call('createSale', arjun, { type: 'medpass', data: lead() }));
+  ok(call('createSale', arjun, { type: 'medpass', data: lead({ customerName: 'Zubin Irani', contact: '9860000001' }) }));
+  assert.equal(call('listAuditLog', manager, {}).forbidden, true);
+  const all = ok(call('listAuditLog', admin, { limit: 2 }));
+  assert.ok(all.total >= 6);
+  assert.equal(all.rows.length, 2);
+  assert.ok(new Date(all.rows[0].date) >= new Date(all.rows[1].date), 'newest first');
+  assert.ok(all.actions.includes('create'));
+  const hit = ok(call('listAuditLog', admin, { q: 'zubin' }));
+  assert.equal(hit.total, 1);
+  assert.match(hit.rows[0].summary, /Zubin Irani/);
+  assert.equal(ok(call('listAuditLog', admin, { user: 'arjun@medunited.in', action: 'create' })).total, 2);
+  assert.equal(ok(call('listAuditLog', admin, { from: '2099-01-01' })).total, 0);
+  assert.equal(ok(call('listAuditLog', admin, { limit: 2, offset: 2 })).rows.length, 2);
+});
+
+test('homekare service list: add and hide in Settings; hidden services still save on older records', () => {
+  const { call, admin, arjun, manager } = world();
+  assert.equal(call('updateHomekareCatalogue', manager, { add: { name: 'HOMEKARE PHYSIOTHERAPY MONTHLY', monthly: true } }).forbidden, true);
+  const list = ok(call('updateHomekareCatalogue', admin, { add: { name: 'HOMEKARE PHYSIOTHERAPY MONTHLY', unit: 'Per month', monthly: true } })).services;
+  assert.equal(list.length, 39);
+  assert.match(call('updateHomekareCatalogue', admin, { add: { name: 'homekare physiotherapy  monthly' } }).message, /already in the list/);
+  const s = ok(call('createSale', arjun, { type: 'homekare', data: { ...lead(), services: [{ service: 'HOMEKARE PHYSIOTHERAPY MONTHLY', price: 9000 }] } })).sale;
+  assert.equal(s.MonthlyPackage, true);
+
+  ok(call('updateHomekareCatalogue', admin, { hide: 'HOMEKARE - ECG' }));
+  const mods = ok(call('getModules', arjun, {})).modules.find((m) => m.id === 'homekare').services;
+  assert.equal(mods.find((x) => x.name === 'HOMEKARE - ECG').hidden, true);
+  ok(call('updateSale', arjun, { type: 'homekare', id: s.ID, data: { services: [{ service: 'HOMEKARE - ECG', price: 700 }] } }));
+  ok(call('updateHomekareCatalogue', admin, { show: 'HOMEKARE - ECG' }));
+  assert.equal(ok(call('getModules', arjun, {})).modules.find((m) => m.id === 'homekare').services.find((x) => x.name === 'HOMEKARE - ECG').hidden, false);
+});

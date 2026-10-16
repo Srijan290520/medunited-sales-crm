@@ -21,7 +21,7 @@ Live state: the Sheet's Apps Script project has v2 code saved and
 | 2. Lab & Radiology, HOMEKARE modules | `phase2-new-modules` (stacked on 1b) | **Done on branch, PR open — not deployed** |
 | 3. Bulk reassign | `phase3-bulk-reassign` (stacked on 2) | **Done on branch, PR open — not deployed** |
 | 4. Calmer module pages + widget dashboard | `phase4-calm-ui` (stacked on 3) | **Done on branch, PR open — not deployed** |
-| 5. Settings page, Incentives page, per-agent targets | — | Blocked on user answers (revenue vs count, agent visibility, target→incentive) |
+| 5. Settings page, Incentives page, per-agent targets | `phase5-settings-incentives` (stacked on 4) | **Done on branch, PR open — not deployed** |
 
 ---
 
@@ -414,3 +414,21 @@ pass; single parent allowed on a family pass.
   **Next phase:** 5 (Settings page, Incentives page, per-agent targets) —
   ask the user first: targets revenue or number of sales? agents see own
   target/incentive? does hitting a target affect incentives?
+- **2026-10-16** — Phase 5 answers: agents must **not** see incentives;
+  targets do **not** affect incentives (future). Revenue vs number of sales
+  was not answered → built as a per-module setting (default revenue). Agents
+  do see their own targets (not incentives) — confirm with the user.
+  **Phase 5 built:** `Incentives.gs` (Targets tab, measures, copy last month,
+  incentive report), audit log viewer in `Audit.gs`, editable Homekare list
+  (add / hide via Settings keys homekareServicesExtra / homekareServicesHidden).
+  `safeCellValue` now keeps yyyy-MM as text. UI: SettingsPage (left menu),
+  TargetsSection, IncentivesView, AuditLogViewer, HomekareCatalogueCard;
+  sidebar Incentives + Settings (Users moved inside Settings). 51 backend
+  tests + build green; checked in the demo as manager, agent and senior.
+
+### All five phases are built (PRs #5 → #6 → #7 → #8 → #9 → Phase 5 PR).
+**Remaining / later (from the user):** going live (deploy at the end —
+README "Going live with Patients" covers every new file and tab); Medpass
+renewal rules; Homekare tracking (visits, staff); incentives for Homekare and
+Lab; target-based incentive bonuses; a Lab test catalogue. Known limitation:
+incentive report uses current rates (no per-sale snapshot).

@@ -847,6 +847,8 @@ function computeDashboardSummary(session) {
       daysRemaining: r.DaysRemaining, overdue: !!r.Overdue, agentName: String(r.AgentName) };
   });
   var pendingDiscounts = isAgent ? null : svc_listPendingDiscounts(session).slice(0, 6);
+  // An agent's own targets for this month (managers see the team target above).
+  var myTargets = isAgent ? svc_getTargets(session, monthPrefix).rows.filter(function (r) { return r.target !== null; }) : null;
 
   return {
     totals: totals,
@@ -854,6 +856,7 @@ function computeDashboardSummary(session) {
     modules: modulesList,
     remindersDue: remindersDue,
     pendingDiscounts: pendingDiscounts,
+    myTargets: myTargets,
     agents: agentsArray,
     pipeline: {
       completed: counts.Completed, pending: counts.Pending, cancelled: counts.Cancelled, totalLeads: total,

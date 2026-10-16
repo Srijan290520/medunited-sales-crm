@@ -3,15 +3,17 @@ import { User, OptionLists } from '../types';
 import { isTeamRole, isSeniorRole } from '../utils/roles';
 import { api } from '../services/api';
 import { initials } from '../utils/date';
-import { PatientOwnersCard } from './PatientOwnersCard';
-import { MedpassSettingsCard } from './MedpassSettingsCard';
+
+// Shown inside the Settings page, one section at a time.
+export type SettingsSection = 'rates' | 'team-target' | 'lists';
 
 interface SettingsViewProps {
   user: User;
   onToast: (msg: string, type?: 'error' | 'success') => void;
+  section: SettingsSection;
 }
 
-export const SettingsView: React.FC<SettingsViewProps> = ({ user, onToast }) => {
+export const SettingsView: React.FC<SettingsViewProps> = ({ user, onToast, section }) => {
   const isAdmin = isSeniorRole(user.Role); // lists and approvals: admins and senior managers
   const canEditTarget = isTeamRole(user.Role);
 
@@ -198,20 +200,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ user, onToast }) => 
 
   return (
     <div>
-      <div className="topbar">
-        <div>
-          <h1>Incentives &amp; Settings</h1>
-          <p className="subtitle">
-            Configure agent commissions per sale and manage customer inquiry dropdowns
-          </p>
-        </div>
-      </div>
-
-      <main>
-        <MedpassSettingsCard user={user} onToast={onToast} />
-
-        <PatientOwnersCard user={user} onToast={onToast} />
-
+        {section === 'rates' && (<>
         {/* Bulk Apply Card */}
         <div className="card" style={{ marginBottom: '24px' }}>
           <div className="card-title">Bulk Apply Rates to All Agents</div>
@@ -384,12 +373,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ user, onToast }) => 
           </div>
         </div>
 
+        </>)}
+
         {/* Monthly Revenue Target (Manager & Admin) */}
-        {canEditTarget && (
+        {section === 'team-target' && canEditTarget && (
           <div className="card">
-            <div className="card-title">Monthly Revenue Target</div>
+            <div className="card-title">Team target this month (₹)</div>
             <p className="muted small-text" style={{ marginBottom: '16px' }}>
-              The goal shown in the dashboard's Target &amp; Goal Tracking banner (in ₹).
+              The whole team's revenue goal, shown on managers' dashboards. Per-agent targets are below.
             </p>
             <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
               <input
@@ -409,7 +400,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ user, onToast }) => 
         )}
 
         {/* Admin Acquisition & Lost Options Customization */}
-        {isAdmin && (
+        {section === 'lists' && !isAdmin && <div className="card"><p className="muted">Only admins and senior managers change the dropdown lists.</p></div>}
+        {section === 'lists' && isAdmin && (
           <div className="card">
             <div className="card-title">Acquisition &amp; Lost Reasons Options (Admin Only)</div>
             <p className="muted small-text" style={{ marginBottom: '16px' }}>
@@ -455,7 +447,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ user, onToast }) => 
             </div>
           </div>
         )}
-      </main>
     </div>
   );
 };
