@@ -169,7 +169,7 @@ All new writes in `WRITE_ACTIONS`, under the lock, `audit(...)`.
 
 ### Commit order
 
-1. `SmokeTest.gs` into repo
+1. ~~`SmokeTest.gs` into repo~~ ✅ (38661b7)
 2. Module config + engine refactor (no behaviour change)
 3. Patients tab, `PatientID`, owner resolution on create/import
 4. Per-patient-per-module open rule
@@ -216,9 +216,18 @@ Plan:
 - **New role** above manager (name TBD) — ~95% of admin access; approves
   discounts. Role hierarchy in `Auth.gs` (`requireRole` → rank-based).
 
-Open questions for 1b: see chat of 2026-10-16 (price 1499 vs 1500, 4th
-child, single parent, age vs DOB, new role name + what it can't do, OP fee
-max, revenue = pass price or cash collected).
+Answers (2026-10-16):
+
+- Price **₹1499**; with a 3rd child **₹1874**.
+- Members are recorded with **date of birth** (under-21 checked on the sale date).
+- New role ≈ 95% of admin: everything except **managing admin accounts and
+  hard deletes**. It **approves discounts and deactivation requests**.
+  Working name `senior_manager` / "Senior Manager" until the user names it.
+- OP conversion: **revenue and incentive count the full pass price**; the OP
+  fee shows as a discount on the bill. OP credit is capped at the pass price.
+
+Still open for 1b: role name; 4th child allowed (+₹375 each?) or separate
+pass; single parent allowed on a family pass.
 
 ---
 
@@ -236,3 +245,8 @@ max, revenue = pass price or cash collected).
   It also still has a 123-char `Leads.gs` stub that the repo deleted. Copying
   `SmokeTest.gs` via Chrome failed: the extension redacts lines mentioning
   session tokens. Need the user to paste it (or rewrite it from scratch).
+- **2026-10-16** — User pasted SmokeTest.gs → committed to `apps-script/`
+  (ping now checks `API_VERSION`), plus a backend test running it (23 tests
+  green, build green). Fixed `scripts/build-demo-backend.mjs` on Windows.
+  1b answers recorded above. **Next:** wait for explicit OK on plan v2, then
+  commit 2 of Phase 1 (module config + engine refactor).
