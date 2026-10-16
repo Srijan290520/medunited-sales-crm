@@ -60,17 +60,78 @@ var HOMEKARE_SERVICES = [
   ['HOMEKARE VITALS AND GRBS', 'Per visit', false]
 ];
 
-function homekareCatalogue() {
-  return HOMEKARE_SERVICES.map(function (s) { return { name: s[0], unit: s[1], monthly: s[2] }; });
+// The list in use: the built-in services above, plus any added in Settings
+// (homekareServicesExtra), with some hidden from the picker
+// (homekareServicesHidden). Hidden services stay valid, so older records
+// that use them still save. Nothing is ever deleted.
+var homekareListCache_ = null; // one read per request; cleared when the list changes
+
+function serviceKey(name) { return cleanText(name, 200).toLowerCase().replace(/\s+/g, ' '); }
+
+function readSettingList(key) {
+  try {
+    var v = JSON.parse(getSetting(key, '[]') || '[]');
+    return Array.isArray(v) ? v : [];
+  } catch (e) {
+    return [];
+  }
 }
 
-// Matching ignores case and repeated spaces, then returns the official name.
+function homekareServiceList() {
+  if (homekareListCache_) return homekareListCache_;
+  var hidden = {};
+  readSettingList('homekareServicesHidden').forEach(function (n) { hidden[serviceKey(n)] = true; });
+  var list = HOMEKARE_SERVICES.map(function (s) { return { name: s[0], unit: s[1], monthly: s[2], builtIn: true }; });
+  readSettingList('homekareServicesExtra').forEach(function (x) {
+    if (x && x.name) list.push({ name: String(x.name), unit: String(x.unit || ''), monthly: x.monthly === true, builtIn: false });
+  });
+  list.forEach(function (x) { x.hidden = !!hidden[serviceKey(x.name)]; });
+  homekareListCache_ = list;
+  return list;
+}
+
+function homekareCatalogue() {
+  return homekareServiceList().map(function (s) {
+    return { name: s.name, unit: s.unit, monthly: s.monthly, hidden: s.hidden, builtIn: s.builtIn };
+  });
+}
+
+// Matching ignores case and repeated spaces, then returns [name, unit, monthly].
 function findHomekareService(name) {
-  var key = cleanText(name, 200).toLowerCase().replace(/\s+/g, ' ');
-  for (var i = 0; i < HOMEKARE_SERVICES.length; i++) {
-    if (HOMEKARE_SERVICES[i][0].toLowerCase().replace(/\s+/g, ' ') === key) return HOMEKARE_SERVICES[i];
+  var key = serviceKey(name);
+  var list = homekareServiceList();
+  for (var i = 0; i < list.length; i++) {
+    if (serviceKey(list[i].name) === key) return [list[i].name, list[i].unit, list[i].monthly];
   }
   return null;
+}
+
+// Admin or senior manager: { add: { name, unit, monthly } } | { hide: name } | { show: name }.
+function svc_updateHomekareCatalogue(session, data) {
+  requireRole(session, SENIOR_ROLES);
+  data = data || {};
+  var summary;
+  if (data.add) {
+    var name = cleanText(data.add.name, 120);
+    if (name.length < 3) throw new Error('Give the service a name (at least 3 characters).');
+    if (findHomekareService(name)) throw new Error('"' + name + '" is already in the list.');
+    var extra = readSettingList('homekareServicesExtra');
+    extra.push({ name: name, unit: cleanText(data.add.unit, 40), monthly: data.add.monthly === true });
+    setSetting(session, 'homekareServicesExtra', JSON.stringify(extra));
+    summary = 'Added Homekare service ' + name + (data.add.monthly === true ? ' (monthly package)' : '');
+  } else if (data.hide || data.show) {
+    var s = findHomekareService(data.hide || data.show);
+    if (!s) throw new Error('That service is not in the list.');
+    var hidden = readSettingList('homekareServicesHidden').filter(function (n) { return serviceKey(n) !== serviceKey(s[0]); });
+    if (data.hide) hidden.push(s[0]);
+    setSetting(session, 'homekareServicesHidden', JSON.stringify(hidden));
+    summary = (data.hide ? 'Hid' : 'Showed again') + ' Homekare service ' + s[0];
+  } else {
+    throw new Error('Nothing to change.');
+  }
+  homekareListCache_ = null;
+  audit(session, 'update_settings', 'Settings', 'homekareServices', null, summary);
+  return homekareCatalogue();
 }
 
 function parseLines(value) {

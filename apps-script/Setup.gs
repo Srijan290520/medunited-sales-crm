@@ -10,6 +10,7 @@ function setupSpreadsheet() {
   getPatientsSheet();
   getUserRequestsSheet();
   getUserLayoutsSheet();
+  getTargetsSheet();
   getRemindersSheet();
   getActivitiesSheet();
   getListsSheet();

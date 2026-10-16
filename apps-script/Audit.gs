@@ -164,3 +164,43 @@ function auditHistoryFor(entityIds, limit) {
   out.sort(function (a, b) { return new Date(b.Date) - new Date(a.Date); });
   return limit ? out.slice(0, limit) : out;
 }
+
+// ===== Audit log viewer (Settings → Audit log) =====
+// Admins and senior managers only: summaries name patients and amounts.
+// Filters: q (text in summary, entity id or user), user (email), action,
+// from / to ('yyyy-MM-dd', India time). Newest first, in pages.
+function svc_listAuditLog(session, data) {
+  requireRole(session, SENIOR_ROLES);
+  data = data || {};
+  var q = cleanText(data.q, 100).toLowerCase();
+  var userEmail = cleanEmail(data.user);
+  var action = cleanText(data.action, 40);
+  var from = optionalDateKey(data.from, 'From');
+  var to = optionalDateKey(data.to, 'To');
+  var limit = Math.min(200, Math.max(1, Number(data.limit) || 50));
+  var offset = Math.max(0, Number(data.offset) || 0);
+  var rows = sheetToObjects(getAuditSheet()).map(function (r, i) { r._i = i; return r; }).filter(function (r) {
+    if (userEmail && lowerEmail(r.UserEmail) !== userEmail) return false;
+    if (action && String(r.Action) !== action) return false;
+    var day = r.Timestamp ? Utilities.formatDate(new Date(r.Timestamp), APP_TIMEZONE, 'yyyy-MM-dd') : '';
+    if (from && day < from) return false;
+    if (to && day > to) return false;
+    if (q && (String(r.Summary) + ' ' + r.EntityID + ' ' + r.UserName + ' ' + r.UserEmail + ' ' + r.Entity).toLowerCase().indexOf(q) === -1) return false;
+    return true;
+  });
+  rows.sort(function (a, b) { return (new Date(b.Timestamp) - new Date(a.Timestamp)) || (b._i - a._i); });
+  var actions = {};
+  sheetToObjects(getAuditSheet()).forEach(function (r) { if (r.Action) actions[String(r.Action)] = true; });
+  return {
+    total: rows.length,
+    offset: offset,
+    actions: Object.keys(actions).sort(),
+    rows: rows.slice(offset, offset + limit).map(function (r) {
+      return {
+        id: String(r.ID || ''), date: isoString(r.Timestamp), userName: String(r.UserName || ''), userEmail: String(r.UserEmail || ''),
+        role: String(r.Role || ''), action: String(r.Action || ''), entity: String(r.Entity || ''), entityId: String(r.EntityID || ''),
+        summary: String(r.Summary || defaultAuditSummary(r)), changes: auditChangesForClient(r.Changes)
+      };
+    })
+  };
+}
