@@ -336,3 +336,8 @@ pass; single parent allowed on a family pass.
   the Reminders page next to refill reminders, same "contacted / not
   interested" flow, owned by the patient's agent and moving with them on
   reassign. Days-before setting editable later.
+- **2026-10-16** — User: **Homekare tracking (visit dates, days/visits,
+  staff) → discuss later.** So Phase 2 Homekare has no extra tracking fields;
+  the monthly-package reminder uses the record Date as the start (end = Date
+  + 1 month, reminder 5 days before). Fields can be added later via the
+  module config (extraHeaders) without touching existing rows.
