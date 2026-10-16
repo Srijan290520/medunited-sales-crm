@@ -195,6 +195,12 @@ export const api = {
   // ----- Patients (owners, migration, conflicts) -----
   reassignPatient: (data: { contact?: string; patientId?: string; agentEmail: string; scope?: 'household' | 'person'; reason?: string }) =>
     call('reassignPatient', data),
+  // Bulk reassign (managers and above). Each is a dry run unless dryRun is false.
+  bulkReassign: (data: { type: SaleType; ids: string[]; agentEmail: string; scope: 'household' | 'person'; dryRun: boolean; reason?: string }) =>
+    call('bulkReassign', data),
+  importReassignments: (data: { type: SaleType; rows: { _row: number; id: string; agentEmail: string }[]; scope: 'household' | 'person'; dryRun: boolean; fileName?: string }) =>
+    call('importReassignments', data),
+  handoverAgent: (data: { fromEmail: string; toEmail: string; dryRun: boolean; reason?: string }) => call('handoverAgent', data),
   migratePatients: (dryRun: boolean) => call('migratePatients', { dryRun }),
   listPatientConflicts: () => call('listPatientConflicts'),
   resolvePatientConflict: (data: { contact: string; agentEmail?: string; assignments?: { patientId?: string; name?: string; agentEmail: string }[] }) =>

@@ -25,6 +25,7 @@ import { MedpassMembersEditor, MedpassQuoteBox, medpassQuote } from './MedpassFi
 import { PendingDiscountsPanel } from './PendingDiscountsPanel';
 import { HomekareServicesEditor, LabTestsEditor, LabTrackingFields, ServiceDraft, TestDraft, LabTracking, linesTotal } from './LineItemEditors';
 import { MODULE_TEXT } from '../modules';
+import { BulkReassignModal } from './BulkReassignModal';
 import { formatMoney, formatDate, formatDateTime, formatTimeAgo, initials, todayKey } from '../utils/date';
 import { exportToCsv, CsvColumn } from '../utils/exportCsv';
 import { readScreenshot } from '../utils/image';
@@ -44,6 +45,7 @@ const samePersonName = (a: string, b: string) => !!normName(b) && normName(a) ==
 
 // The importer pulls in the Excel/CSV parsers, so it's only downloaded when opened.
 const ImportModal = lazy(() => import('./ImportModal').then((m) => ({ default: m.ImportModal })));
+const ReassignFileModal = lazy(() => import('./ReassignFileModal').then((m) => ({ default: m.ReassignFileModal })));
 
 const EMPTY_LAB: LabTracking = { homeCollection: false, collectionDate: '', appointmentDate: '', reportDeliveredOn: '', reportDeliveredVia: '' };
 
@@ -88,6 +90,10 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, moduleInfo, user, on
 
   const [agentRoster, setAgentRoster] = useState<User[]>([]);
   const [importOpen, setImportOpen] = useState<boolean>(false);
+  // Bulk reassign (managers and above): ticked records in the table, or a file.
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [bulkOpen, setBulkOpen] = useState<boolean>(false);
+  const [refileOpen, setRefileOpen] = useState<boolean>(false);
 
   // Proof Modal
   const [proofModal, setProofModal] = useState<{ title: string; url: string; attachment?: AttachmentRef | null } | null>(null);
@@ -1044,6 +1050,18 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, moduleInfo, user, on
             <span>Import</span>
           </button>
 
+          {canManageAll && (
+            <button
+              type="button"
+              className="secondary"
+              onClick={() => setRefileOpen(true)}
+              title="Export CSV, change the Assigned Agent Email column, and load the file to reassign"
+              style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '7px 13px', fontWeight: 600 }}
+            >
+              <span>Reassign from file</span>
+            </button>
+          )}
+
           <div className="view-toggle">
             <button
               type="button"
@@ -1410,12 +1428,31 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, moduleInfo, user, on
         )}
 
         {/* Table View */}
+        {canManageAll && viewMode === 'board' && (
+          <p className="muted small-text" style={{ margin: '0 0 8px' }}>To reassign many records at once, switch to the table view and tick them.</p>
+        )}
+
+        {viewMode === 'table' && canManageAll && selectedIds.length > 0 && (
+          <div className="contact-check" style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '10px' }}>
+            <strong>{selectedIds.length} selected</strong>
+            <button type="button" onClick={() => setBulkOpen(true)} style={{ padding: '5px 12px' }}>Reassign to…</button>
+            <button type="button" className="secondary" onClick={() => setSelectedIds([])} style={{ padding: '5px 12px' }}>Clear</button>
+          </div>
+        )}
+
         {viewMode === 'table' && (
           <div className="table-card">
             <div className="table-container">
               <table className="data-table">
                 <thead>
                   <tr>
+                    {canManageAll && (
+                      <th style={{ width: '32px' }}>
+                        <input type="checkbox" aria-label="Select all shown records"
+                          checked={filteredSales.length > 0 && filteredSales.every((s) => selectedIds.includes(s.ID))}
+                          onChange={(e) => setSelectedIds(e.target.checked ? filteredSales.map((s) => s.ID) : [])} />
+                      </th>
+                    )}
                     <th>Customer</th>
                     <th>Status</th>
                     <th>Temp</th>
@@ -1432,7 +1469,7 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, moduleInfo, user, on
                 <tbody>
                   {filteredSales.length === 0 ? (
                     <tr>
-                      <td colSpan={canManageAll ? 11 : 10} style={{ textAlign: 'center', padding: '24px', color: 'var(--text-muted)' }}>
+                      <td colSpan={canManageAll ? 12 : 10} style={{ textAlign: 'center', padding: '24px', color: 'var(--text-muted)' }}>
                         No records match current criteria.
                       </td>
                     </tr>
@@ -1448,6 +1485,12 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, moduleInfo, user, on
                           onClick={() => openEditModal(s)}
                           style={{ cursor: 'pointer' }}
                         >
+                          {canManageAll && (
+                            <td onClick={(e) => e.stopPropagation()}>
+                              <input type="checkbox" aria-label={`Select ${s.CustomerName}`} checked={selectedIds.includes(s.ID)}
+                                onChange={(e) => setSelectedIds((ids) => (e.target.checked ? [...ids, s.ID] : ids.filter((x) => x !== s.ID)))} />
+                            </td>
+                          )}
                           <td>
                             <strong>{s.CustomerName}</strong>
                             {s.DoNotCall && <span className="dnd-tag" style={{ marginLeft: '6px' }}>DND</span>}
@@ -3781,6 +3824,36 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, moduleInfo, user, on
               </div>
             </div>
           </>
+        )}
+
+        {bulkOpen && (
+          <BulkReassignModal
+            type={type}
+            ids={selectedIds}
+            agents={agentRoster}
+            onClose={() => setBulkOpen(false)}
+            onDone={(msg) => {
+              setBulkOpen(false);
+              setSelectedIds([]);
+              onToast(msg, 'success');
+              loadData();
+            }}
+          />
+        )}
+
+        {refileOpen && (
+          <Suspense fallback={null}>
+            <ReassignFileModal
+              type={type}
+              label={moduleLabel}
+              onClose={() => setRefileOpen(false)}
+              onDone={(msg) => {
+                setRefileOpen(false);
+                onToast(msg, 'success');
+                loadData();
+              }}
+            />
+          </Suspense>
         )}
 
         {importOpen && (

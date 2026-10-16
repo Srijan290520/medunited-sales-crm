@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { DeactivateUserModal } from './DeactivateUserModal';
 import { UserRequestsPanel } from './UserRequestsPanel';
+import { HandoverModal } from './HandoverModal';
 import { User, UserRole } from '../types';
 import { isTeamRole, isSeniorRole, isAdminRole, ROLE_LABELS } from '../utils/roles';
 import { api } from '../services/api';
@@ -34,6 +35,7 @@ export const UsersView: React.FC<UsersViewProps> = ({ user, onToast }) => {
 
   // Deactivation always names a successor (see DeactivateUserModal).
   const [deactivateTarget, setDeactivateTarget] = useState<User | null>(null);
+  const [handoverFrom, setHandoverFrom] = useState<User | null>(null);
   const [requestsKey, setRequestsKey] = useState<number>(0);
 
   const openDeleteUserModal = (targetUser: User) => {
@@ -328,6 +330,17 @@ export const UsersView: React.FC<UsersViewProps> = ({ user, onToast }) => {
                       </td>
                       <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
                         <div style={{ display: 'inline-flex', gap: '8px' }}>
+                          {canManageAll && (u.Role === 'agent' || u.Role === 'manager') && (
+                            <button
+                              type="button"
+                              className="secondary"
+                              style={{ padding: '5px 12px', fontSize: '0.8rem', borderRadius: '6px' }}
+                              onClick={() => setHandoverFrom(u)}
+                              title="Move all of their patients and open records to someone else"
+                            >
+                              Hand over
+                            </button>
+                          )}
                           {isSeniorRole(user.Role) && (isAdminRole(user.Role) || u.Role !== 'admin') && (
                             <button
                               type="button"
@@ -449,6 +462,18 @@ export const UsersView: React.FC<UsersViewProps> = ({ user, onToast }) => {
               </form>
             </div>
           </>
+        )}
+
+        {handoverFrom && (
+          <HandoverModal
+            from={handoverFrom}
+            team={users}
+            onClose={() => setHandoverFrom(null)}
+            onDone={(msg) => {
+              setHandoverFrom(null);
+              onToast(msg, 'success');
+            }}
+          />
         )}
 
         {deactivateTarget && (
