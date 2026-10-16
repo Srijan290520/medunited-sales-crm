@@ -34,7 +34,7 @@ function openWorkOf(world, email) {
   world.records.forEach(function (x) { if (lowerEmail(x.row.AgentEmail) === e) ensureHousehold(world, recordContactKey(x.row)); });
   var patients = world.patients.filter(function (p) { return p.OwnerStatus === PATIENT_OWNED && lowerEmail(p.OwnerEmail) === e; });
   var records = world.records.filter(function (x) { return x.row.Status === 'Pending' && lowerEmail(x.row.AgentEmail) === e; });
-  var reminders = sheetToObjects(getSheetByName('Reminders')).filter(function (r) {
+  var reminders = sheetToObjects(getRemindersSheet()).filter(function (r) {
     return r.Status === 'Active' && lowerEmail(r.AgentEmail) === e;
   });
   return { patients: patients, records: records, reminders: reminders };
@@ -62,7 +62,7 @@ function handOverWork(session, world, user, successor, why) {
   });
 
   var reminders = res.reminders;
-  var remSheet = getSheetByName('Reminders');
+  var remSheet = getRemindersSheet();
   sheetToObjects(remSheet).forEach(function (r) {
     if (r.Status !== 'Active' || lowerEmail(r.AgentEmail) !== e) return;
     var patch = { AgentEmail: successor.email, AgentName: successor.name, Reassigned: true, UpdatedAt: nowIso() };

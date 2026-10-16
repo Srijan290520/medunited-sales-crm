@@ -1,4 +1,8 @@
-// Reminders.gs — medicine refill reminders for Pharmacy sales.
+// Reminders.gs — follow-up reminders on the Reminders page:
+//   refill   Pharmacy medicines running out (below)
+//   renewal  monthly Homekare packages ending (see Homekare.gs)
+// Rows saved before Kind/SaleType/SaleID existed are Pharmacy refills
+// (linked by PharmacySaleID).
 //
 // Each Pharmacy sale can carry multiple products (name, quantity, dosing
 // frequency). From that we compute when each product runs out, and surface
@@ -13,6 +17,16 @@ var FREQUENCY_DOSES_PER_DAY = {
   'Twice a day': 2,
   'Thrice a day': 3
 };
+
+var REMINDER_HEADERS = ['ID', 'PharmacySaleID', 'AgentEmail', 'AgentName', 'Reassigned', 'CustomerName', 'Contact',
+  'Products', 'SaleDate', 'Status', 'ResolutionReason', 'AttemptCount', 'LastAttemptDate', 'CreatedAt', 'UpdatedAt',
+  'Kind', 'SaleType', 'SaleID', 'PatientID', 'Detail', 'EndDate', 'DueDate'];
+
+function getRemindersSheet() { return getOrCreateSheet('Reminders', REMINDER_HEADERS); }
+
+// The record a reminder belongs to (old refill rows only have PharmacySaleID).
+function reminderSaleId(r) { return String(r.SaleID || r.PharmacySaleID || ''); }
+function reminderKind(r) { return r.Kind === 'renewal' ? 'renewal' : 'refill'; }
 
 var REMINDER_ATTEMPT_ESCALATE_DAYS = 3; // flag for manager attention after this many days of failed contact attempts
 
@@ -157,8 +171,8 @@ function validateProducts(products, allowEmpty) {
 // Called after a Pharmacy sale is saved. Creates or refreshes the reminder
 // row for that sale, or removes it if the sale is no longer Completed.
 function syncReminderForSale(sale) {
-  var reminders = getSheetByName('Reminders');
-  var existing = sheetToObjects(reminders).find(function (r) { return String(r.PharmacySaleID) === String(sale.ID); });
+  var reminders = getRemindersSheet();
+  var existing = sheetToObjects(reminders).find(function (r) { return reminderKind(r) === 'refill' && reminderSaleId(r) === String(sale.ID); });
 
   var products = [];
   try { products = JSON.parse(sale.Products || '[]'); } catch (e) { products = []; }
@@ -193,6 +207,10 @@ function syncReminderForSale(sale) {
     appendObject(reminders, {
       ID: newId(),
       PharmacySaleID: sale.ID,
+      Kind: 'refill',
+      SaleType: 'pharmacy',
+      SaleID: sale.ID,
+      PatientID: sale.PatientID || '',
       AgentEmail: sale.AgentEmail,
       AgentName: sale.AgentName,
       Reassigned: false,
@@ -211,20 +229,36 @@ function syncReminderForSale(sale) {
 }
 
 function removeReminderForSale(saleId) {
-  var reminders = getSheetByName('Reminders');
-  var existing = sheetToObjects(reminders).find(function (r) { return String(r.PharmacySaleID) === String(saleId); });
+  var reminders = getRemindersSheet();
+  var existing = sheetToObjects(reminders).find(function (r) { return reminderKind(r) === 'refill' && reminderSaleId(r) === String(saleId); });
   if (!existing) return;
   var rowIndex = findRowIndexById(reminders, existing.ID);
   if (rowIndex !== -1) reminders.deleteRow(rowIndex);
 }
 
 function sanitizeReminder(r) {
-  var products = [];
-  try { products = JSON.parse(r.Products || '[]'); } catch (e) { products = []; }
-  var urgency = computeReminderUrgency(products, r.SaleDate);
+  var kind = reminderKind(r);
+  var urgency;
+  if (kind === 'renewal') {
+    // Countdown to the end of the monthly package.
+    var end = dateKey(r.EndDate);
+    var left = isDateKey(end) ? keyToDayNumber(end) - keyToDayNumber(todayKey()) : null;
+    urgency = { products: [], daysRemaining: left, overdue: left !== null && left < 0 };
+  } else {
+    var products = [];
+    try { products = JSON.parse(r.Products || '[]'); } catch (e) { products = []; }
+    urgency = computeReminderUrgency(products, r.SaleDate);
+  }
 
   return {
     ID: r.ID,
+    Kind: kind,
+    SaleType: String(r.SaleType || 'pharmacy'),
+    SaleID: reminderSaleId(r),
+    Detail: String(r.Detail || ''),
+    EndDate: dateKey(r.EndDate),
+    DueDate: dateKey(r.DueDate),
+    IsDue: kind === 'renewal' ? !!dateKey(r.DueDate) && dateKey(r.DueDate) <= todayKey() : true,
     PharmacySaleID: r.PharmacySaleID,
     AgentEmail: r.AgentEmail,
     AgentName: r.AgentName,
@@ -246,7 +280,7 @@ function sanitizeReminder(r) {
 }
 
 function svc_listReminders(session, includeResolved) {
-  var rows = sheetToObjects(getSheetByName('Reminders'));
+  var rows = sheetToObjects(getRemindersSheet());
   if (session.role === 'agent') {
     rows = rows.filter(function (r) { return String(r.AgentEmail).toLowerCase() === String(session.email).toLowerCase(); });
   }
@@ -262,7 +296,7 @@ function svc_listReminders(session, includeResolved) {
 }
 
 function svc_markContacted(session, id, outcome) {
-  var sheet = getSheetByName('Reminders');
+  var sheet = getRemindersSheet();
   var rows = sheetToObjects(sheet);
   var existing = rows.find(function (r) { return String(r.ID) === String(id); });
   if (!existing) throw new Error('Reminder not found.');
@@ -295,7 +329,7 @@ function svc_markContacted(session, id, outcome) {
 
 function svc_reassignReminder(session, id, agentEmail) {
   requireRole(session, TEAM_ROLES);
-  var sheet = getSheetByName('Reminders');
+  var sheet = getRemindersSheet();
 
   var agent = sheetToObjects(getSheetByName('Users')).find(function (u) {
     return String(u.Email).toLowerCase() === cleanEmail(agentEmail) && u.Role === 'agent' && isActive(u.Active);

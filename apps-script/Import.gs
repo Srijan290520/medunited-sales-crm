@@ -145,8 +145,8 @@ function svc_importSales(session, type, rows, options) {
 
     var notes = cleanText(r.notes, MAX_LONG_TEXT);
     var detail = cleanText(r.detail, MAX_LONG_TEXT);
-    if (mod.products && detail) {
-      notes = (notes ? notes + '\n' : '') + 'Medicines mentioned: ' + detail;
+    if ((mod.products || mod.lineItems) && detail) {
+      notes = (notes ? notes + '\n' : '') + (mod.products ? 'Medicines mentioned: ' : 'Mentioned: ') + detail;
       detail = '';
     }
 
