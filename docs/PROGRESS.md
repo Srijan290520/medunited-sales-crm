@@ -16,7 +16,7 @@ Live state: the Sheet's Apps Script project has v2 code saved and
 
 | Phase | Branch | Status |
 |---|---|---|
-| 1. One agent per patient (people + households) + module engine | `phase1-patient-ownership` | **Plan v2 written, waiting for OK** |
+| 1. One agent per patient (people + households) + module engine | `phase1-patient-ownership` | **Approved; backend done (32 tests), frontend next** |
 | 1b. Medpass rules + family members + senior role | `phase1b-medpass-rules` | Rules mostly given; a few questions open |
 | 2. Lab & Radiology, HOMEKARE modules | — | Blocked on user input (service list, tests, incentive rules) |
 | 3. Bulk reassign | — | Not started (agent handover partly pulled into Phase 1) |
@@ -170,12 +170,12 @@ All new writes in `WRITE_ACTIONS`, under the lock, `audit(...)`.
 ### Commit order
 
 1. ~~`SmokeTest.gs` into repo~~ ✅ (38661b7)
-2. Module config + engine refactor (no behaviour change)
-3. Patients tab, `PatientID`, owner resolution on create/import
-4. Per-patient-per-module open rule
-5. Patient/household reassign + reminders
-6. Migration + conflict resolution
-7. Deactivation requests + handover
+2. ~~Module config + engine refactor~~ ✅ (5c21ef2)
+3. ~~Patients tab, `PatientID`, owner resolution on create/import~~ ✅ (bdce456)
+4. ~~Per-patient-per-module open rule~~ ✅ (bdce456, same commit)
+5. ~~Patient/household reassign + reminders~~ ✅ (7b448f5)
+6. ~~Migration + conflict resolution~~ ✅ (7e2e29a)
+7. ~~Deactivation requests + handover~~ ✅ (f90ce2d)
 8. Frontend
 9. README + demo rebuild
 
@@ -250,3 +250,16 @@ pass; single parent allowed on a family pass.
   green, build green). Fixed `scripts/build-demo-backend.mjs` on Windows.
   1b answers recorded above. **Next:** wait for explicit OK on plan v2, then
   commit 2 of Phase 1 (module config + engine refactor).
+- **2026-10-16** — Plan v2 approved. User: the CRM **may go live** — treat as
+  production (additive Sheet changes, dry-run migrations, no deletes, tests).
+  Backend for Phase 1 done: Modules.gs, Patients.gs, Handover.gs; 32 backend
+  tests green. Design notes worth knowing:
+  - `loadPatientWorld()` loads Patients + all module rows + Users once per
+    request; changes are written by `savePatientChanges()` only after
+    validation. Rows without PatientID match by phone + `nameKey(name)`.
+  - `ensureHousehold()` lazily creates patients for old rows (in memory on
+    reads; persisted on writes). Several agents on one number → Conflict.
+  - Patient IDs from unsaved (virtual) patients are returned as '' to the
+    browser; it sends the name instead.
+  - Patient owners must be active agents or managers (`requireOwnerCandidate`).
+  **Next:** frontend (step 8), then README + demo rebuild, push, PR.
