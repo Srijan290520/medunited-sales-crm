@@ -28,6 +28,16 @@ Report problems privately to the repository owner, not in public issues.
   can't be removed or demoted; accounts with sales can only be deactivated.
 - Duplicate checks tell other agents only that an open record exists and who
   owns it — never the customer's details.
+- **One agent per patient** is enforced on the server: new records for a
+  patient go to their owner whatever the browser sends; an agent can't move a
+  record onto another agent's patient by editing its phone number, or reopen a
+  record whose patient is now someone else's. The people sharing a phone
+  number are shown only to that number's owner and to managers/admins.
+- Deactivating someone who still handles patients requires a successor; the
+  handover and the deactivation happen in one locked, audited step. Managers
+  can only request it; admins approve.
+- Patient migration never changes a record's agent and never guesses an owner:
+  numbers handled by several agents wait for an admin decision.
 
 ## Data handling
 

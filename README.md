@@ -4,8 +4,12 @@ Tracks Medpass and Pharmacy (home delivery) enquiries from first contact to
 completed sale, with refill reminders, incentives and a full audit trail.
 
 - **Agents** see and work only their own leads and sales.
-- **Managers** see the whole team, reassign work, set incentive rates and the monthly target.
-- **Admins** do everything managers can, plus user accounts, dropdown lists and deletions.
+- **Managers** see the whole team, reassign work, set incentive rates and the monthly target,
+  and ask for agents to be deactivated (naming who takes over).
+- **Admins** do everything managers can, plus user accounts, dropdown lists, deletions,
+  approving deactivations and deciding patient-owner conflicts.
+- **One agent per patient**: every record of a patient, in every module, goes to
+  the agent who handles that patient (see [Patients and owners](#patients-and-owners)).
 
 Every rule is enforced on the server (Apps Script), not just hidden in the
 browser — an agent's session cannot fetch another agent's records.
@@ -25,6 +29,8 @@ browser — an agent's session cannot fetch another agent's records.
 - Admin-only deletion with a mandatory reason; reopen for cancelled and
   (manager-only, with reason) completed sales.
 - Security hardening — see [SECURITY.md](SECURITY.md).
+- **Patients and owners** (one agent per patient and household), patient-level
+  reassign, deactivation with handover. Modules are configuration (`Modules.gs`).
 
 ## How it fits together
 
@@ -34,8 +40,8 @@ Browser (static React app, any host)
    ▼
 Google Apps Script Web App  (apps-script/*.gs)
    │
-   ├── Google Sheet: Users, Medpass, Pharmacy, Reminders, SaleActivities,
-   │                 Lists, Settings, AuditLog (protected)
+   ├── Google Sheet: Users, Medpass, Pharmacy, Patients, Reminders, SaleActivities,
+   │                 UserRequests, Lists, Settings, AuditLog (protected)
    └── Google Drive: "MedUnited Sales CRM Attachments" (private screenshots)
 ```
 
@@ -52,8 +58,8 @@ Apps Script deployment without rebuilding.
    workspace account, not a personal one).
 2. **Extensions → Apps Script.** Delete the default `Code.gs`, then create one
    file per `.gs` file in `apps-script/` and paste each in:
-   `Activities, Attachments, Audit, Auth, Code, Import, Lists, Modules, Reminders,
-   SalesService, Setup, SmokeTest, UserService, Utils`.
+   `Activities, Attachments, Audit, Auth, Code, Handover, Import, Lists, Modules,
+   Patients, Reminders, SalesService, Setup, SmokeTest, UserService, Utils`.
 3. **Project Settings (gear) → "Show appsscript.json manifest file"** → open
    `appsscript.json` and replace it with `apps-script/appsscript.json`.
    *(Or use [clasp](https://github.com/google/clasp): `clasp push` from the
@@ -129,12 +135,64 @@ and the monthly target.
   names are recognised ("Mobile Number", "Lead Source", "Remarks", …).
 - Dates: `YYYY-MM-DD` or `DD/MM/YYYY`.
 - Nothing is saved until you've seen the preview. Rows with problems (missing
-  name, bad phone, duplicate in the file, number that already has an open
-  record, unknown agent, bad date) are listed and skipped; you can download
+  name, bad phone, the same person twice in the file, a person who already has
+  an open record in this module, unknown agent, bad date) are listed and skipped; you can download
   them as a CSV, fix, and import again. Re-importing the same file never
   creates duplicates.
 - Every imported row is a **Pending** lead. Managers/admins choose who gets
   rows without an Agent Email; agents always import for themselves.
+- A row for a patient (or household) someone already handles goes to that
+  agent; the preview shows "Already handled by …" on those rows.
+
+## Patients and owners
+
+A **patient** is a person: a phone number **plus a name**. Relatives often
+share one number, so everyone on a number is a **household**.
+
+- Each patient has one **owner** agent. By default the whole household has the
+  same owner.
+- A new record for a known patient — in any module, entered by anyone — goes
+  to the owner. A new person on a known number goes to the household's owner.
+  Whoever entered it is told ("Already handled by …").
+- One open (Pending) record per patient **per module**: a father and a mother on
+  the same number can each have an open Medpass record.
+- The form shows who handles a number as soon as it is typed. The owner and
+  managers also see the people on it and can pick one; other agents only see
+  who handles it.
+- **Reassign** (manager/admin) moves the patient: everyone on the number, or
+  only this person (a split). All their open records in every module and their
+  active refill reminders move. Completed and cancelled records keep their
+  agent, so incentives stay with whoever closed the sale.
+- Reopening an old record puts it with the patient's current owner.
+- Records show **Also in: <modules>** when the patient has records elsewhere.
+- **Deactivating an agent** always names who takes over. Managers ask (Users
+  page → switch off → choose successor and reason); an admin approves on the
+  same page, which moves all their patients, open records and reminders, then
+  deactivates the account. The server refuses to deactivate someone who still
+  handles patients without a successor.
+
+### Owner conflicts
+
+Records saved before Patients existed are matched by phone + name. If a
+number's records were handled by more than one agent, nobody is guessed: the
+number shows under **Incentives & Settings → Patient owners**, where an admin
+keeps everyone with one agent or chooses an agent per person. Until then, new
+records for that number are saved as entered.
+
+### Going live with Patients (one-time, on the existing Sheet)
+
+1. **Back up**: File → Make a copy of the Sheet.
+2. Paste the new/changed `.gs` files (new: `Handover`, `Modules`, `Patients`).
+3. Run **`setupSpreadsheet`** — adds the `Patients` and `UserRequests` tabs and
+   the `PatientID` column. It never deletes or renames anything.
+4. Run **`migratePatientsDryRun`** and read the log (patients to create,
+   records to link, numbers with more than one agent). Nothing is saved.
+5. Run **`migratePatients`**. It only adds Patients rows and fills empty
+   `PatientID` cells; it never changes who a record belongs to. Safe to rerun.
+   (Admins can also do steps 4–5 from the Patient owners card.)
+6. Run **`smokeTestV2`** — every line should say PASS.
+7. Deploy a **new version** of the web app and the new frontend together.
+8. Resolve any owner conflicts on the Patient owners card.
 
 ## Refill reminders (Pharmacy)
 

@@ -16,7 +16,7 @@ Live state: the Sheet's Apps Script project has v2 code saved and
 
 | Phase | Branch | Status |
 |---|---|---|
-| 1. One agent per patient (people + households) + module engine | `phase1-patient-ownership` | **Approved; backend done (32 tests), frontend next** |
+| 1. One agent per patient (people + households) + module engine | `phase1-patient-ownership` | **Done on branch, PR open — not deployed** |
 | 1b. Medpass rules + family members + senior role | `phase1b-medpass-rules` | Rules mostly given; a few questions open |
 | 2. Lab & Radiology, HOMEKARE modules | — | Blocked on user input (service list, tests, incentive rules) |
 | 3. Bulk reassign | — | Not started (agent handover partly pulled into Phase 1) |
@@ -176,8 +176,12 @@ All new writes in `WRITE_ACTIONS`, under the lock, `audit(...)`.
 5. ~~Patient/household reassign + reminders~~ ✅ (7b448f5)
 6. ~~Migration + conflict resolution~~ ✅ (7e2e29a)
 7. ~~Deactivation requests + handover~~ ✅ (f90ce2d)
-8. Frontend
-9. README + demo rebuild
+8. ~~Frontend~~ ✅ (704d210)
+9. ~~README + demo rebuild~~ ✅
+
+Deferred (on purpose): sidebar built from `getModules` — do it in Phase 2
+when the new modules arrive (the API is ready; the sidebar still lists the
+two modules by hand).
 
 ---
 
@@ -263,3 +267,14 @@ pass; single parent allowed on a family pass.
     browser; it sends the name instead.
   - Patient owners must be active agents or managers (`requireOwnerCandidate`).
   **Next:** frontend (step 8), then README + demo rebuild, push, PR.
+- **2026-10-16** — Phase 1 frontend done and checked in the demo build
+  (household chips, person picker, locked Assign to, reassign household vs
+  person, manager deactivation request → admin approval with handover).
+  README "Patients and owners" + go-live steps; SECURITY updated. 32 backend
+  tests + build green. Branch pushed, PR opened against `v2-react-app`.
+  To preview locally: `npm run build:demo`, then `.claude/launch.json`
+  "demo-preview" serves it at http://localhost:4174/index.demo.html.
+  **Waiting on the user:** review/merge the PR; do the go-live steps in the
+  README on the real Sheet (backup → paste files → setupSpreadsheet →
+  migratePatientsDryRun → migratePatients → smokeTestV2 → new deployment);
+  Phase 1b answers (new role name, 4th child, single parent); Phase 2 inputs.
