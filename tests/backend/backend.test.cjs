@@ -576,3 +576,64 @@ test('records saved before Patients existed: one agent is followed, several are 
   // Father still has his open Medpass record from before.
   assert.match(call('createSale', manager, { type: 'medpass', data: lead({ customerName: 'Father', contact: '9333333333' }) }).message, /already has an open Medpass record/);
 });
+
+test('reassigning moves the household: open records and reminders move, closed sales keep their agent', () => {
+  const { call, arjun, divya, manager, admin } = world();
+  const products = [{ name: 'Amlodipine 5mg', quantity: 30, frequency: 'Once a day', unitsPerDose: 1, formType: 'tablet' }];
+  const raviMp = ok(call('createSale', arjun, { type: 'medpass', data: lead() })).sale;
+  const done = ok(call('createSale', arjun, { type: 'pharmacy', data: { ...lead(), products, status: 'Completed', paymentMethod: 'Card', amount: 640, billScreenshot: PNG, paymentScreenshot: PNG } })).sale;
+  const momPh = ok(call('createSale', arjun, { type: 'pharmacy', data: { ...lead({ customerName: 'Lakshmi Kumar' }), products: [] } })).sale;
+  ok(call('updateIncentives', admin, { id: ok(call('listUsers', admin, {})).users.find((u) => u.Email === 'arjun@medunited.in').ID, data: { pharmacyIncentivePercent: 10 } }));
+
+  assert.equal(call('reassignSale', arjun, { type: 'medpass', id: raviMp.ID, agentEmail: 'divya@medunited.in' }).forbidden, true);
+  const r = ok(call('reassignSale', manager, { type: 'medpass', id: raviMp.ID, agentEmail: 'divya@medunited.in', reason: 'Arjun on leave' }));
+  assert.equal(r.patients, 2);
+  assert.equal(r.moved.length, 2, 'both open records');
+  assert.equal(r.reminders, 1);
+  assert.equal(r.sale.AgentEmail, 'divya@medunited.in');
+
+  assert.equal(ok(call('listSales', divya, { type: 'medpass' })).sales.length, 1);
+  const divPh = ok(call('listSales', divya, { type: 'pharmacy' })).sales;
+  assert.deepEqual(divPh.map((s) => s.ID), [momPh.ID]);
+  const arjPh = ok(call('listSales', arjun, { type: 'pharmacy' })).sales;
+  assert.deepEqual(arjPh.map((s) => s.ID), [done.ID], 'the completed sale stays with its closer');
+  assert.equal(ok(call('listReminders', divya, {})).reminders.length, 1);
+  assert.equal(ok(call('listReminders', arjun, {})).reminders.length, 0);
+  const arjunRow = ok(call('dashboardSummary', manager, {})).summary.agents.find((a) => a.agentEmail === 'arjun@medunited.in');
+  assert.equal(arjunRow.incentive, 64, 'incentive stays with Arjun');
+
+  // New records for the household now go to Divya.
+  const next = ok(call('createSale', arjun, { type: 'medpass', data: lead({ customerName: 'Lakshmi Kumar' }) }));
+  assert.equal(next.sale.AgentEmail, 'divya@medunited.in');
+  assert.match(next.notice, /Divya Agent/);
+});
+
+test('splitting one person out of a household, and reopening follows the owner', () => {
+  const { call, arjun, divya, manager } = world();
+  const ravi = ok(call('createSale', arjun, { type: 'medpass', data: lead() })).sale;
+  const mom = ok(call('createSale', arjun, { type: 'medpass', data: lead({ customerName: 'Lakshmi Kumar' }) })).sale;
+  // Ravi's old enquiry in Pharmacy was lost.
+  const lost = ok(call('createSale', arjun, { type: 'pharmacy', data: { ...lead(), products: [], status: 'Cancelled', lostReason: 'Price too high' } })).sale;
+
+  const r = ok(call('reassignSale', manager, { type: 'medpass', id: mom.ID, agentEmail: 'divya@medunited.in', scope: 'person' }));
+  assert.equal(r.patients, 1);
+  assert.deepEqual(ok(call('listSales', divya, { type: 'medpass' })).sales.map((s) => s.ID), [mom.ID]);
+  assert.deepEqual(ok(call('listSales', arjun, { type: 'medpass' })).sales.map((s) => s.ID), [ravi.ID]);
+  assert.equal(ok(call('checkContact', manager, { contact: '9848012345' })).owners.length, 2);
+
+  // Ravi's household goes to Divya too; Arjun can no longer reopen Ravi's lost record.
+  ok(call('reassignSale', manager, { type: 'medpass', id: ravi.ID, agentEmail: 'divya@medunited.in', scope: 'person' }));
+  const denied = call('reopenSale', arjun, { type: 'pharmacy', id: lost.ID });
+  assert.equal(denied.forbidden, true);
+  assert.match(denied.message, /now handled by Divya Agent/);
+  const reopened = ok(call('reopenSale', manager, { type: 'pharmacy', id: lost.ID })).sale;
+  assert.equal(reopened.AgentEmail, 'divya@medunited.in');
+  assert.equal(reopened.Status, 'Pending');
+
+  // reassignPatient by phone number moves everyone on it.
+  const all = ok(call('reassignPatient', manager, { contact: '9848012345', agentEmail: 'arjun@medunited.in' }));
+  assert.equal(all.patients, 2);
+  assert.equal(all.moved.length, 3);
+  assert.equal(ok(call('checkContact', manager, { contact: '9848012345' })).owner.email, 'arjun@medunited.in');
+  assert.match(call('reassignPatient', manager, { contact: '9848012345', agentEmail: 'boss@medunited.in' }).message, /not found or inactive/, 'admins are not patient owners');
+});

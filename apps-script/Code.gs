@@ -27,6 +27,7 @@ function doPost(e) { return handleRequest(e); }
 var WRITE_ACTIONS = [
   'changePassword',
   'createSale', 'importSales', 'updateSale', 'deleteSale', 'reopenSale', 'reassignSale', 'logSaleActivity',
+  'reassignPatient',
   'createUser', 'updateUser', 'deleteUser', 'updateIncentives',
   'markContacted', 'reassignReminder',
   'updateLists', 'updateMonthlyTarget'
@@ -117,7 +118,9 @@ function dispatch(action, token, p) {
     case 'reopenSale':
       return { error: false, sale: svc_reopenSale(session, p.type, p.id, p.reason) };
     case 'reassignSale':
-      return { error: false, sale: svc_reassignSale(session, p.type, p.id, p.agentEmail) };
+      return Object.assign({ error: false }, svc_reassignSale(session, p.type, p.id, p.agentEmail, p.scope, p.reason));
+    case 'reassignPatient':
+      return Object.assign({ error: false }, svc_reassignPatient(session, p));
     case 'logSaleActivity':
       return Object.assign({ error: false }, svc_logSaleActivity(session, p.type, p.id, p.data || {}));
     case 'getAuditHistory':

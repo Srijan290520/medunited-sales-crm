@@ -615,25 +615,13 @@ function svc_reopenSale(session, type, id, reason) {
   return fullSaleForClient(type, updated);
 }
 
-function svc_reassignSale(session, type, id, agentEmail) {
-  requireRole(session, ['admin', 'manager']);
-  var sheet = getSaleSheet(type);
-  var existing = findSaleRow(type, id);
-  if (!existing) throw new Error('Record not found.');
-  var email = cleanEmail(agentEmail);
-  var agent = sheetToObjects(getSheetByName('Users')).find(function (u) {
-    return String(u.Email).toLowerCase() === email && u.Role === 'agent' && isActive(u.Active);
-  });
-  if (!agent) throw new Error('Target agent not found or inactive.');
-  if (String(existing.AgentEmail).toLowerCase() === email) return saleForClient(existing, activitiesForSale(existing.ID));
-
-  var patch = { AgentEmail: agent.Email, AgentName: agent.Name, UpdatedAt: nowIso() };
-  var updated = updateObjectById(sheet, existing.ID, patch);
-  addActivity(session, type, existing.ID, { Type: 'Note', Notes: 'Reassigned from ' + existing.AgentName + ' to ' + agent.Name + '.' });
-  afterSaleSaved(type, updated);
-  audit(session, 'reassign', saleEntity(type), existing.ID, saleChanges(existing, patch),
-    'Reassigned from ' + existing.AgentName + ' to ' + agent.Name);
-  return saleForClient(updated, activitiesForSale(existing.ID));
+// Reassigning a record reassigns its patient: by default the whole household
+// (scope 'household'), or only this person (scope 'person', a split). All of
+// their open records in every module move; closed ones keep their agent.
+function svc_reassignSale(session, type, id, agentEmail, scope, reason) {
+  var result = svc_reassignPatient(session, { type: type, id: id, agentEmail: agentEmail, scope: scope, reason: reason });
+  var row = findSaleRow(type, id);
+  return { sale: fullSaleForClient(type, row), moved: result.moved, reminders: result.reminders, patients: result.patients };
 }
 
 function svc_deleteSale(session, type, id, reason) {

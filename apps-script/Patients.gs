@@ -297,3 +297,102 @@ function recordExtras(world) {
     };
   };
 }
+
+// ===== Reassigning =====
+// A patient can be handled by an active agent or manager.
+function requireOwnerCandidate(world, email) {
+  var u = activeUser(world, cleanEmail(email));
+  if (!u || ['agent', 'manager'].indexOf(String(u.Role)) === -1) throw new Error('Target agent not found or inactive.');
+  return { email: u.Email, name: u.Name };
+}
+
+// Gives `patients` to `target`: every open record of theirs in every module
+// and their active refill reminders move too. Completed/Cancelled records
+// keep their agent, so incentives stay with whoever closed the sale.
+// Writes as it goes — call inside the script lock, after all checks.
+function movePatients(session, world, patients, target, why) {
+  var ids = {};
+  var keys = {};
+  patients.forEach(function (p) { ids[String(p.ID)] = true; keys[String(p.ContactKey)] = true; });
+  var note = why ? ' Reason: ' + why : '';
+  var moved = [];
+  var reminderSales = {};
+
+  world.records.forEach(function (x) {
+    if (!keys[recordContactKey(x.row)]) return;
+    var p = recordPatient(world, x.row);
+    if (!p || !ids[String(p.ID)]) return;
+    if (getModule(x.type).reminders) reminderSales[String(x.row.ID)] = true;
+    var patch = {};
+    if (!x.row.PatientID) patch.PatientID = p.ID;
+    var moving = x.row.Status === 'Pending' && lowerEmail(x.row.AgentEmail) !== lowerEmail(target.email);
+    if (moving) { patch.AgentEmail = target.email; patch.AgentName = target.name; }
+    if (!Object.keys(patch).length) return;
+    patch.UpdatedAt = nowIso();
+    var before = x.row;
+    x.row = updateObjectById(getSaleSheet(x.type), before.ID, patch);
+    if (!moving) return;
+    addActivity(session, x.type, before.ID, { Type: 'Note', Notes: 'Reassigned from ' + before.AgentName + ' to ' + target.name + '.' + note });
+    audit(session, 'reassign', saleEntity(x.type), before.ID, saleChanges(before, patch),
+      'Reassigned from ' + before.AgentName + ' to ' + target.name + note);
+    moved.push({ type: x.type, id: String(before.ID) });
+  });
+
+  var reminders = 0;
+  var remSheet = getSheetByName('Reminders');
+  sheetToObjects(remSheet).forEach(function (r) {
+    if (r.Status !== 'Active' || !reminderSales[String(r.PharmacySaleID)] || lowerEmail(r.AgentEmail) === lowerEmail(target.email)) return;
+    var patch = { AgentEmail: target.email, AgentName: target.name, Reassigned: true, UpdatedAt: nowIso() };
+    updateObjectById(remSheet, r.ID, patch);
+    audit(session, 'reassign', 'Reminder', r.ID, auditDiff(r, patch), 'Refill reminder moved with the patient to ' + target.name);
+    reminders++;
+  });
+
+  patients.forEach(function (p) {
+    var before = { OwnerEmail: p.OwnerEmail, OwnerName: p.OwnerName, OwnerStatus: p.OwnerStatus };
+    var patch = { OwnerEmail: target.email, OwnerName: target.name, OwnerStatus: PATIENT_OWNED, ConflictAgents: '' };
+    if (before.OwnerEmail === patch.OwnerEmail && before.OwnerStatus === PATIENT_OWNED) return;
+    changePatient(world, p, patch);
+    audit(session, 'reassign', 'Patient', p.ID, auditDiff(before, { OwnerEmail: patch.OwnerEmail, OwnerName: patch.OwnerName, OwnerStatus: patch.OwnerStatus }),
+      p.Name + ' is now handled by ' + target.name + note);
+  });
+
+  // A household with more than one owner has been split on purpose.
+  Object.keys(keys).forEach(function (key) {
+    var split = householdOwners(world, key).length > 1;
+    householdOf(world, key).forEach(function (p) {
+      if (asBool(p.SplitFromHousehold) !== split) changePatient(world, p, { SplitFromHousehold: split });
+    });
+  });
+  return { records: moved, reminders: reminders };
+}
+
+// Manager/admin: hand a patient — or by default their whole household — to
+// another agent. Identify the patient by a record (type + id), a PatientID,
+// or a phone number (always the whole household).
+function svc_reassignPatient(session, data) {
+  requireRole(session, ['admin', 'manager']);
+  data = data || {};
+  var world = loadPatientWorld();
+  var target = requireOwnerCandidate(world, data.agentEmail);
+  var scope = data.scope === 'person' ? 'person' : 'household';
+  var patient = null;
+  if (data.type !== undefined && data.id !== undefined) {
+    getModule(data.type);
+    var rec = world.records.filter(function (x) { return x.type === data.type && String(x.row.ID) === String(data.id); })[0];
+    if (!rec) throw new Error('Record not found.');
+    ensureHousehold(world, recordContactKey(rec.row));
+    patient = recordPatient(world, rec.row);
+  } else if (data.patientId) {
+    patient = world.byId[String(data.patientId)] || null;
+  } else if (data.contact) {
+    var key = phoneKey(data.contact);
+    if (key) { ensureHousehold(world, key); patient = householdOf(world, key)[0] || null; }
+    scope = 'household';
+  }
+  if (!patient) throw new Error('Patient not found.');
+  var group = scope === 'person' ? [patient] : householdOf(world, patient.ContactKey).slice();
+  var result = movePatients(session, world, group, target, cleanText(data.reason, 300));
+  savePatientChanges(world);
+  return { moved: result.records, reminders: result.reminders, patients: group.length, agentName: target.name };
+}
