@@ -1,4 +1,8 @@
-// Reminders.gs — medicine refill reminders for Pharmacy sales.
+// Reminders.gs — follow-up reminders on the Reminders page:
+//   refill   Pharmacy medicines running out (below)
+//   renewal  monthly Homekare packages ending (see Homekare.gs)
+// Rows saved before Kind/SaleType/SaleID existed are Pharmacy refills
+// (linked by PharmacySaleID).
 //
 // Each Pharmacy sale can carry multiple products (name, quantity, dosing
 // frequency). From that we compute when each product runs out, and surface
@@ -13,6 +17,16 @@ var FREQUENCY_DOSES_PER_DAY = {
   'Twice a day': 2,
   'Thrice a day': 3
 };
+
+var REMINDER_HEADERS = ['ID', 'PharmacySaleID', 'AgentEmail', 'AgentName', 'Reassigned', 'CustomerName', 'Contact',
+  'Products', 'SaleDate', 'Status', 'ResolutionReason', 'AttemptCount', 'LastAttemptDate', 'CreatedAt', 'UpdatedAt',
+  'Kind', 'SaleType', 'SaleID', 'PatientID', 'Detail', 'EndDate', 'DueDate'];
+
+function getRemindersSheet() { return getOrCreateSheet('Reminders', REMINDER_HEADERS); }
+
+// The record a reminder belongs to (old refill rows only have PharmacySaleID).
+function reminderSaleId(r) { return String(r.SaleID || r.PharmacySaleID || ''); }
+function reminderKind(r) { return r.Kind === 'renewal' ? 'renewal' : 'refill'; }
 
 var REMINDER_ATTEMPT_ESCALATE_DAYS = 3; // flag for manager attention after this many days of failed contact attempts
 
@@ -34,27 +48,53 @@ function unitsPerDoseOf(product) {
   return n > 0 ? n : 1;
 }
 
-function computeProductStatus(product, saleDateValue) {
+var MEDICINE_FORMS = ['tablet', 'syrup', 'inhaler', 'drops', 'cream', 'injection', 'sachet', 'course'];
+
+// How many days one product line lasts. Mirrors getRefillDays() in the
+// browser's SalesView so the form preview and the server agree.
+function productDaysSupply(product) {
   var dosesPerDay = FREQUENCY_DOSES_PER_DAY[product.frequency] || 1;
-  var unitsPerDose = unitsPerDoseOf(product);
-  var quantity = Number(product.quantity) || 0;
-  var daysSupply = Math.floor(quantity / (dosesPerDay * unitsPerDose));
+  var qty = Number(product.quantity) || 0;
+  var custom = Number(product.customDays) || 0;
+  if (custom > 0) return Math.round(custom);
+  var form = product.formType || 'tablet';
+  var days;
+  if (form === 'syrup') {
+    var vol = (Number(product.bottleVolume) || qty || 100) * (Number(product.bottlesCount) || 1);
+    var ml = Number(product.unitsPerDose) || 5;
+    days = Math.floor(vol / (ml * dosesPerDay));
+  } else if (form === 'inhaler') {
+    var puffs = qty || 200;
+    days = Math.floor(puffs / ((Number(product.unitsPerDose) || 2) * dosesPerDay));
+  } else if (form === 'cream' || form === 'drops') {
+    days = (qty || 1) * 15;
+  } else if (form === 'injection') {
+    days = Math.floor((qty || 300) / (Number(product.unitsPerDose) || 20));
+  } else if (form === 'course') {
+    days = qty || 7;
+  } else {
+    days = Math.floor(qty / (dosesPerDay * unitsPerDoseOf(product)));
+  }
+  return days > 0 ? days : 1;
+}
+
+function computeProductStatus(product, saleDateValue) {
+  var daysSupply = productDaysSupply(product);
 
   var saleKey = dateKey(saleDateValue);
   if (!isDateKey(saleKey)) saleKey = todayKey(); // unreadable date: treat as sold today rather than crash
   var expiryDay = keyToDayNumber(saleKey) + daysSupply;
   var daysRemaining = expiryDay - keyToDayNumber(todayKey());
 
-  return {
-    name: product.name,
-    quantity: quantity,
-    frequency: product.frequency,
-    unitsPerDose: unitsPerDose,
-    daysSupply: daysSupply,
-    expiryDate: dayNumberToKey(expiryDay),
-    daysRemaining: daysRemaining,
-    overdue: daysRemaining < 1
-  };
+  var out = {};
+  Object.keys(product).forEach(function (k) { out[k] = product[k]; });
+  out.quantity = Number(product.quantity) || 0;
+  out.unitsPerDose = unitsPerDoseOf(product);
+  out.daysSupply = daysSupply;
+  out.expiryDate = dayNumberToKey(expiryDay);
+  out.daysRemaining = daysRemaining;
+  out.overdue = daysRemaining < 1;
+  return out;
 }
 
 // The reminder's headline urgency is driven by whichever product runs out
@@ -73,35 +113,66 @@ function computeReminderUrgency(products, saleDateStr) {
 
 function summarizeProducts(products) {
   return products.map(function (p) {
+    if (p.customDays) return p.name + ' (' + p.customDays + '-day course)';
+    if (p.formType === 'syrup') {
+      var vol = (p.bottleVolume || p.quantity) * (p.bottlesCount || 1);
+      return p.name + ' (' + vol + 'ml total, ' + p.unitsPerDose + 'ml ' + p.frequency + ')';
+    }
+    if (p.formType === 'inhaler') return p.name + ' (' + p.quantity + ' puffs, ' + p.unitsPerDose + ' puffs ' + p.frequency + ')';
+    if (p.formType === 'cream' || p.formType === 'drops') return p.name + ' (' + p.quantity + ' ' + (p.unitName || 'unit') + ', ' + p.frequency + ')';
     var perDose = unitsPerDoseOf(p);
     return p.name + ' (x' + p.quantity + ', ' + (perDose !== 1 ? perDose + ' per dose, ' : '') + p.frequency + ')';
   }).join('; ');
 }
 
-function validateProducts(products) {
+function boundedNumber(value, min, max, label) {
+  if (value === undefined || value === null || value === '') return undefined;
+  var n = Number(value);
+  if (isNaN(n) || n < min || n > max) throw new Error(label + ' must be a number between ' + min + ' and ' + max + '.');
+  return n;
+}
+
+// allowEmpty: a Pending pharmacy lead may not know its medicines yet.
+function validateProducts(products, allowEmpty) {
+  if (allowEmpty && Array.isArray(products) && products.length === 0) return [];
   if (!Array.isArray(products) || products.length === 0) {
-    throw new Error('At least one product is required.');
+    throw new Error('At least one medicine is required.');
   }
-  products.forEach(function (p) {
-    if (!p || !String(p.name || '').trim()) throw new Error('Every product needs a name.');
-    var qty = Number(p.quantity);
-    if (isNaN(qty) || qty <= 0) throw new Error('Every product needs a quantity greater than 0.');
-    if (frequencyOptions().indexOf(p.frequency) === -1) throw new Error('Every product needs a valid frequency.');
-    if (p.unitsPerDose !== undefined && p.unitsPerDose !== null && p.unitsPerDose !== '') {
-      var per = Number(p.unitsPerDose);
-      if (isNaN(per) || per <= 0 || per > 50) throw new Error('Units per dose must be a number between 0 and 50 (e.g. 1, 2 or 0.5).');
-    }
-  });
+  if (products.length > 30) throw new Error('A sale can have at most 30 product lines.');
   return products.map(function (p) {
-    return { name: String(p.name).trim(), quantity: Number(p.quantity), frequency: p.frequency, unitsPerDose: unitsPerDoseOf(p) };
+    if (!p || typeof p !== 'object') throw new Error('Invalid product line.');
+    var name = cleanText(p.name, 120);
+    if (!name) throw new Error('Every product needs a name.');
+    var qty = boundedNumber(p.quantity, 0.01, 100000, 'Quantity');
+    if (qty === undefined) throw new Error('Every product needs a quantity greater than 0.');
+    var frequency = p.frequency || 'Once a day';
+    if (frequencyOptions().indexOf(frequency) === -1) throw new Error('Every product needs a valid frequency.');
+    var formType = p.formType || 'tablet';
+    requireOneOf(formType, MEDICINE_FORMS, 'Medicine form');
+    var per = boundedNumber(p.unitsPerDose, 0.01, 500, 'Units per dose');
+    var line = {
+      name: name,
+      quantity: qty,
+      frequency: frequency,
+      unitsPerDose: per === undefined ? 1 : per,
+      formType: formType,
+      unitName: cleanText(p.unitName || (formType === 'syrup' ? 'ml' : formType === 'inhaler' ? 'puffs' : 'tabs'), 20)
+    };
+    var bottleVolume = boundedNumber(p.bottleVolume, 1, 10000, 'Bottle volume');
+    var bottlesCount = boundedNumber(p.bottlesCount, 1, 1000, 'Bottle count');
+    var customDays = boundedNumber(p.customDays, 1, 3650, 'Course length (days)');
+    if (bottleVolume !== undefined) line.bottleVolume = bottleVolume;
+    if (bottlesCount !== undefined) line.bottlesCount = bottlesCount;
+    if (customDays !== undefined) line.customDays = customDays;
+    return line;
   });
 }
 
 // Called after a Pharmacy sale is saved. Creates or refreshes the reminder
 // row for that sale, or removes it if the sale is no longer Completed.
 function syncReminderForSale(sale) {
-  var reminders = getSheetByName('Reminders');
-  var existing = sheetToObjects(reminders).find(function (r) { return String(r.PharmacySaleID) === String(sale.ID); });
+  var reminders = getRemindersSheet();
+  var existing = sheetToObjects(reminders).find(function (r) { return reminderKind(r) === 'refill' && reminderSaleId(r) === String(sale.ID); });
 
   var products = [];
   try { products = JSON.parse(sale.Products || '[]'); } catch (e) { products = []; }
@@ -136,6 +207,10 @@ function syncReminderForSale(sale) {
     appendObject(reminders, {
       ID: newId(),
       PharmacySaleID: sale.ID,
+      Kind: 'refill',
+      SaleType: 'pharmacy',
+      SaleID: sale.ID,
+      PatientID: sale.PatientID || '',
       AgentEmail: sale.AgentEmail,
       AgentName: sale.AgentName,
       Reassigned: false,
@@ -154,20 +229,36 @@ function syncReminderForSale(sale) {
 }
 
 function removeReminderForSale(saleId) {
-  var reminders = getSheetByName('Reminders');
-  var existing = sheetToObjects(reminders).find(function (r) { return String(r.PharmacySaleID) === String(saleId); });
+  var reminders = getRemindersSheet();
+  var existing = sheetToObjects(reminders).find(function (r) { return reminderKind(r) === 'refill' && reminderSaleId(r) === String(saleId); });
   if (!existing) return;
   var rowIndex = findRowIndexById(reminders, existing.ID);
   if (rowIndex !== -1) reminders.deleteRow(rowIndex);
 }
 
 function sanitizeReminder(r) {
-  var products = [];
-  try { products = JSON.parse(r.Products || '[]'); } catch (e) { products = []; }
-  var urgency = computeReminderUrgency(products, r.SaleDate);
+  var kind = reminderKind(r);
+  var urgency;
+  if (kind === 'renewal') {
+    // Countdown to the end of the monthly package.
+    var end = dateKey(r.EndDate);
+    var left = isDateKey(end) ? keyToDayNumber(end) - keyToDayNumber(todayKey()) : null;
+    urgency = { products: [], daysRemaining: left, overdue: left !== null && left < 0 };
+  } else {
+    var products = [];
+    try { products = JSON.parse(r.Products || '[]'); } catch (e) { products = []; }
+    urgency = computeReminderUrgency(products, r.SaleDate);
+  }
 
   return {
     ID: r.ID,
+    Kind: kind,
+    SaleType: String(r.SaleType || 'pharmacy'),
+    SaleID: reminderSaleId(r),
+    Detail: String(r.Detail || ''),
+    EndDate: dateKey(r.EndDate),
+    DueDate: dateKey(r.DueDate),
+    IsDue: kind === 'renewal' ? !!dateKey(r.DueDate) && dateKey(r.DueDate) <= todayKey() : true,
     PharmacySaleID: r.PharmacySaleID,
     AgentEmail: r.AgentEmail,
     AgentName: r.AgentName,
@@ -182,13 +273,14 @@ function sanitizeReminder(r) {
     AttemptCount: Number(r.AttemptCount) || 0,
     NeedsAttention: r.Status === 'Active' && (Number(r.AttemptCount) || 0) > 0 &&
       r.LastAttemptDate && (Date.now() - new Date(r.LastAttemptDate).getTime()) >= REMINDER_ATTEMPT_ESCALATE_DAYS * 24 * 60 * 60 * 1000,
-    LastAttemptDate: r.LastAttemptDate,
-    CreatedAt: r.CreatedAt
+    LastAttemptDate: isoString(r.LastAttemptDate),
+    CreatedAt: isoString(r.CreatedAt),
+    SaleDate: dateKey(r.SaleDate)
   };
 }
 
 function svc_listReminders(session, includeResolved) {
-  var rows = sheetToObjects(getSheetByName('Reminders'));
+  var rows = sheetToObjects(getRemindersSheet());
   if (session.role === 'agent') {
     rows = rows.filter(function (r) { return String(r.AgentEmail).toLowerCase() === String(session.email).toLowerCase(); });
   }
@@ -204,7 +296,7 @@ function svc_listReminders(session, includeResolved) {
 }
 
 function svc_markContacted(session, id, outcome) {
-  var sheet = getSheetByName('Reminders');
+  var sheet = getRemindersSheet();
   var rows = sheetToObjects(sheet);
   var existing = rows.find(function (r) { return String(r.ID) === String(id); });
   if (!existing) throw new Error('Reminder not found.');
@@ -236,11 +328,11 @@ function svc_markContacted(session, id, outcome) {
 }
 
 function svc_reassignReminder(session, id, agentEmail) {
-  requireRole(session, ['admin', 'manager']);
-  var sheet = getSheetByName('Reminders');
+  requireRole(session, TEAM_ROLES);
+  var sheet = getRemindersSheet();
 
   var agent = sheetToObjects(getSheetByName('Users')).find(function (u) {
-    return String(u.Email).toLowerCase() === String(agentEmail).toLowerCase() && u.Role === 'agent';
+    return String(u.Email).toLowerCase() === cleanEmail(agentEmail) && u.Role === 'agent' && isActive(u.Active);
   });
   if (!agent) throw new Error('Target agent not found.');
 

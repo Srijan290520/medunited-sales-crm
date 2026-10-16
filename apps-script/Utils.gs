@@ -62,8 +62,11 @@ function sheetToObjects(sheet) {
 // apostrophe forces plain text; Sheets hides it and doesn't return it from
 // getValues(), so the value reads back exactly as typed. (This also stops
 // phone numbers like "+91 98480 12345" from being parsed as a formula.)
+// Digit strings with a leading zero or more than 15 digits (phone numbers,
+// UTRs) would be turned into numbers and lose digits, so keep them as text.
+// Months like "2026-10" (targets) would become dates; keep those as text too.
 function safeCellValue(v) {
-  if (typeof v === 'string' && /^[=+\-@\t\r]/.test(v)) return "'" + v;
+  if (typeof v === 'string' && (/^[=+\-@\t\r]/.test(v) || /^0\d+$/.test(v) || /^\d{16,}$/.test(v) || /^\d{4}-\d{2}$/.test(v))) return "'" + v;
   return v;
 }
 
@@ -136,8 +139,11 @@ function dateKey(value) {
   return /^\d{4}-\d{2}-\d{2}/.test(s) ? s.slice(0, 10) : s;
 }
 
+// Real calendar days only: "2026-02-31" is rejected (Date.UTC would roll it to March).
 function isDateKey(s) {
-  return /^\d{4}-\d{2}-\d{2}$/.test(String(s)) && !isNaN(keyToDayNumber(s));
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(s))) return false;
+  var n = keyToDayNumber(s);
+  return !isNaN(n) && dayNumberToKey(n) === String(s);
 }
 
 // Whole days since 1970-01-01 for a 'yyyy-MM-dd' key — lets us add and
@@ -165,6 +171,71 @@ function withScriptLock(fn) {
     SpreadsheetApp.flush();
     lock.releaseLock();
   }
+}
+
+// ===== Input hygiene =====
+// Every free-text value from the browser goes through cleanText: control
+// characters are stripped, it's trimmed, and it's cut to a sane length so
+// nobody can stuff megabytes into a single cell.
+var MAX_TEXT = 200;
+var MAX_LONG_TEXT = 2000;
+
+function cleanText(value, maxLen) {
+  var s = String(value === undefined || value === null ? '' : value);
+  s = s.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '').trim();
+  return s.slice(0, maxLen || MAX_TEXT);
+}
+
+function cleanEmail(value) {
+  return cleanText(value, 254).toLowerCase();
+}
+
+function isValidEmail(s) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(s));
+}
+
+function asBool(value) {
+  return value === true || String(value).toUpperCase() === 'TRUE';
+}
+
+// Phone numbers are compared on their last 10 digits, so "+91 98480 12345",
+// "098480-12345" and "9848012345" are all the same customer.
+function phoneKey(value) {
+  var digits = String(value || '').replace(/\D/g, '');
+  if (digits.length < 6) return '';
+  return digits.length > 10 ? digits.slice(-10) : digits;
+}
+
+function requireOneOf(value, allowed, label) {
+  if (allowed.indexOf(value) === -1) throw new Error(label + ' must be one of: ' + allowed.join(', ') + '.');
+}
+
+function optionalDateKey(value, label) {
+  var v = dateKey(value);
+  if (!v) return '';
+  if (!isDateKey(v)) throw new Error(label + ' must be a valid date (YYYY-MM-DD).');
+  return v;
+}
+
+function isoString(value) {
+  if (Object.prototype.toString.call(value) === '[object Date]') return isNaN(value.getTime()) ? '' : value.toISOString();
+  return String(value || '');
+}
+
+// ===== Rate limiting =====
+// A fixed one-minute window per key in CacheService. Stops a stolen or buggy
+// session from hammering the sheet (Apps Script has daily quotas, and the
+// script lock means one runaway client slows everybody down).
+var RATE_LIMIT_PER_MINUTE = 120;
+
+function checkRateLimit(key) {
+  var cache = CacheService.getScriptCache();
+  var bucket = 'rl_' + key + '_' + Math.floor(Date.now() / 60000);
+  var n = Number(cache.get(bucket)) || 0;
+  if (n >= RATE_LIMIT_PER_MINUTE) {
+    throw new Error('Too many requests. Please wait a minute and try again.');
+  }
+  cache.put(bucket, String(n + 1), 120);
 }
 
 function jsonResponse(obj) {

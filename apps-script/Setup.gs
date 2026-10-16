@@ -2,50 +2,71 @@
 // (select the function in the dropdown next to Run, then click Run), not
 // from the web app.
 
+// Creates every tab the CRM uses, or adds any missing columns to tabs that
+// already exist. Safe to run any number of times; it never deletes data.
 function setupSpreadsheet() {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var usersHeaders = ['ID', 'Name', 'Email', 'PasswordHash', 'Salt', 'Role', 'MedpassFullRate', 'MedpassDiscountRate', 'PharmacyIncentivePercent', 'Active', 'CreatedAt'];
-  var saleHeaders = ['ID', 'Date', 'AgentEmail', 'AgentName', 'CustomerName', 'Contact', 'Detail', 'Products', 'Amount', 'Status', 'PriceType', 'PaymentMethod', 'UTR', 'BillScreenshotUrl', 'PaymentScreenshotUrl', 'Notes', 'LeadID', 'CreatedAt'];
-  var reminderHeaders = ['ID', 'PharmacySaleID', 'AgentEmail', 'AgentName', 'Reassigned', 'CustomerName', 'Contact', 'Products', 'SaleDate', 'Status', 'ResolutionReason', 'AttemptCount', 'LastAttemptDate', 'CreatedAt', 'UpdatedAt'];
-
-  ensureSheet(ss, 'Users', usersHeaders);
-  ensureSheet(ss, 'Medpass', saleHeaders);
-  ensureSheet(ss, 'Pharmacy', saleHeaders);
-  ensureSheet(ss, 'Reminders', reminderHeaders);
-  getAuditSheet(); // creates + protects the AuditLog tab if it's missing
-  getLeadsSheet(); getActivitiesSheet(); getListsSheet(); // lead journey tabs (also created automatically on first use)
-
-  Logger.log('Sheets are ready. Now edit and run createFirstAdmin() to create your admin login.');
+  getUsersSheet();
+  moduleIds().forEach(function (type) { getSaleSheet(type); });
+  getPatientsSheet();
+  getUserRequestsSheet();
+  getUserLayoutsSheet();
+  getTargetsSheet();
+  getRemindersSheet();
+  getActivitiesSheet();
+  getListsSheet();
+  getSettingsSheet();
+  getAuditSheet(); // created protected so only the owner can edit it
+  backfillContactKeys_();
+  Logger.log('Sheets are ready. Next: set ADMIN_EMAIL / ADMIN_PASSWORD in Project Settings → Script properties, then run createFirstAdmin().');
 }
 
-function ensureSheet(ss, name, headers) {
-  var sheet = ss.getSheetByName(name);
-  if (!sheet) sheet = ss.insertSheet(name);
-  if (sheet.getLastRow() === 0) {
-    sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
-    sheet.setFrozenRows(1);
-  }
+// Rows saved before v2 have no ContactKey; fill it so duplicate-phone checks see them.
+function backfillContactKeys_() {
+  moduleIds().forEach(function (type) {
+    var sheet = getSaleSheet(type);
+    var headers = sheetHeaders(sheet);
+    var keyCol = headers.indexOf('ContactKey');
+    var contactCol = headers.indexOf('Contact');
+    var lastRow = sheet.getLastRow();
+    if (keyCol === -1 || contactCol === -1 || lastRow < 2) return;
+    var contacts = sheet.getRange(2, contactCol + 1, lastRow - 1, 1).getValues();
+    var keys = sheet.getRange(2, keyCol + 1, lastRow - 1, 1).getValues();
+    var changed = false;
+    for (var i = 0; i < contacts.length; i++) {
+      if (!keys[i][0]) { keys[i][0] = phoneKey(contacts[i][0]); changed = true; }
+    }
+    if (changed) sheet.getRange(2, keyCol + 1, lastRow - 1, 1).setValues(keys);
+  });
 }
 
-// EDIT the email/password below, then select this function and click Run.
-// Change the password again after your first login.
+// Creates the first admin account WITHOUT putting a password in the code:
+//  1. Project Settings (gear icon) → Script properties → add
+//       ADMIN_EMAIL     your work email
+//       ADMIN_PASSWORD  a temporary password (10+ chars, letters and numbers)
+//  2. Run createFirstAdmin.
+// The password property is deleted straight after, and the app makes you
+// choose a new password on first login.
 function createFirstAdmin() {
-  var email = 'you@medunited.example';   // <-- change this
-  var password = 'ChangeMe123!';         // <-- change this
-  var name = 'Admin';
+  var props = PropertiesService.getScriptProperties();
+  var email = cleanEmail(props.getProperty('ADMIN_EMAIL'));
+  var password = String(props.getProperty('ADMIN_PASSWORD') || '');
+  var name = cleanText(props.getProperty('ADMIN_NAME') || 'Admin', 80);
+  if (!email || !password) throw new Error('Set ADMIN_EMAIL and ADMIN_PASSWORD in Project Settings → Script properties first.');
+  if (!isValidEmail(email)) throw new Error('ADMIN_EMAIL is not a valid email address.');
+  validatePasswordStrength(password, email);
 
-  var sheet = getSheetByName('Users');
-  var existing = sheetToObjects(sheet);
-  if (existing.some(function (u) { return String(u.Email).toLowerCase() === email.toLowerCase(); })) {
-    Logger.log('A user with that email already exists — nothing to do.');
+  var sheet = getUsersSheet();
+  if (sheetToObjects(sheet).some(function (u) { return String(u.Email).toLowerCase() === email; })) {
+    props.deleteProperty('ADMIN_PASSWORD');
+    Logger.log('A user with that email already exists — nothing to do. (ADMIN_PASSWORD property removed.)');
     return;
   }
 
   var salt = generateSalt();
-  appendObject(sheet, {
+  var user = {
     ID: newId(),
     Name: name,
-    Email: email.toLowerCase(),
+    Email: email,
     PasswordHash: hashPassword(password, salt),
     Salt: salt,
     Role: 'admin',
@@ -53,15 +74,18 @@ function createFirstAdmin() {
     MedpassDiscountRate: 0,
     PharmacyIncentivePercent: 0,
     Active: true,
-    CreatedAt: nowIso()
-  });
-  Logger.log('Admin user created: ' + email);
+    CreatedAt: nowIso(),
+    MustChangePassword: true
+  };
+  appendObject(sheet, user);
+  props.deleteProperty('ADMIN_PASSWORD');
+  audit({ email: 'setup', name: 'Setup script', role: 'system' }, 'create', 'User', user.ID, null, 'First admin created: ' + email);
+  Logger.log('Admin user created: ' + email + '. The temporary password was removed from Script properties.');
 }
 
-// ONE-TIME, after upgrading to the private-attachments version: makes every
-// screenshot already in the attachments folder private (they used to be
-// shared "anyone with the link"). The app keeps showing them — it now reads
-// them through the backend. Safe to run more than once.
+// ONE-TIME, after upgrading from a version that shared screenshots by link:
+// makes every file in the attachments folder private. The app keeps showing
+// them — it reads them through the backend. Safe to run more than once.
 function lockDownExistingAttachments() {
   var files = getAttachmentsFolder().getFiles();
   var count = 0;
@@ -79,6 +103,6 @@ function lockDownExistingAttachments() {
 // the log: aim for well under 1 second per hash.
 function timePasswordHash() {
   var start = Date.now();
-  hashPassword('timing-test-password', generateSalt());
+  hashPassword('timing-test-password1', generateSalt());
   Logger.log('One password hash took ' + (Date.now() - start) + ' ms at ' + PBKDF2_ITERATIONS + ' iterations.');
 }
