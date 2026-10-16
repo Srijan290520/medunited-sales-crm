@@ -132,7 +132,13 @@ function seed() {
       { name: 'Insulin Glargine', quantity: 300, frequency: 'Once a day', unitsPerDose: 20, formType: 'injection' },
     ], ...proof('₹3,250') }],
     [priya, { customerName: 'Revathi K', contact: '9555544444', temperature: 'Hot', channel: 'Phone call', nextFollowUp: istDate(-1), products: [] }],
+    // Same patient as the Medpass lead → shows "Also in".
+    [rahul, { customerName: 'Ramesh Kumar', contact: '9848012345', temperature: 'Warm', channel: 'Phone call', nextFollowUp: istDate(2), products: [
+      { name: 'Telmisartan 40mg', quantity: 30, frequency: 'Once a day', unitsPerDose: 1, formType: 'tablet' },
+    ] }],
   ];
+  // His mother shares his number: Priya enters her, she goes to Rahul (one agent per household).
+  medpass.push([priya, { customerName: 'Savitri Kumar', contact: '+91 98480 12345', priceType: 'Full Price', detail: 'Wants to be added to her son\'s plan', temperature: 'Warm', channel: 'Phone call', heardFrom: 'Friend or family', nextFollowUp: istDate(1) }]);
 
   const created: { token: string; type: 'medpass' | 'pharmacy'; sale: any }[] = [];
   for (const [token, data] of medpass) {

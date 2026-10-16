@@ -88,11 +88,14 @@ function svc_logSaleActivity(session, type, saleId, data) {
   var label = (direction ? direction + ' ' : '') + actType + (outcome ? ' — ' + outcome : '');
 
   if (sale.Status === 'Cancelled' && (direction === 'Incoming' || outcome === 'Interested' || statusUpdate === 'reopen_pending')) {
-    var dup = findOpenRecordByPhone(String(sale.ContactKey || phoneKey(sale.Contact)), sale.ID);
-    if (dup) throw new Error('This number already has another open ' + SALE_TYPES[dup.type] + ' record managed by ' + dup.row.AgentName + '. Log the contact there instead.');
+    var world = loadPatientWorld();
+    var own = reopenOwnership(session, world, type, sale);
     patch = { Status: 'Pending', LostReason: '', Temperature: 'Hot' };
+    Object.keys(own).forEach(function (k) { patch[k] = own[k]; });
+    savePatientChanges(world);
     auditAction = 'reopen';
-    auditSummary = 'Customer got back in touch (' + label + '). Reopened as a Hot lead.';
+    auditSummary = 'Customer got back in touch (' + label + '). Reopened as a Hot lead.' +
+      (own.AgentName ? ' Moved to ' + own.AgentName + ', who handles this patient now.' : '');
   } else if (sale.Status === 'Pending') {
     if (outcome === 'Not interested' || outcome === 'Wrong number' || statusUpdate === 'cancel') {
       var lists = getLists();
@@ -117,7 +120,7 @@ function svc_logSaleActivity(session, type, saleId, data) {
   if (Object.keys(patch).length) {
     patch.UpdatedAt = nowIso();
     var updated = updateObjectById(sheet, sale.ID, patch);
-    if (type === 'pharmacy') syncReminderForSale(updated);
+    afterSaleSaved(type, updated);
     if (auditAction) audit(session, auditAction, saleEntity(type), sale.ID, saleChanges(sale, patch), auditSummary);
     sale = updated;
   }

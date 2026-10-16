@@ -1739,6 +1739,7 @@ input:checked + .slider::before { transform: translateX(18px); }
 .temp-badge.warm { background: var(--warning-bg); color: var(--warning-text); }
 .temp-badge.cold { background: #e0f2fe; color: #075985; }
 .dnd-tag { display: inline-block; padding: 1px 6px; border-radius: 6px; font-size: 0.68em; font-weight: 700; background: #111827; color: #fff; vertical-align: middle; }
+.also-in-chip { display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 6px; font-size: 0.68em; font-weight: 600; background: var(--accent-light); color: var(--accent-dark); vertical-align: middle; white-space: nowrap; }
 
 .form-row.three { grid-template-columns: 1fr 1fr 1fr; }
 .convert-actions { display: flex; gap: 10px; flex-wrap: wrap; }

@@ -1,4 +1,6 @@
 import React, { useState, useEffect } from 'react';
+import { DeactivateUserModal } from './DeactivateUserModal';
+import { UserRequestsPanel } from './UserRequestsPanel';
 import { User, UserRole } from '../types';
 import { api } from '../services/api';
 import { formatDate, initials, todayKey } from '../utils/date';
@@ -28,6 +30,10 @@ export const UsersView: React.FC<UsersViewProps> = ({ user, onToast }) => {
   const [deleteUserReason, setDeleteUserReason] = useState<string>('');
   const [deleteUserError, setDeleteUserError] = useState<string | null>(null);
   const [isDeletingUser, setIsDeletingUser] = useState<boolean>(false);
+
+  // Deactivation always names a successor (see DeactivateUserModal).
+  const [deactivateTarget, setDeactivateTarget] = useState<User | null>(null);
+  const [requestsKey, setRequestsKey] = useState<number>(0);
 
   const openDeleteUserModal = (targetUser: User) => {
     if (user.Role !== 'admin') {
@@ -114,6 +120,10 @@ export const UsersView: React.FC<UsersViewProps> = ({ user, onToast }) => {
   };
 
   const handleToggleActive = async (u: User, newActive: boolean) => {
+    if (!newActive) {
+      setDeactivateTarget(u);
+      return;
+    }
     try {
       const res = await api.updateUser(u.ID, { active: newActive });
       if (res.error) {
@@ -243,13 +253,17 @@ export const UsersView: React.FC<UsersViewProps> = ({ user, onToast }) => {
             </button>
           )}
 
-          <button type="button" onClick={openNewModal}>
-            + New User
-          </button>
+          {user.Role === 'admin' && (
+            <button type="button" onClick={openNewModal}>
+              + New User
+            </button>
+          )}
         </div>
       </div>
 
       <main>
+        <UserRequestsPanel user={user} refreshKey={requestsKey} onToast={onToast} onChanged={loadUsers} />
+
         <div className="table-card">
           <div className="table-container">
             <table className="data-table">
@@ -297,6 +311,8 @@ export const UsersView: React.FC<UsersViewProps> = ({ user, onToast }) => {
                             <input
                               type="checkbox"
                               checked={!!u.Active}
+                              disabled={u.ID === user.ID || (user.Role !== 'admin' && (u.Role === 'admin' || !u.Active))}
+                              title={user.Role === 'admin' ? '' : 'Managers can ask an admin to deactivate agents'}
                               onChange={(e) => handleToggleActive(u, e.target.checked)}
                             />
                             <span className="slider"></span>
@@ -311,14 +327,16 @@ export const UsersView: React.FC<UsersViewProps> = ({ user, onToast }) => {
                       </td>
                       <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
                         <div style={{ display: 'inline-flex', gap: '8px' }}>
-                          <button
-                            type="button"
-                            className="secondary"
-                            style={{ padding: '5px 12px', fontSize: '0.8rem', borderRadius: '6px' }}
-                            onClick={() => openEditModal(u)}
-                          >
-                            Edit
-                          </button>
+                          {user.Role === 'admin' && (
+                            <button
+                              type="button"
+                              className="secondary"
+                              style={{ padding: '5px 12px', fontSize: '0.8rem', borderRadius: '6px' }}
+                              onClick={() => openEditModal(u)}
+                            >
+                              Edit
+                            </button>
+                          )}
                           {user.Role === 'admin' && u.ID !== user.ID && (
                             <button
                               type="button"
@@ -429,6 +447,21 @@ export const UsersView: React.FC<UsersViewProps> = ({ user, onToast }) => {
               </form>
             </div>
           </>
+        )}
+
+        {deactivateTarget && (
+          <DeactivateUserModal
+            user={user}
+            target={deactivateTarget}
+            team={users}
+            onClose={() => setDeactivateTarget(null)}
+            onDone={(msg) => {
+              setDeactivateTarget(null);
+              onToast(msg, 'success');
+              setRequestsKey((k) => k + 1);
+              loadUsers();
+            }}
+          />
         )}
 
         {/* Admin Delete User Confirmation Modal */}

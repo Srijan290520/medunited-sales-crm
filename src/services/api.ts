@@ -171,7 +171,9 @@ export const api = {
   updateSale: (type: SaleType, id: string, data: any) => call('updateSale', { type, id, data }),
   deleteSale: (type: SaleType, id: string, reason?: string) => call('deleteSale', { type, id, reason }),
   logSaleActivity: (type: SaleType, id: string, data: any) => call('logSaleActivity', { type, id, data }),
-  reassignSale: (type: SaleType, id: string, agentEmail: string) => call('reassignSale', { type, id, agentEmail }),
+  // Reassigns the record's patient: the whole household, or only this person.
+  reassignSale: (type: SaleType, id: string, agentEmail: string, scope: 'household' | 'person' = 'household') =>
+    call('reassignSale', { type, id, agentEmail, scope }),
   reopenSale: (type: SaleType, id: string, reason?: string) => call('reopenSale', { type, id, reason }),
   getAuditHistory: (type: SaleType, id: string) => call('getAuditHistory', { type, id }),
   checkContact: (contact: string, exceptId?: string) => call('checkContact', { contact, exceptId }),
@@ -182,6 +184,16 @@ export const api = {
     opts: { dryRun: boolean; agentEmail?: string; fileName?: string }
   ) => call('importSales', { type, rows, ...opts }),
 
+  getModules: () => call('getModules'),
+
+  // ----- Patients (owners, migration, conflicts) -----
+  reassignPatient: (data: { contact?: string; patientId?: string; agentEmail: string; scope?: 'household' | 'person'; reason?: string }) =>
+    call('reassignPatient', data),
+  migratePatients: (dryRun: boolean) => call('migratePatients', { dryRun }),
+  listPatientConflicts: () => call('listPatientConflicts'),
+  resolvePatientConflict: (data: { contact: string; agentEmail?: string; assignments?: { patientId?: string; name?: string; agentEmail: string }[] }) =>
+    call('resolvePatientConflict', data),
+
   // ----- Dashboard -----
   dashboardSummary: () => call('dashboardSummary'),
 
@@ -191,6 +203,11 @@ export const api = {
   updateUser: (id: string, data: any) => call('updateUser', { id, data }),
   deleteUser: (id: string, reason?: string) => call('deleteUser', { id, reason }),
   updateIncentives: (id: string, data: any) => call('updateIncentives', { id, data }),
+  // Deactivation always names who takes over the person's patients.
+  requestDeactivation: (userId: string, successorEmail: string, reason: string) =>
+    call('requestDeactivation', { userId, successorEmail, reason }),
+  listUserRequests: (includeDecided = false) => call('listUserRequests', { includeDecided }),
+  decideUserRequest: (id: string, approve: boolean, note?: string) => call('decideUserRequest', { id, approve, note }),
 
   // ----- Refill reminders -----
   listReminders: (includeResolved: boolean) => call('listReminders', { includeResolved }),

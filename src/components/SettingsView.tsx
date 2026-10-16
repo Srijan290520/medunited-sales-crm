@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { User, OptionLists } from '../types';
 import { api } from '../services/api';
 import { initials } from '../utils/date';
+import { PatientOwnersCard } from './PatientOwnersCard';
 
 interface SettingsViewProps {
   user: User;
@@ -205,6 +206,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ user, onToast }) => 
       </div>
 
       <main>
+        <PatientOwnersCard user={user} onToast={onToast} />
+
         {/* Bulk Apply Card */}
         <div className="card" style={{ marginBottom: '24px' }}>
           <div className="card-title">Bulk Apply Rates to All Agents</div>

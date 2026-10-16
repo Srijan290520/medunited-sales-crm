@@ -6,8 +6,9 @@
 // already exist. Safe to run any number of times; it never deletes data.
 function setupSpreadsheet() {
   getUsersSheet();
-  getSaleSheet('medpass');
-  getSaleSheet('pharmacy');
+  moduleIds().forEach(function (type) { getSaleSheet(type); });
+  getPatientsSheet();
+  getUserRequestsSheet();
   getOrCreateSheet('Reminders', ['ID', 'PharmacySaleID', 'AgentEmail', 'AgentName', 'Reassigned', 'CustomerName', 'Contact',
     'Products', 'SaleDate', 'Status', 'ResolutionReason', 'AttemptCount', 'LastAttemptDate', 'CreatedAt', 'UpdatedAt']);
   getActivitiesSheet();
@@ -20,7 +21,7 @@ function setupSpreadsheet() {
 
 // Rows saved before v2 have no ContactKey; fill it so duplicate-phone checks see them.
 function backfillContactKeys_() {
-  ['medpass', 'pharmacy'].forEach(function (type) {
+  moduleIds().forEach(function (type) {
     var sheet = getSaleSheet(type);
     var headers = sheetHeaders(sheet);
     var keyCol = headers.indexOf('ContactKey');

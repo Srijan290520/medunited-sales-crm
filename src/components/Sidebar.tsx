@@ -28,7 +28,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onToggleDesktopCollapse,
 }) => {
   const canSeeIncentives = user.Role === 'admin' || user.Role === 'manager';
-  const canSeeUsers = user.Role === 'admin';
+  // Managers see the team (read-only) so they can ask for deactivations.
+  const canSeeUsers = user.Role === 'admin' || user.Role === 'manager';
 
   const handleNav = (p: ActivePage) => {
     onNavigate(p);

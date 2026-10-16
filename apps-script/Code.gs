@@ -27,7 +27,8 @@ function doPost(e) { return handleRequest(e); }
 var WRITE_ACTIONS = [
   'changePassword',
   'createSale', 'importSales', 'updateSale', 'deleteSale', 'reopenSale', 'reassignSale', 'logSaleActivity',
-  'createUser', 'updateUser', 'deleteUser', 'updateIncentives',
+  'reassignPatient', 'migratePatients', 'resolvePatientConflict',
+  'createUser', 'updateUser', 'deleteUser', 'updateIncentives', 'requestDeactivation', 'decideUserRequest',
   'markContacted', 'reassignReminder',
   'updateLists', 'updateMonthlyTarget'
 ];
@@ -99,23 +100,35 @@ function dispatch(action, token, p) {
     case 'changePassword':
       return Object.assign({ error: false }, svc_changePassword(session, p.currentPassword, p.newPassword));
 
-    // ----- Medpass & Pharmacy records -----
+    // ----- Module records (Medpass, Pharmacy, …) -----
+    case 'getModules':
+      return { error: false, modules: svc_getModules(session) };
     case 'listSales':
       return { error: false, sales: svc_listSales(session, p.type) };
     case 'getSale':
       return Object.assign({ error: false }, svc_getSale(session, p.type, p.id));
     case 'createSale':
-      return { error: false, sale: svc_createSale(session, p.type, p.data || {}) };
+      return Object.assign({ error: false }, svc_createSale(session, p.type, p.data || {}));
     case 'importSales':
       return Object.assign({ error: false }, svc_importSales(session, p.type, p.rows, { dryRun: p.dryRun === true, agentEmail: p.agentEmail, fileName: p.fileName }));
     case 'updateSale':
-      return { error: false, sale: svc_updateSale(session, p.type, p.id, p.data || {}) };
+      return Object.assign({ error: false }, svc_updateSale(session, p.type, p.id, p.data || {}));
     case 'deleteSale':
       return Object.assign({ error: false }, svc_deleteSale(session, p.type, p.id, p.reason));
     case 'reopenSale':
       return { error: false, sale: svc_reopenSale(session, p.type, p.id, p.reason) };
     case 'reassignSale':
-      return { error: false, sale: svc_reassignSale(session, p.type, p.id, p.agentEmail) };
+      return Object.assign({ error: false }, svc_reassignSale(session, p.type, p.id, p.agentEmail, p.scope, p.reason));
+    case 'reassignPatient':
+      return Object.assign({ error: false }, svc_reassignPatient(session, p));
+
+    // ----- Patients (owners, migration, conflicts) -----
+    case 'migratePatients':
+      return { error: false, migration: svc_migratePatients(session, p.dryRun) };
+    case 'listPatientConflicts':
+      return { error: false, conflicts: svc_listPatientConflicts(session) };
+    case 'resolvePatientConflict':
+      return Object.assign({ error: false }, svc_resolvePatientConflict(session, p));
     case 'logSaleActivity':
       return Object.assign({ error: false }, svc_logSaleActivity(session, p.type, p.id, p.data || {}));
     case 'getAuditHistory':
@@ -138,6 +151,12 @@ function dispatch(action, token, p) {
       return { error: false, user: svc_updateUser(session, p.id, p.data || {}) };
     case 'deleteUser':
       return Object.assign({ error: false }, svc_deleteUser(session, p.id, p.reason));
+    case 'requestDeactivation':
+      return { error: false, request: svc_requestDeactivation(session, p) };
+    case 'listUserRequests':
+      return { error: false, requests: svc_listUserRequests(session, p.includeDecided === true) };
+    case 'decideUserRequest':
+      return Object.assign({ error: false }, svc_decideUserRequest(session, p));
     case 'updateIncentives':
       return { error: false, user: svc_updateIncentives(session, p.id, p.data || {}) };
 
