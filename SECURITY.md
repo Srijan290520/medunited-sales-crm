@@ -36,6 +36,9 @@ Report problems privately to the repository owner, not in public issues.
   record onto another agent's patient by editing its phone number, or reopen a
   record whose patient is now someone else's. The people sharing a phone
   number are shown only to that number's owner and to managers/admins.
+- Bulk reassign, reassign from file and agent handover are for managers and
+  above, run under the script lock, recheck every row on the real run, and
+  audit each moved record plus a summary.
 - Deactivating someone who still handles patients requires a successor; the
   handover and the deactivation happen in one locked, audited step. Managers
   can only request it; admins approve.

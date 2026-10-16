@@ -238,6 +238,22 @@ share one number, so everyone on a number is a **household**.
   deactivates the account. The server refuses to deactivate someone who still
   handles patients without a successor.
 
+### Moving many patients at once (managers and above)
+
+All three work like a single reassign: each patient moves — everyone on the
+phone number by default, or only that person — with all their open records
+in every module and their active reminders. Completed and cancelled sales
+keep their agent. Each shows a preview first and is recorded in the history.
+
+- **Tick and reassign:** on a module page switch to **Table**, tick records
+  (or the header box for everything shown) → **Reassign to…**.
+- **From a spreadsheet:** **Export CSV** → change the **Assigned Agent Email**
+  column → **Reassign from file**. Rows you didn't change are ignored; unknown
+  IDs or agents, and rows that give one patient/household two different
+  agents, are listed and skipped. Up to 500 rows per file.
+- **Agent handover:** Users page → **Hand over** next to an agent → choose who
+  takes over and a reason (e.g. leave). Nobody is deactivated.
+
 ### Owner conflicts
 
 Records saved before Patients existed are matched by phone + name. If a

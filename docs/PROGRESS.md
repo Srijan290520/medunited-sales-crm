@@ -19,7 +19,7 @@ Live state: the Sheet's Apps Script project has v2 code saved and
 | 1. One agent per patient (people + households) + module engine | `phase1-patient-ownership` | **Done on branch, PR open — not deployed** |
 | 1b. Medpass rules + family members + senior role | `phase1b-medpass-rules` (stacked on phase 1) | **Done on branch, PR open (base: Phase 1 branch) — not deployed** |
 | 2. Lab & Radiology, HOMEKARE modules | `phase2-new-modules` (stacked on 1b) | **Done on branch, PR open — not deployed** |
-| 3. Bulk reassign | — | Not started (agent handover partly pulled into Phase 1) |
+| 3. Bulk reassign | `phase3-bulk-reassign` (stacked on 2) | **Done on branch, PR open — not deployed** |
 | 4. Calmer module pages + widget dashboard | — | Not started (mockup first) |
 | 5. Settings page, Incentives page, per-agent targets | — | Blocked on user answers (revenue vs count, agent visibility, target→incentive) |
 
@@ -374,3 +374,14 @@ pass; single parent allowed on a family pass.
   incentives for Homekare and Lab (Phase 5); Lab test catalogue; renewal
   days-before (5) as a setting; dashboard per-module KPIs (Phase 4).
   **Next phase:** 3 (bulk reassign).
+- **2026-10-16** — **Phase 3 built** on `phase3-bulk-reassign`:
+  `BulkReassign.gs` (bulkReassign, importReassignments, handoverAgent — all
+  patient-level, dry run by default, audited) + UI (table checkboxes →
+  Reassign to…, Reassign from file, Users → Hand over). Shared file reader
+  `src/utils/readTable.ts`. 45 backend tests + build green; all three checked
+  in the demo build. **Bug found and fixed while testing:** blank page after a
+  refresh with a saved session (React #310 — the Phase 2 module-list effect
+  sat after an early return in App.tsx). Fix committed on both
+  `phase2-new-modules` (PR #7) and this branch.
+  **Next phase:** 4 (calmer module pages + widget dashboard) — needs a mockup
+  or preview build for the user before the full rewrite.
