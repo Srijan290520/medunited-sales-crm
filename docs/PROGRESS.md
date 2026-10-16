@@ -17,7 +17,7 @@ Live state: the Sheet's Apps Script project has v2 code saved and
 | Phase | Branch | Status |
 |---|---|---|
 | 1. One agent per patient (people + households) + module engine | `phase1-patient-ownership` | **Done on branch, PR open — not deployed** |
-| 1b. Medpass rules + family members + senior role | `phase1b-medpass-rules` (stacked on phase 1) | **Backend done (38 tests); frontend in progress** |
+| 1b. Medpass rules + family members + senior role | `phase1b-medpass-rules` (stacked on phase 1) | **Done on branch, PR open (base: Phase 1 branch) — not deployed** |
 | 2. Lab & Radiology, HOMEKARE modules | — | Blocked on user input (service list, tests, incentive rules) |
 | 3. Bulk reassign | — | Not started (agent handover partly pulled into Phase 1) |
 | 4. Calmer module pages + widget dashboard | — | Not started (mockup first) |
@@ -288,3 +288,13 @@ pass; single parent allowed on a family pass.
   Members are a JSON column on the Medpass row (like Products), not a
   separate tab. **Next:** frontend (role, Medpass form, approvals, Medpass
   settings card), demo, README, PR.
+- **2026-10-16** — Phase 1b frontend done and checked in the demo build
+  (senior manager approves a discount from the Medpass page; prices: 1,874
+  with a third child, OP conversion payable 999, approved discount 1,399;
+  child aged 25 flagged; + Child disabled after 3). 38 backend tests + build
+  green. README "Medpass (family pass)", SECURITY updated. Pushed; PR opened
+  with base `phase1-patient-ownership` (merge Phase 1 first, then retarget
+  this PR to `v2-react-app`).
+  **Still open:** renewal rules / early renewal / renewal reminders (user:
+  "discuss later"); confirm the defaults single parent = yes, max 1 extra
+  child; Phase 2 inputs (Homekare services, Lab/Radiology tests, incentives).
