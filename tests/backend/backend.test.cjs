@@ -823,7 +823,7 @@ test('senior manager: admin powers except admin accounts and hard deletes', () =
 const DONE = { status: 'Completed', paymentMethod: 'Cash', billScreenshot: PNG, paymentScreenshot: PNG };
 const kid = (name, dob) => ({ name, relation: 'Child', dob });
 
-test('medpass price: ₹1499 for the family, ₹375 for a third child, server-side', () => {
+test('medpass price: ₹1499 for the family, ₹375 for each child beyond two, server-side', () => {
   const { call, arjun } = world();
   const mp = (contact, members, over = {}) => call('createSale', arjun, { type: 'medpass', data: lead({ contact, members, amount: 1, ...over }) });
   const four = ok(mp('9100000001', FAMILY)).sale;
@@ -835,7 +835,14 @@ test('medpass price: ₹1499 for the family, ₹375 for a third child, server-si
   assert.equal(five.ExtraChildFee, 375);
   assert.equal(five.Amount, 1874);
 
-  assert.match(mp('9100000003', [...FAMILY, kid('Arun Kumar', '2019-06-01'), kid('Ajay Kumar', '2021-02-02')]).message, /up to 3 children/);
+  // A fourth child: another ₹375 (₹1,874 + ₹375). A fifth needs a separate pass.
+  const six = ok(mp('9100000003', [...FAMILY, kid('Arun Kumar', '2019-06-01'), kid('Ajay Kumar', '2021-02-02')])).sale;
+  assert.equal(six.ExtraChildFee, 750);
+  assert.equal(six.Amount, 2249);
+  assert.match(mp('9100000013', [...FAMILY, kid('Arun Kumar', '2019-06-01'), kid('Ajay Kumar', '2021-02-02'), kid('Amit Kumar', '2023-03-03')]).message, /up to 4 children/);
+  // A single parent pays for children beyond the two included, the same as a couple.
+  const single = ok(mp('9100000014', [FAMILY[1], FAMILY[2], FAMILY[3], kid('Arun Kumar', '2019-06-01')])).sale;
+  assert.equal(single.Amount, 1874);
   assert.match(mp('9100000004', [FAMILY[0], kid('Big Kid', '2004-01-01')], { date: '2026-10-16' }).message, /is 22\. Children must be under 21.*own Medpass/);
   assert.match(mp('9100000005', [FAMILY[0], { name: 'No Dob', relation: 'Child' }]).message, /date of birth of No Dob/);
   assert.match(mp('9100000006', [FAMILY[0], { name: 'Other Dad', relation: 'Father' }]).message, /one father and one mother/);

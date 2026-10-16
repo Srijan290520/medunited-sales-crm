@@ -1370,12 +1370,13 @@ function svc_updateMonthlyTarget(session, amount) {
 //
 // A Medpass is a one-year pass for a family: father, mother and their
 // children under 21 (on the sale date). Two children are included; a third
-// can be added for an extra fee. Older children and other relatives (e.g.
+// and a fourth can be added for an extra fee each (also for a single parent).
+// Older children and other relatives (e.g.
 // grandparents on the same phone number) take their own pass.
 //
 // Prices and limits live in the Settings tab (admins / senior managers):
 //   medpassPrice 1499 · medpassMaxDiscount 200 · medpassExtraChildFee 375 ·
-//   medpassIncludedChildren 2 · medpassMaxExtraChildren 1 ·
+//   medpassIncludedChildren 2 · medpassMaxExtraChildren 2 ·
 //   medpassChildMaxAge 21 · medpassSingleParent TRUE
 //
 // The server works out the amount; the browser can't type one in:
@@ -1402,7 +1403,7 @@ var MEDPASS_SETTING_KEYS = {
   maxDiscount: { key: 'medpassMaxDiscount', def: 200, min: 0, max: 1000000, label: 'Maximum discount' },
   extraChildFee: { key: 'medpassExtraChildFee', def: 375, min: 0, max: 1000000, label: 'Extra child fee' },
   includedChildren: { key: 'medpassIncludedChildren', def: 2, min: 0, max: 10, label: 'Children included' },
-  maxExtraChildren: { key: 'medpassMaxExtraChildren', def: 1, min: 0, max: 10, label: 'Extra children allowed' },
+  maxExtraChildren: { key: 'medpassMaxExtraChildren', def: 2, min: 0, max: 10, label: 'Extra children allowed' },
   childMaxAge: { key: 'medpassChildMaxAge', def: 21, min: 1, max: 100, label: 'Children must be younger than' }
 };
 

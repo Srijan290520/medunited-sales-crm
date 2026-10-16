@@ -281,7 +281,9 @@ pass; single parent allowed on a family pass.
 - **2026-10-16** — Phase 1b started on `phase1b-medpass-rules` (branched from
   the Phase 1 branch; its PR will be stacked on PR #5). Defaults chosen for
   the two open questions (configurable in Settings): single parent allowed;
-  at most 1 extra child (a 4th child needs a separate pass). Backend done:
+  at most 1 extra child — **corrected by the user the same day: a 4th child
+  is allowed too (+₹375 each beyond 2, so 1,874 / 2,249); single parents pay
+  the same extra-child fees.** Backend done:
   role `senior_manager` (TEAM_ROLES / SENIOR_ROLES / ADMIN_ROLES in Auth.gs),
   module extraHeaders + hooks, Medpass.gs (members with DOB, server-side
   price, discount request/approval, OP credit, validity + coverage warning).

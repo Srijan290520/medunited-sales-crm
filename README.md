@@ -158,7 +158,7 @@ children **under 21** on the sale date. Older children and other relatives
 |---|---|
 | Price (family of four) | ₹1,499 |
 | Children included | 2 |
-| Extra child | +₹375 each, at most 1 (₹1,874 with a third child) |
+| Extra child | +₹375 each, up to 2 more (₹1,874 with a third child, ₹2,249 with a fourth) — the same for a single parent |
 | Maximum discount | ₹200 |
 | Single parent may buy a family pass | Yes |
 
