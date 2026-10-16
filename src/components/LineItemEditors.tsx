@@ -39,7 +39,7 @@ export const HomekareServicesEditor: React.FC<{
           <div key={i} style={{ ...row, gridTemplateColumns: '2.4fr 1fr auto' }}>
             <select aria-label={`Service ${i + 1}`} value={l.service} disabled={disabled} onChange={(e) => set(i, { service: e.target.value })}>
               <option value="">— Choose a service —</option>
-              {catalogue.map((c) => (
+              {catalogue.filter((c) => !c.hidden || c.name === l.service).map((c) => (
                 <option key={c.name} value={c.name}>{c.name}</option>
               ))}
             </select>

@@ -33,6 +33,8 @@ export interface HomekareService {
   name: string;
   unit: string;
   monthly: boolean;
+  hidden?: boolean; // not offered for new orders; still valid on older ones
+  builtIn?: boolean;
 }
 
 export interface ServiceLine {
@@ -379,6 +381,7 @@ export interface DashboardSummary {
   modules?: { id: SaleType; label: string; count: number; amount: number }[];
   remindersDue?: { id: string; kind: 'refill' | 'renewal'; customerName: string; detail: string; daysRemaining: number | null; overdue: boolean; agentName: string }[];
   pendingDiscounts?: PendingDiscount[] | null; // team only
+  myTargets?: TargetRow[] | null; // agents: their own targets this month
 
   monthlyTarget?: {
     targetAmount: number;
@@ -404,4 +407,45 @@ export interface DashboardLayoutInfo {
   source: 'user' | 'role';
   widgets: { id: WidgetId; title: string }[]; // what this role may add
   spans: number[];
+}
+
+// Monthly target for one agent and module.
+export interface TargetRow {
+  agentEmail: string;
+  agentName: string;
+  module: SaleType;
+  moduleLabel: string;
+  measure: 'revenue' | 'count';
+  target: number | null;
+  achieved: number;
+  percent: number | null;
+}
+
+export interface IncentiveSale {
+  id: string;
+  module: SaleType;
+  moduleLabel: string;
+  date: string;
+  customerName: string;
+  amount: number;
+  priceType: string;
+  detail: string;
+  incentive: number;
+}
+
+export interface IncentiveAgent {
+  agentEmail: string;
+  agentName: string;
+  modules: Record<string, { count: number; amount: number; incentive: number }>;
+  count: number;
+  amount: number;
+  incentive: number;
+  sales: IncentiveSale[];
+}
+
+export interface IncentiveReport {
+  month: string;
+  modules: { id: SaleType; label: string; incentive: string }[];
+  agents: IncentiveAgent[];
+  totals: { count: number; amount: number; incentive: number; modules: Record<string, { count: number; amount: number; incentive: number }> };
 }

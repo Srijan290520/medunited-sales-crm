@@ -6,8 +6,9 @@ import { Sidebar, ActivePage } from './components/Sidebar';
 import { Dashboard } from './components/Dashboard';
 import { SalesView } from './components/SalesView';
 import { RemindersView } from './components/RemindersView';
-import { SettingsView } from './components/SettingsView';
-import { UsersView } from './components/UsersView';
+import { SettingsPage } from './components/SettingsPage';
+import { IncentivesView } from './components/IncentivesView';
+import { isTeamRole } from './utils/roles';
 import { LoginView } from './components/LoginView';
 import { ChangePasswordView } from './components/ChangePasswordView';
 import { Toast } from './components/Toast';
@@ -164,8 +165,9 @@ export const App: React.FC = () => {
     homekare: 'Homekare',
     lab: 'Lab & Radiology',
     reminders: 'Reminders',
-    settings: 'Incentives',
-    users: 'User Management',
+    incentives: 'Incentives',
+    settings: 'Settings',
+    users: 'Settings',
   };
 
   return (
@@ -243,9 +245,11 @@ export const App: React.FC = () => {
 
         {activePage === 'reminders' && <RemindersView user={currentUser} onToast={addToast} />}
 
-        {activePage === 'settings' && <SettingsView user={currentUser} onToast={addToast} />}
+        {/* Incentives and Settings are for managers and above (the server checks too). */}
+        {activePage === 'incentives' && isTeamRole(currentUser.Role) && <IncentivesView user={currentUser} onToast={addToast} />}
 
-        {activePage === 'users' && <UsersView user={currentUser} onToast={addToast} />}
+        {(activePage === 'settings' || activePage === 'users') && isTeamRole(currentUser.Role) && <SettingsPage user={currentUser} onToast={addToast} />}
+
       </div>
 
       {/* Mobile Bottom Navigation Bar */}
@@ -303,7 +307,7 @@ export const App: React.FC = () => {
 
         <button
           type="button"
-          className={`mobile-tab-btn ${mobileMenuOpen || activePage === 'settings' || activePage === 'users' ? 'active' : ''}`}
+          className={`mobile-tab-btn ${mobileMenuOpen || activePage === 'settings' || activePage === 'users' || activePage === 'incentives' ? 'active' : ''}`}
           onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
