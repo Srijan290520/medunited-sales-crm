@@ -103,6 +103,15 @@ export const App: React.FC = () => {
     addToast('Logged out successfully', 'success');
   };
 
+  // Hooks must all run before the early returns below.
+  // Which sales modules exist (Medpass, Pharmacy, Homekare, …) comes from the server.
+  useEffect(() => {
+    if (!currentUser || currentUser.MustChangePassword) return;
+    api.getModules().then((res) => {
+      if (!res.error && Array.isArray(res.modules) && res.modules.length) setModules(res.modules);
+    });
+  }, [currentUser]);
+
   if (checkingSession) {
     return (
       <div className="login-wrap">
@@ -113,14 +122,6 @@ export const App: React.FC = () => {
       </div>
     );
   }
-
-  // Which sales modules exist (Medpass, Pharmacy, Homekare, …) comes from the server.
-  useEffect(() => {
-    if (!currentUser || currentUser.MustChangePassword) return;
-    api.getModules().then((res) => {
-      if (!res.error && Array.isArray(res.modules) && res.modules.length) setModules(res.modules);
-    });
-  }, [currentUser]);
 
   if (!currentUser) {
     return (
