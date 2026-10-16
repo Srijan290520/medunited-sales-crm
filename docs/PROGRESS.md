@@ -20,7 +20,7 @@ Live state: the Sheet's Apps Script project has v2 code saved and
 | 1b. Medpass rules + family members + senior role | `phase1b-medpass-rules` (stacked on phase 1) | **Done on branch, PR open (base: Phase 1 branch) — not deployed** |
 | 2. Lab & Radiology, HOMEKARE modules | `phase2-new-modules` (stacked on 1b) | **Done on branch, PR open — not deployed** |
 | 3. Bulk reassign | `phase3-bulk-reassign` (stacked on 2) | **Done on branch, PR open — not deployed** |
-| 4. Calmer module pages + widget dashboard | `phase4-calm-ui` (from 3) | Mockup published, waiting for feedback |
+| 4. Calmer module pages + widget dashboard | `phase4-calm-ui` (stacked on 3) | **Done on branch, PR open — not deployed** |
 | 5. Settings page, Incentives page, per-agent targets | — | Blocked on user answers (revenue vs count, agent visibility, target→incentive) |
 
 ---
@@ -399,3 +399,18 @@ pass; single parent allowed on a family pass.
   manager defaults; "layout never changes what you can see"). Mockup source
   is in the session scratchpad, not the repo. **Waiting for user feedback**
   before the rewrite.
+- **2026-10-16** — User asked to add lead temperatures to the mockup (done:
+  row pills, temperature chips, dashboard widget), then approved it.
+  **Phase 4 built:** `DashboardLayouts.gs` (per-user layouts in `UserLayouts`,
+  role defaults agent/team editable by seniors, team-only widgets refused for
+  agents); dashboardSummary gained temperature / modules / remindersDue /
+  pendingDiscounts (team only). Module page shell replaced in SalesView
+  (header, Filters, ⋯ More, tabs, temperature chips, list default + new
+  `RecordPanel`); the 3-step form is unchanged and opens from Edit / Log a
+  call. Dashboard.tsx rewritten as widgets with Customize; chart.js removed.
+  47 backend tests + build green; checked in the demo build at desktop,
+  ~800 px and phone width. Also fixed: README file list missed
+  `BulkReassign` (Phase 3).
+  **Next phase:** 5 (Settings page, Incentives page, per-agent targets) —
+  ask the user first: targets revenue or number of sales? agents see own
+  target/incentive? does hitting a target affect incentives?
