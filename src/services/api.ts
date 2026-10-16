@@ -217,6 +217,8 @@ export const api = {
   copyTargets: (toMonth: string, overwrite = false) => call('copyTargets', { toMonth, overwrite }),
   setTargetMeasure: (module: string, measure: 'revenue' | 'count') => call('setTargetMeasure', { module, measure }),
   incentiveReport: (month: string) => call('incentiveReport', { month }), // managers and above only
+  // Agents always get their own figures; managers may pick an agent ('' = team).
+  performance: (month: string, agentEmail = '') => call('performance', { month, agentEmail }),
   listAuditLog: (filters: { q?: string; user?: string; action?: string; from?: string; to?: string; limit?: number; offset?: number }) => call('listAuditLog', filters),
   updateHomekareCatalogue: (data: { add?: { name: string; unit: string; monthly: boolean }; hide?: string; show?: string }) => call('updateHomekareCatalogue', data),
   saveDashboardLayout: (layout: { id: string; span: number }[]) => call('saveDashboardLayout', { layout }),

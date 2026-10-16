@@ -382,6 +382,7 @@ export interface DashboardSummary {
   remindersDue?: { id: string; kind: 'refill' | 'renewal'; customerName: string; detail: string; daysRemaining: number | null; overdue: boolean; agentName: string }[];
   pendingDiscounts?: PendingDiscount[] | null; // team only
   myTargets?: TargetRow[] | null; // agents: their own targets this month
+  comparison?: { thisMonth: { count: number; amount: number }; lastMonth: { count: number; amount: number } };
 
   monthlyTarget?: {
     targetAmount: number;
@@ -397,7 +398,7 @@ export interface ToastMessage {
 }
 
 // Dashboard layout: widgets on a 12-column grid.
-export type WidgetId = 'target' | 'followups' | 'reminders' | 'temperature' | 'modules' | 'pipeline' | 'activity' | 'discounts' | 'team';
+export type WidgetId = 'target' | 'comparison' | 'followups' | 'reminders' | 'temperature' | 'modules' | 'pipeline' | 'activity' | 'discounts' | 'team';
 export interface LayoutItem {
   id: WidgetId;
   span: 4 | 6 | 8 | 12;

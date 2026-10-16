@@ -4,7 +4,7 @@ import { MODULE_ICONS } from '../modules';
 import { isTeamRole } from '../utils/roles';
 import { initials } from '../utils/date';
 
-export type ActivePage = 'dashboard' | SaleType | 'reminders' | 'incentives' | 'settings' | 'users';
+export type ActivePage = 'dashboard' | SaleType | 'reminders' | 'performance' | 'incentives' | 'settings' | 'users';
 
 interface SidebarProps {
   user: User;
@@ -145,6 +145,23 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
           </svg>
           <span>Reminders</span>
+        </a>
+
+        {/* Everyone: agents see their own performance, managers the team. */}
+        <a
+          href="#performance"
+          className={activePage === 'performance' ? 'active' : ''}
+          data-tooltip="Performance"
+          onClick={(e) => {
+            e.preventDefault();
+            handleNav('performance');
+          }}
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M3 3v18h18"></path>
+            <path d="M7 15l4-4 3 3 5-6"></path>
+          </svg>
+          <span>Performance</span>
         </a>
 
         {canSeeIncentives && (
