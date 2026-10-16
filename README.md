@@ -53,7 +53,7 @@ Apps Script deployment without rebuilding.
 2. **Extensions → Apps Script.** Delete the default `Code.gs`, then create one
    file per `.gs` file in `apps-script/` and paste each in:
    `Activities, Attachments, Audit, Auth, Code, Import, Lists, Reminders,
-   SalesService, Setup, UserService, Utils`.
+   SalesService, Setup, SmokeTest, UserService, Utils`.
 3. **Project Settings (gear) → "Show appsscript.json manifest file"** → open
    `appsscript.json` and replace it with `apps-script/appsscript.json`.
    *(Or use [clasp](https://github.com/google/clasp): `clasp push` from the
@@ -180,6 +180,10 @@ node tests/e2e/server.cjs 4173   # serves dist/ + a mocked backend for browser t
 in-memory Sheets, Drive, Cache and Lock services.
 
 ## Operations checklist
+
+- **Health check:** after setup or a new deployment, run **`smokeTestV2`**
+  in the Apps Script editor and read the log — every line should start with
+  `PASS`. It is read-only (the import step is a dry run).
 
 - **Backups:** File → Version history in the Sheet, plus a scheduled copy
   (e.g. a time-driven trigger that `makeCopy`s the file weekly).
