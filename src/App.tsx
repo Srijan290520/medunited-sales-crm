@@ -8,6 +8,7 @@ import { SalesView } from './components/SalesView';
 import { RemindersView } from './components/RemindersView';
 import { SettingsPage } from './components/SettingsPage';
 import { IncentivesView } from './components/IncentivesView';
+import { PerformanceView } from './components/PerformanceView';
 import { isTeamRole } from './utils/roles';
 import { LoginView } from './components/LoginView';
 import { ChangePasswordView } from './components/ChangePasswordView';
@@ -165,6 +166,7 @@ export const App: React.FC = () => {
     homekare: 'Homekare',
     lab: 'Lab & Radiology',
     reminders: 'Reminders',
+    performance: 'Performance',
     incentives: 'Incentives',
     settings: 'Settings',
     users: 'Settings',
@@ -244,6 +246,8 @@ export const App: React.FC = () => {
         )}
 
         {activePage === 'reminders' && <RemindersView user={currentUser} onToast={addToast} />}
+
+        {activePage === 'performance' && <PerformanceView user={currentUser} onToast={addToast} />}
 
         {/* Incentives and Settings are for managers and above (the server checks too). */}
         {activePage === 'incentives' && isTeamRole(currentUser.Role) && <IncentivesView user={currentUser} onToast={addToast} />}

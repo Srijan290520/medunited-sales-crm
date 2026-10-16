@@ -426,6 +426,16 @@ pass; single parent allowed on a family pass.
   sidebar Incentives + Settings (Users moved inside Settings). 51 backend
   tests + build green; checked in the demo as manager, agent and senior.
 
+- **2026-10-16** — User asked for monthly performance with comparisons (team
+  and agent; this vs last month, yearly). Branch `phase5b-performance`
+  (stacked on Phase 5): `Performance.gs` (`performance` read action: this vs
+  last month, vs same month last year, YTD vs last year, 24-month series,
+  per-module, team table with rank — no incentives; agents forced to their
+  own figures), dashboard widget `comparison`, `PerformanceView.tsx` +
+  sidebar link for everyone. 52 backend tests + build green; checked in the
+  demo as manager (team, drill-down to one agent, chart tooltip) and agent
+  (own figures only, no picker, no team table) and at phone width.
+
 ### All five phases are built (PRs #5 → #6 → #7 → #8 → #9 → Phase 5 PR).
 **Remaining / later (from the user):** going live (deploy at the end —
 README "Going live with Patients" covers every new file and tab); Medpass

@@ -156,6 +156,31 @@ export const Dashboard: React.FC<DashboardProps> = ({ user, onToast, onNavigate 
           </div>
         );
       }
+      case 'comparison': {
+        const cmp = summary.comparison;
+        if (!cmp) return <div className="mp-muted">No data yet.</div>;
+        const row = (label: string, now: number, before: number, money: boolean) => {
+          const diff = now - before;
+          const pct = before ? Math.round((diff / before) * 100) : null;
+          return (
+            <div className="pf-mini">
+              <span>{label}</span>
+              <strong>{money ? formatMoney(now) : now}</strong>
+              <span className={`pf-delta ${diff > 0 ? 'up' : diff < 0 ? 'down' : 'flat'}`}>
+                <span aria-hidden="true">{diff > 0 ? '▲' : diff < 0 ? '▼' : '■'}</span>{' '}
+                {diff === 0 ? 'same' : pct === null ? 'new' : `${diff > 0 ? '+' : '−'}${Math.abs(pct)}%`}
+              </span>
+            </div>
+          );
+        };
+        return (
+          <>
+            {row('Revenue', cmp.thisMonth.amount, cmp.lastMonth.amount, true)}
+            {row('Sales', cmp.thisMonth.count, cmp.lastMonth.count, false)}
+            <button type="button" className="mp-link" onClick={() => onNavigate?.('performance')}>More comparisons</button>
+          </>
+        );
+      }
       case 'followups': {
         const list = summary.urgentFollowUps || [];
         if (!list.length) return <div className="mp-muted">No follow-ups due.</div>;
