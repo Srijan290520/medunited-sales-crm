@@ -1418,3 +1418,27 @@ test('performance: this vs last month, last year and year to date; team table on
     assert.equal(ok(call('dashboardSummary', manager)).summary.comparison.thisMonth.count, 3);
   }
 });
+
+test('read-only requests read each tab once; writes are seen by the next request', () => {
+  const { call, ctx, arjun, manager } = world();
+  ok(call('createSale', arjun, { type: 'medpass', data: lead({ contact: '9870000101' }) }));
+  ok(call('createSale', arjun, { type: 'pharmacy', data: lead({ contact: '9870000102' }) }));
+
+  // Count Sheets reads (getRange) per tab during one list request.
+  const proto = Object.getPrototypeOf(ctx.SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Users'));
+  const original = proto.getRange;
+  const reads = {};
+  proto.getRange = function (...args) { reads[this.name] = (reads[this.name] || 0) + 1; return original.apply(this, args); };
+  try {
+    const list = ok(call('listSales', manager, { type: 'medpass' })).sales;
+    assert.ok(list.some((s) => s.Contact === '9870000101'));
+  } finally {
+    proto.getRange = original;
+  }
+  for (const [name, n] of Object.entries(reads)) assert.equal(n, 1, `${name} was read ${n} times`);
+
+  // A write in one request, then a read in the next: the new row is there.
+  ok(call('createSale', arjun, { type: 'medpass', data: lead({ contact: '9870000103' }) }));
+  const after = ok(call('listSales', manager, { type: 'medpass' })).sales;
+  assert.ok(after.some((s) => s.Contact === '9870000103'));
+});

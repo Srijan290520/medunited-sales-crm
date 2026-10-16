@@ -991,7 +991,8 @@ function handleRequest(e) {
       result = withScriptLock(function () { return dispatch(action, params.token, payload); });
       if (result && !result.error) bumpDataVersion(); // invalidate cached dashboards
     } else {
-      result = dispatch(action, params.token, payload);
+      // Read-only: each tab is read once for the whole request (Utils.gs).
+      result = withReadCache(function () { return dispatch(action, params.token, payload); });
     }
   } catch (err) {
     result = errorResult(err, action);
@@ -5234,12 +5235,52 @@ function svc_updateIncentives(session, id, data) {
 // ---- Utils.gs ----
 // Utils.gs — generic helpers for reading/writing sheet rows as objects
 
+// ===== Per-request read cache =====
+// Every Sheets call is a round trip (100–200 ms). A list request used to read
+// each tab several times (find it, check its columns, count rows, read the
+// header, read the rows): ~50 calls. For read-only actions, Code.gs wraps the
+// request in withReadCache(), and each tab is then looked up and read once.
+// Writing actions never use it, and every write helper below clears it, so a
+// read after a write always sees the sheet as it is now.
+var readCache_ = null;
+
+function withReadCache(fn) {
+  readCache_ = { sheets: {}, values: [] };
+  try { return fn(); } finally { readCache_ = null; }
+}
+
+function clearReadCache_() {
+  if (readCache_) readCache_ = { sheets: {}, values: [] };
+}
+
+// The whole tab (header row included) as a 2-D array.
+function sheetValues_(sheet) {
+  if (readCache_) {
+    for (var i = 0; i < readCache_.values.length; i++) {
+      if (readCache_.values[i].sheet === sheet) return readCache_.values[i].values;
+    }
+  }
+  var lastRow = sheet.getLastRow();
+  var lastCol = sheet.getLastColumn();
+  var values = lastRow && lastCol ? sheet.getRange(1, 1, lastRow, lastCol).getValues() : [];
+  if (readCache_) readCache_.values.push({ sheet: sheet, values: values });
+  return values;
+}
+
 function getSpreadsheet() {
   return SpreadsheetApp.getActiveSpreadsheet();
 }
 
-function getSheetByName(name) {
+// Looked up once per request while the read cache is on.
+function findSheet_(name) {
+  if (readCache_ && readCache_.sheets.hasOwnProperty(name)) return readCache_.sheets[name];
   var sheet = getSpreadsheet().getSheetByName(name);
+  if (readCache_ && sheet) readCache_.sheets[name] = sheet;
+  return sheet;
+}
+
+function getSheetByName(name) {
+  var sheet = findSheet_(name);
   if (!sheet) throw new Error('Sheet not found: ' + name + '. Run setupSpreadsheet() first.');
   return sheet;
 }
@@ -5249,12 +5290,12 @@ function getSheetByName(name) {
 // it does. Lets new features add tabs/columns without anyone hand-editing
 // the spreadsheet after a deploy.
 function getOrCreateSheet(name, headers) {
-  var ss = getSpreadsheet();
-  var sheet = ss.getSheetByName(name);
+  var sheet = findSheet_(name);
   if (!sheet) {
-    sheet = ss.insertSheet(name);
+    sheet = getSpreadsheet().insertSheet(name);
     sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
     sheet.setFrozenRows(1);
+    clearReadCache_();
     return sheet;
   }
   ensureHeaders(sheet, headers);
@@ -5266,20 +5307,33 @@ function ensureHeaders(sheet, headers) {
   var missing = headers.filter(function (h) { return existing.indexOf(h) === -1; });
   if (missing.length === 0) return;
   sheet.getRange(1, existing.length + 1, 1, missing.length).setValues([missing]);
+  clearReadCache_();
 }
 
 function sheetHeaders(sheet) {
+  if (readCache_) {
+    var cached = sheetValues_(sheet);
+    return cached.length ? cached[0] : [];
+  }
   var lastCol = sheet.getLastColumn();
   if (lastCol === 0) return [];
   return sheet.getRange(1, 1, 1, lastCol).getValues()[0];
 }
 
 function sheetToObjects(sheet) {
-  var lastRow = sheet.getLastRow();
-  var lastCol = sheet.getLastColumn();
-  if (lastRow < 2 || lastCol === 0) return [];
-  var headers = sheetHeaders(sheet);
-  var values = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
+  var headers, values;
+  if (readCache_) {
+    var all = sheetValues_(sheet);
+    if (all.length < 2) return [];
+    headers = all[0];
+    values = all.slice(1);
+  } else {
+    var lastRow = sheet.getLastRow();
+    var lastCol = sheet.getLastColumn();
+    if (lastRow < 2 || lastCol === 0) return [];
+    headers = sheetHeaders(sheet);
+    values = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
+  }
   var out = [];
   for (var r = 0; r < values.length; r++) {
     var obj = {};
@@ -5308,6 +5362,7 @@ function appendObject(sheet, obj) {
   var headers = sheetHeaders(sheet);
   var row = headers.map(function (h) { return safeCellValue((obj[h] !== undefined) ? obj[h] : ''); });
   sheet.appendRow(row);
+  clearReadCache_();
   return obj;
 }
 
@@ -5335,6 +5390,7 @@ function updateObjectById(sheet, id, patch) {
   var updated = Object.assign({}, current, patch);
   var newRow = headers.map(function (h) { return safeCellValue(updated[h] !== undefined ? updated[h] : ''); });
   sheet.getRange(rowIndex, 1, 1, lastCol).setValues([newRow]);
+  clearReadCache_();
   return updated;
 }
 

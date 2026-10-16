@@ -57,7 +57,8 @@ function handleRequest(e) {
       result = withScriptLock(function () { return dispatch(action, params.token, payload); });
       if (result && !result.error) bumpDataVersion(); // invalidate cached dashboards
     } else {
-      result = dispatch(action, params.token, payload);
+      // Read-only: each tab is read once for the whole request (Utils.gs).
+      result = withReadCache(function () { return dispatch(action, params.token, payload); });
     }
   } catch (err) {
     result = errorResult(err, action);
