@@ -896,7 +896,7 @@ function openWorkOf(world, email) {
   world.records.forEach(function (x) { if (lowerEmail(x.row.AgentEmail) === e) ensureHousehold(world, recordContactKey(x.row)); });
   var patients = world.patients.filter(function (p) { return p.OwnerStatus === PATIENT_OWNED && lowerEmail(p.OwnerEmail) === e; });
   var records = world.records.filter(function (x) { return x.row.Status === 'Pending' && lowerEmail(x.row.AgentEmail) === e; });
-  var reminders = sheetToObjects(getSheetByName('Reminders')).filter(function (r) {
+  var reminders = sheetToObjects(getRemindersSheet()).filter(function (r) {
     return r.Status === 'Active' && lowerEmail(r.AgentEmail) === e;
   });
   return { patients: patients, records: records, reminders: reminders };
@@ -924,7 +924,7 @@ function handOverWork(session, world, user, successor, why) {
   });
 
   var reminders = res.reminders;
-  var remSheet = getSheetByName('Reminders');
+  var remSheet = getRemindersSheet();
   sheetToObjects(remSheet).forEach(function (r) {
     if (r.Status !== 'Active' || lowerEmail(r.AgentEmail) !== e) return;
     var patch = { AgentEmail: successor.email, AgentName: successor.name, Reassigned: true, UpdatedAt: nowIso() };
@@ -1014,6 +1014,203 @@ function svc_decideUserRequest(session, data) {
   audit(session, approve ? 'approve_request' : 'reject_request', 'UserRequest', req.ID, auditDiff(req, patch),
     (approve ? 'Approved' : 'Rejected') + ' deactivation of ' + req.UserEmail + (note ? '. Note: ' + note : ''));
   return { request: userRequestForClient(updated), handover: handover };
+}
+
+
+// ---- Homekare.gs ----
+// Homekare.gs — home nursing / caretaker / procedure services.
+//
+// A Homekare record lists one or more services from the catalogue below,
+// each with the price agreed for this patient (prices vary per patient, so
+// they are typed, not looked up). The amount is the sum of the lines,
+// worked out on the server. Service names are kept exactly as MedUnited's
+// billing system has them.
+//
+// Monthly packages: when a record with a monthly service is Completed, a
+// renewal reminder is created on the Reminders page, due a few days before
+// the month ends (the package runs from the record date for one month).
+// A newer completed monthly order for the same patient resolves the old
+// reminder as Renewed.
+//
+// Visit dates, number of days and the staff sent are not tracked yet (to be
+// decided); they can be added later as extra columns.
+
+var HOMEKARE_RENEWAL_DAYS_BEFORE = 5;
+var MAX_SERVICE_LINES = 30;
+
+// name | how it is usually charged | monthly package?
+var HOMEKARE_SERVICES = [
+  ['HOMEKARE - BED RETURN TRANSPORT CHARGES', 'Per trip', false],
+  ['HOMEKARE - BLOOD TRANSFUSION CHARGES', 'Per visit', false],
+  ['HOMEKARE - CARE TAKER SERVICE 1HR', 'Per hour', false],
+  ['HOMEKARE - CARE TAKER SERVICE 24HRs', 'Per 24-hour shift', false],
+  ['HOMEKARE - CARE TAKER SERVICE WITH TRAVEL CHARGES MONTHLY PACKAGE', 'Per month (package)', true],
+  ['HOMEKARE - CARETAKER PER DAY', 'Per day', false],
+  ['HOMEKARE - CARETAKER SERVICE MONTHY', 'Per month', true],
+  ['HOMEKARE - ECG', 'Per visit', false],
+  ['HOMEKARE - INJECTION', 'Per visit', false],
+  ['HOMEKARE - MAJOR DRESSING', 'Per visit', false],
+  ['HOMEKARE - MAJOR DRESSING MOTHLY', 'Per month (package)', true],
+  ['HOMEKARE - MINOR DRESSING', 'Per visit', false],
+  ['HOMEKARE - NURSING 12Hrs', 'Per 12-hour shift', false],
+  ['HOMEKARE - NURSING 4HRS', 'Per 4-hour shift', false],
+  ['HOMEKARE - PATIENT CARE 12 Hrs', 'Per 12-hour shift', false],
+  ['HOMEKARE - RYLES TUBE FEEDING', 'Per visit', false],
+  ['HOMEKARE - SUCTION OPERATOR PORTABLE (per day)', 'Per day', false],
+  ['HOMEKARE - SUCTION OPERATOR PORTABLE (per month)', 'Per month', true],
+  ['HOMEKARE 2 FUNCTIONAL BED RENT PER DAY', 'Per day (rental)', false],
+  ['HOMEKARE CONSULTATION', 'Per visit', false],
+  ['HOMEKARE ELETROTHERAPY SINGLE MODALITY', 'Per session', false],
+  ['HOMEKARE EXERCISE THERAPY', 'Per session', false],
+  ['HOMEKARE FOLEYS CATHERIZATION', 'Per visit', false],
+  ['HOMEKARE FOLEYS REMOVAL', 'Per visit', false],
+  ['HOMEKARE GENERAL MEDICINE CONSULTATAION', 'Per visit', false],
+  ['HOMEKARE GENERAL PRACTIONER CONSULTATION', 'Per visit', false],
+  ['HOMEKARE IM INJECTION', 'Per visit', false],
+  ['HOMEKARE IV CANNULATION', 'Per visit', false],
+  ['HOMEKARE IV CANNULATION  INJECTIONS', 'Per visit', false],
+  ['HOMEKARE IV INJECTION', 'Per visit', false],
+  ['HOMEKARE LIMB ELIVATION', 'Per visit', false],
+  ['HOMEKARE MAJOR SUTURING', 'Per visit', false],
+  ['HOMEKARE MINOR SUTURING', 'Per visit', false],
+  ['HOMEKARE NEBULISATION', 'Per visit', false],
+  ['HOMEKARE NURSING CHARGES (6Hrs)', 'Per 6-hour shift', false],
+  ['HOMEKARE RYLES TUBE INSERTION', 'Per visit', false],
+  ['HOMEKARE TRAVEL CHARGES', 'Per visit (add-on)', false],
+  ['HOMEKARE VITALS AND GRBS', 'Per visit', false]
+];
+
+function homekareCatalogue() {
+  return HOMEKARE_SERVICES.map(function (s) { return { name: s[0], unit: s[1], monthly: s[2] }; });
+}
+
+// Matching ignores case and repeated spaces, then returns the official name.
+function findHomekareService(name) {
+  var key = cleanText(name, 200).toLowerCase().replace(/\s+/g, ' ');
+  for (var i = 0; i < HOMEKARE_SERVICES.length; i++) {
+    if (HOMEKARE_SERVICES[i][0].toLowerCase().replace(/\s+/g, ' ') === key) return HOMEKARE_SERVICES[i];
+  }
+  return null;
+}
+
+function parseLines(value) {
+  if (Array.isArray(value)) return value;
+  if (value === undefined || value === null || value === '') return [];
+  try { var v = JSON.parse(value); return Array.isArray(v) ? v : []; } catch (e) { return []; }
+}
+
+function linePrice(value, label) {
+  var n = Number(value);
+  if (value === '' || value === undefined || value === null || !isFinite(n) || n < 0 || n > 10000000 || Math.round(n * 100) / 100 !== n) {
+    throw new Error('Enter a price between ₹0 and ₹1,00,00,000 for ' + label + '.');
+  }
+  return n;
+}
+
+function validateHomekareServices(raw) {
+  if (typeof raw === 'string') {
+    try { raw = JSON.parse(raw || '[]'); } catch (e) { throw new Error('The services list is not valid.'); }
+  }
+  if (raw === undefined || raw === null) raw = [];
+  if (!Array.isArray(raw)) throw new Error('The services list is not valid.');
+  if (raw.length > MAX_SERVICE_LINES) throw new Error('A record can list at most ' + MAX_SERVICE_LINES + ' services.');
+  return raw.map(function (l) {
+    l = l && typeof l === 'object' ? l : {};
+    var s = findHomekareService(l.service);
+    if (!s) throw new Error('"' + cleanText(l.service, 80) + '" is not a Homekare service. Pick one from the list.');
+    return { service: s[0], price: linePrice(l.price, s[0]) };
+  });
+}
+
+function sumLines(lines) {
+  return Math.round(lines.reduce(function (t, l) { return t + l.price; }, 0) * 100) / 100;
+}
+
+function summarizeServices(lines) {
+  return lines.map(function (l) { return l.service.replace(/^HOMEKARE\s*-?\s*/i, '') + ' (₹' + l.price + ')'; }).join(', ');
+}
+
+function monthlyServices(lines) {
+  return lines.filter(function (l) { var s = findHomekareService(l.service); return s && s[2]; });
+}
+
+// Last day of a one-month package that starts on `key`: the day before the
+// same date next month (1 Oct → 31 Oct, 15 Oct → 14 Nov). When next month
+// has no such date, the package runs to the end of next month (31 Jan → 28 Feb).
+function monthEnd(key) {
+  var p = String(key).split('-').map(Number);
+  var y = p[0] + (p[1] === 12 ? 1 : 0);
+  var m = p[1] === 12 ? 1 : p[1] + 1; // 1-based next month
+  var lastOfNext = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  if (p[2] > lastOfNext) return dayNumberToKey(Date.UTC(y, m - 1, lastOfNext) / DAY_MS);
+  return dayNumberToKey(Date.UTC(y, m - 1, p[2]) / DAY_MS - 1);
+}
+
+// ===== Hooks (see Modules.gs) =====
+function homekarePrepareSave(session, ctx) {
+  var data = ctx.data || {};
+  var lines = validateHomekareServices(data.services !== undefined ? data.services : (ctx.existing ? ctx.existing.Services : []));
+  return { fields: { Services: JSON.stringify(lines), Amount: sumLines(lines), Detail: summarizeServices(lines) }, warnings: [] };
+}
+
+function homekareValidateCompletion(next) {
+  if (!parseLines(next.Services).length) throw new Error('Add the services before marking this Homekare record as Completed.');
+}
+
+function homekareClientFields(row) {
+  var lines = parseLines(row.Services);
+  return { Services: lines, MonthlyPackage: monthlyServices(lines).length > 0 };
+}
+
+function homekarePrepareImport(r, errors) {
+  return { Amount: 0, Services: '[]' };
+}
+
+// Create, refresh or remove the renewal reminder for one Homekare record.
+function homekareAfterSave(sale) {
+  var sheet = getRemindersSheet();
+  var rows = sheetToObjects(sheet);
+  var existing = rows.filter(function (r) { return r.SaleType === 'homekare' && String(r.SaleID) === String(sale.ID); })[0];
+  var monthly = monthlyServices(parseLines(sale.Services));
+  if (sale.Status !== 'Completed' || !monthly.length) {
+    if (existing) {
+      var idx = findRowIndexById(sheet, existing.ID);
+      if (idx !== -1) sheet.deleteRow(idx);
+    }
+    return;
+  }
+  var start = dateKey(sale.Date);
+  var end = monthEnd(start);
+  var mirror = {
+    CustomerName: sale.CustomerName, Contact: sale.Contact, SaleDate: start, EndDate: end,
+    DueDate: dayNumberToKey(keyToDayNumber(end) - HOMEKARE_RENEWAL_DAYS_BEFORE),
+    Detail: monthly.map(function (l) { return l.service; }).join(', '), PatientID: sale.PatientID || '', UpdatedAt: nowIso()
+  };
+  if (existing) {
+    if (!isActive(existing.Reassigned)) { mirror.AgentEmail = sale.AgentEmail; mirror.AgentName = sale.AgentName; }
+    updateObjectById(sheet, existing.ID, mirror);
+    return;
+  }
+  // A new monthly package for this patient renews the previous one.
+  rows.forEach(function (r) {
+    if (r.Kind !== 'renewal' || r.Status !== 'Active' || String(r.SaleID) === String(sale.ID)) return;
+    var samePatient = sale.PatientID ? String(r.PatientID) === String(sale.PatientID)
+      : recordContactKey(r) === recordContactKey(sale) && nameKey(r.CustomerName) === nameKey(sale.CustomerName);
+    if (samePatient) updateObjectById(sheet, r.ID, { Status: 'Resolved', ResolutionReason: 'Renewed', UpdatedAt: nowIso() });
+  });
+  appendObject(sheet, Object.assign({
+    ID: newId(), Kind: 'renewal', SaleType: 'homekare', SaleID: sale.ID, PharmacySaleID: '',
+    AgentEmail: sale.AgentEmail, AgentName: sale.AgentName, Reassigned: false, Products: '',
+    Status: 'Active', ResolutionReason: '', AttemptCount: 0, LastAttemptDate: '', CreatedAt: nowIso()
+  }, mirror));
+}
+
+function homekareAfterDelete(saleId) {
+  var sheet = getRemindersSheet();
+  var existing = sheetToObjects(sheet).filter(function (r) { return r.SaleType === 'homekare' && String(r.SaleID) === String(saleId); })[0];
+  if (!existing) return;
+  var idx = findRowIndexById(sheet, existing.ID);
+  if (idx !== -1) sheet.deleteRow(idx);
 }
 
 
@@ -1165,8 +1362,8 @@ function svc_importSales(session, type, rows, options) {
 
     var notes = cleanText(r.notes, MAX_LONG_TEXT);
     var detail = cleanText(r.detail, MAX_LONG_TEXT);
-    if (mod.products && detail) {
-      notes = (notes ? notes + '\n' : '') + 'Medicines mentioned: ' + detail;
+    if ((mod.products || mod.lineItems) && detail) {
+      notes = (notes ? notes + '\n' : '') + (mod.products ? 'Medicines mentioned: ' : 'Mentioned: ') + detail;
       detail = '';
     }
 
@@ -1247,6 +1444,97 @@ function svc_importSales(session, type, rows, options) {
     (summary.invalid ? ' (' + summary.invalid + ' rows skipped)' : ''));
   summary.imported = toSave.length;
   return summary;
+}
+
+
+// ---- Lab.gs ----
+// Lab.gs — Lab & Radiology tests and packages.
+//
+// There is no test catalogue yet: the agent types each test or package with
+// whether it is Lab or Radiology and its price. The amount is the sum of the
+// lines, worked out on the server. A catalogue can be added later without
+// changing existing records.
+//
+// Optional tracking on each record:
+//   HomeCollection (yes/no) + CollectionDate    home sample collection
+//   AppointmentDate                             visit / scan appointment
+//   ReportDeliveredOn + ReportDeliveredVia      when and how the report went out
+// Agents can still update these after the sale is Completed (reports come
+// later), but not the tests or prices.
+
+var LAB_TEST_KINDS = ['Lab', 'Radiology'];
+var LAB_REPORT_VIA = ['WhatsApp', 'Email', 'Collected', 'Other'];
+var LAB_TRACKING_FIELDS = ['HomeCollection', 'CollectionDate', 'AppointmentDate', 'ReportDeliveredOn', 'ReportDeliveredVia'];
+
+function validateLabTests(raw) {
+  if (typeof raw === 'string') {
+    try { raw = JSON.parse(raw || '[]'); } catch (e) { throw new Error('The tests list is not valid.'); }
+  }
+  if (raw === undefined || raw === null) raw = [];
+  if (!Array.isArray(raw)) throw new Error('The tests list is not valid.');
+  if (raw.length > MAX_SERVICE_LINES) throw new Error('A record can list at most ' + MAX_SERVICE_LINES + ' tests.');
+  return raw.map(function (l) {
+    l = l && typeof l === 'object' ? l : {};
+    var name = cleanText(l.name, 120);
+    if (!name) throw new Error('Every test needs a name.');
+    var kind = cleanText(l.kind, 20) || 'Lab';
+    requireOneOf(kind, LAB_TEST_KINDS, 'Type of ' + name);
+    return { name: name, kind: kind, price: linePrice(l.price, name) };
+  });
+}
+
+function summarizeTests(lines) {
+  return lines.map(function (l) { return l.name + ' (₹' + l.price + ')'; }).join(', ');
+}
+
+// The tracking fields as they should be after this save.
+function labTracking(data, existing) {
+  var pick = function (key, field) { return data[key] !== undefined ? data[key] : (existing ? existing[field] : ''); };
+  var home = asBool(pick('homeCollection', 'HomeCollection'));
+  var collection = optionalDateKey(pick('collectionDate', 'CollectionDate'), 'Collection date');
+  var appointment = optionalDateKey(pick('appointmentDate', 'AppointmentDate'), 'Appointment date');
+  var delivered = optionalDateKey(pick('reportDeliveredOn', 'ReportDeliveredOn'), 'Report delivered on');
+  var via = cleanText(pick('reportDeliveredVia', 'ReportDeliveredVia'), 20);
+  if (via) requireOneOf(via, LAB_REPORT_VIA, 'Report delivered by');
+  if (via && !delivered) throw new Error('Enter the date the report was delivered.');
+  if (delivered && !via) throw new Error('Say how the report was delivered (WhatsApp, Email, Collected or Other).');
+  return {
+    HomeCollection: home,
+    CollectionDate: home ? collection : '',
+    AppointmentDate: appointment,
+    ReportDeliveredOn: delivered,
+    ReportDeliveredVia: via
+  };
+}
+
+// ===== Hooks (see Modules.gs) =====
+function labPrepareSave(session, ctx) {
+  var data = ctx.data || {};
+  var lines = validateLabTests(data.tests !== undefined ? data.tests : (ctx.existing ? ctx.existing.Tests : []));
+  var fields = labTracking(data, ctx.existing);
+  fields.Tests = JSON.stringify(lines);
+  fields.Amount = sumLines(lines);
+  fields.Detail = summarizeTests(lines);
+  return { fields: fields, warnings: [] };
+}
+
+function labValidateCompletion(next) {
+  if (!parseLines(next.Tests).length) throw new Error('Add the tests before marking this Lab & Radiology record as Completed.');
+}
+
+function labClientFields(row) {
+  return {
+    Tests: parseLines(row.Tests),
+    HomeCollection: asBool(row.HomeCollection),
+    CollectionDate: dateKey(row.CollectionDate),
+    AppointmentDate: dateKey(row.AppointmentDate),
+    ReportDeliveredOn: dateKey(row.ReportDeliveredOn),
+    ReportDeliveredVia: String(row.ReportDeliveredVia || '')
+  };
+}
+
+function labPrepareImport(r, errors) {
+  return { Amount: 0, Tests: '[]', HomeCollection: false };
 }
 
 
@@ -1726,7 +2014,10 @@ function svc_decideMedpassDiscount(session, data) {
 //   needsProducts true → can't be Completed without at least one product
 //   reminders     true → completed sales get refill reminders
 //   incentive     { kind: 'perSale' } flat ₹ per sale by price type, or
-//                 { kind: 'percent' } % of the amount — rates live on the Users tab
+//                 { kind: 'percent' } % of the amount — rates live on the Users tab, or
+//                 { kind: 'none' } no incentive yet
+//   lineItems     true → the record lists typed lines (services/tests); Detail summarises them
+//   agentEditableWhenCompleted  extra columns agents may still change once Completed
 //   extraHeaders  columns only this module's tab has (added after SALE_HEADERS)
 //   hooks         optional module rules, called by the engine:
 //     prepareSave(session, ctx)   → { fields, warnings } computed fields for a
@@ -1734,6 +2025,8 @@ function svc_decideMedpassDiscount(session, data) {
 //     validateCompletion(next)    throws if the record can't be Completed yet
 //     clientFields(row)           extra fields the browser gets
 //     prepareImport(r, errors)    computed fields for an imported lead
+//     afterSave(sale) / afterDelete(id)  side effects (e.g. reminders)
+//     clientConfig()              extra settings the browser gets from getModules
 // Hooks are written as function(…) { return name(…); } so they can live in
 // another file (Apps Script doesn't guarantee the order files load in).
 
@@ -1756,6 +2049,37 @@ var MODULES = {
     id: 'pharmacy', label: 'Pharmacy',
     priceTypes: false, products: true, needsProducts: true, reminders: true,
     incentive: { kind: 'percent', percentField: 'PharmacyIncentivePercent' }
+  },
+  // See Homekare.gs. Prices are typed per patient; incentives to be decided.
+  homekare: {
+    id: 'homekare', label: 'Homekare',
+    priceTypes: false, products: false, needsProducts: false, reminders: false, lineItems: true,
+    incentive: { kind: 'none' },
+    extraHeaders: ['Services'],
+    hooks: {
+      prepareSave: function (session, ctx) { return homekarePrepareSave(session, ctx); },
+      validateCompletion: function (next) { return homekareValidateCompletion(next); },
+      clientFields: function (row) { return homekareClientFields(row); },
+      prepareImport: function (r, errors) { return homekarePrepareImport(r, errors); },
+      afterSave: function (sale) { return homekareAfterSave(sale); },
+      afterDelete: function (id) { return homekareAfterDelete(id); },
+      clientConfig: function () { return { services: homekareCatalogue() }; }
+    }
+  },
+  // See Lab.gs. Tests are typed by hand for now; incentives to be decided.
+  lab: {
+    id: 'lab', label: 'Lab & Radiology',
+    priceTypes: false, products: false, needsProducts: false, reminders: false, lineItems: true,
+    incentive: { kind: 'none' },
+    extraHeaders: ['Tests', 'HomeCollection', 'CollectionDate', 'AppointmentDate', 'ReportDeliveredOn', 'ReportDeliveredVia'],
+    agentEditableWhenCompleted: ['HomeCollection', 'CollectionDate', 'AppointmentDate', 'ReportDeliveredOn', 'ReportDeliveredVia'],
+    hooks: {
+      prepareSave: function (session, ctx) { return labPrepareSave(session, ctx); },
+      validateCompletion: function (next) { return labValidateCompletion(next); },
+      clientFields: function (row) { return labClientFields(row); },
+      prepareImport: function (r, errors) { return labPrepareImport(r, errors); },
+      clientConfig: function () { return { testKinds: LAB_TEST_KINDS, reportVia: LAB_REPORT_VIA }; }
+    }
   }
 };
 
@@ -1796,17 +2120,23 @@ function incentiveForSale(mod, row, rates) {
 // Module side effects after a record is saved or deleted.
 function afterSaleSaved(type, sale) {
   if (getModule(type).reminders) syncReminderForSale(sale);
+  var hook = moduleHook(type, 'afterSave');
+  if (hook) hook(sale);
 }
 
 function afterSaleDeleted(type, saleId) {
   if (getModule(type).reminders) removeReminderForSale(saleId);
+  var hook = moduleHook(type, 'afterDelete');
+  if (hook) hook(saleId);
 }
 
 // What the browser needs to build its menus and forms.
 function svc_getModules(session) {
   return moduleIds().map(function (id) {
     var m = MODULES[id];
-    return { id: m.id, label: m.label, priceTypes: m.priceTypes, products: m.products, reminders: m.reminders };
+    var config = moduleHook(id, 'clientConfig');
+    return Object.assign({ id: m.id, label: m.label, priceTypes: m.priceTypes, products: m.products, reminders: m.reminders,
+      lineItems: !!m.lineItems, incentive: (m.incentive || {}).kind || 'none' }, config ? config() : {});
   });
 }
 
@@ -2136,7 +2466,7 @@ function movePatients(session, world, patients, target, why) {
     if (!keys[recordContactKey(x.row)]) return;
     var p = recordPatient(world, x.row);
     if (!p || !ids[String(p.ID)]) return;
-    if (getModule(x.type).reminders) reminderSales[String(x.row.ID)] = true;
+    reminderSales[String(x.row.ID)] = true; // refill and renewal reminders follow the patient
     var patch = {};
     if (!x.row.PatientID) patch.PatientID = p.ID;
     var moving = x.row.Status === 'Pending' && lowerEmail(x.row.AgentEmail) !== lowerEmail(target.email);
@@ -2153,9 +2483,9 @@ function movePatients(session, world, patients, target, why) {
   });
 
   var reminders = 0;
-  var remSheet = getSheetByName('Reminders');
+  var remSheet = getRemindersSheet();
   sheetToObjects(remSheet).forEach(function (r) {
-    if (r.Status !== 'Active' || !reminderSales[String(r.PharmacySaleID)] || lowerEmail(r.AgentEmail) === lowerEmail(target.email)) return;
+    if (r.Status !== 'Active' || !reminderSales[reminderSaleId(r)] || lowerEmail(r.AgentEmail) === lowerEmail(target.email)) return;
     var patch = { AgentEmail: target.email, AgentName: target.name, Reassigned: true, UpdatedAt: nowIso() };
     updateObjectById(remSheet, r.ID, patch);
     audit(session, 'reassign', 'Reminder', r.ID, auditDiff(r, patch), 'Refill reminder moved with the patient to ' + target.name);
@@ -2385,7 +2715,11 @@ function svc_resolvePatientConflict(session, data) {
 
 
 // ---- Reminders.gs ----
-// Reminders.gs — medicine refill reminders for Pharmacy sales.
+// Reminders.gs — follow-up reminders on the Reminders page:
+//   refill   Pharmacy medicines running out (below)
+//   renewal  monthly Homekare packages ending (see Homekare.gs)
+// Rows saved before Kind/SaleType/SaleID existed are Pharmacy refills
+// (linked by PharmacySaleID).
 //
 // Each Pharmacy sale can carry multiple products (name, quantity, dosing
 // frequency). From that we compute when each product runs out, and surface
@@ -2400,6 +2734,16 @@ var FREQUENCY_DOSES_PER_DAY = {
   'Twice a day': 2,
   'Thrice a day': 3
 };
+
+var REMINDER_HEADERS = ['ID', 'PharmacySaleID', 'AgentEmail', 'AgentName', 'Reassigned', 'CustomerName', 'Contact',
+  'Products', 'SaleDate', 'Status', 'ResolutionReason', 'AttemptCount', 'LastAttemptDate', 'CreatedAt', 'UpdatedAt',
+  'Kind', 'SaleType', 'SaleID', 'PatientID', 'Detail', 'EndDate', 'DueDate'];
+
+function getRemindersSheet() { return getOrCreateSheet('Reminders', REMINDER_HEADERS); }
+
+// The record a reminder belongs to (old refill rows only have PharmacySaleID).
+function reminderSaleId(r) { return String(r.SaleID || r.PharmacySaleID || ''); }
+function reminderKind(r) { return r.Kind === 'renewal' ? 'renewal' : 'refill'; }
 
 var REMINDER_ATTEMPT_ESCALATE_DAYS = 3; // flag for manager attention after this many days of failed contact attempts
 
@@ -2544,8 +2888,8 @@ function validateProducts(products, allowEmpty) {
 // Called after a Pharmacy sale is saved. Creates or refreshes the reminder
 // row for that sale, or removes it if the sale is no longer Completed.
 function syncReminderForSale(sale) {
-  var reminders = getSheetByName('Reminders');
-  var existing = sheetToObjects(reminders).find(function (r) { return String(r.PharmacySaleID) === String(sale.ID); });
+  var reminders = getRemindersSheet();
+  var existing = sheetToObjects(reminders).find(function (r) { return reminderKind(r) === 'refill' && reminderSaleId(r) === String(sale.ID); });
 
   var products = [];
   try { products = JSON.parse(sale.Products || '[]'); } catch (e) { products = []; }
@@ -2580,6 +2924,10 @@ function syncReminderForSale(sale) {
     appendObject(reminders, {
       ID: newId(),
       PharmacySaleID: sale.ID,
+      Kind: 'refill',
+      SaleType: 'pharmacy',
+      SaleID: sale.ID,
+      PatientID: sale.PatientID || '',
       AgentEmail: sale.AgentEmail,
       AgentName: sale.AgentName,
       Reassigned: false,
@@ -2598,20 +2946,36 @@ function syncReminderForSale(sale) {
 }
 
 function removeReminderForSale(saleId) {
-  var reminders = getSheetByName('Reminders');
-  var existing = sheetToObjects(reminders).find(function (r) { return String(r.PharmacySaleID) === String(saleId); });
+  var reminders = getRemindersSheet();
+  var existing = sheetToObjects(reminders).find(function (r) { return reminderKind(r) === 'refill' && reminderSaleId(r) === String(saleId); });
   if (!existing) return;
   var rowIndex = findRowIndexById(reminders, existing.ID);
   if (rowIndex !== -1) reminders.deleteRow(rowIndex);
 }
 
 function sanitizeReminder(r) {
-  var products = [];
-  try { products = JSON.parse(r.Products || '[]'); } catch (e) { products = []; }
-  var urgency = computeReminderUrgency(products, r.SaleDate);
+  var kind = reminderKind(r);
+  var urgency;
+  if (kind === 'renewal') {
+    // Countdown to the end of the monthly package.
+    var end = dateKey(r.EndDate);
+    var left = isDateKey(end) ? keyToDayNumber(end) - keyToDayNumber(todayKey()) : null;
+    urgency = { products: [], daysRemaining: left, overdue: left !== null && left < 0 };
+  } else {
+    var products = [];
+    try { products = JSON.parse(r.Products || '[]'); } catch (e) { products = []; }
+    urgency = computeReminderUrgency(products, r.SaleDate);
+  }
 
   return {
     ID: r.ID,
+    Kind: kind,
+    SaleType: String(r.SaleType || 'pharmacy'),
+    SaleID: reminderSaleId(r),
+    Detail: String(r.Detail || ''),
+    EndDate: dateKey(r.EndDate),
+    DueDate: dateKey(r.DueDate),
+    IsDue: kind === 'renewal' ? !!dateKey(r.DueDate) && dateKey(r.DueDate) <= todayKey() : true,
     PharmacySaleID: r.PharmacySaleID,
     AgentEmail: r.AgentEmail,
     AgentName: r.AgentName,
@@ -2633,7 +2997,7 @@ function sanitizeReminder(r) {
 }
 
 function svc_listReminders(session, includeResolved) {
-  var rows = sheetToObjects(getSheetByName('Reminders'));
+  var rows = sheetToObjects(getRemindersSheet());
   if (session.role === 'agent') {
     rows = rows.filter(function (r) { return String(r.AgentEmail).toLowerCase() === String(session.email).toLowerCase(); });
   }
@@ -2649,7 +3013,7 @@ function svc_listReminders(session, includeResolved) {
 }
 
 function svc_markContacted(session, id, outcome) {
-  var sheet = getSheetByName('Reminders');
+  var sheet = getRemindersSheet();
   var rows = sheetToObjects(sheet);
   var existing = rows.find(function (r) { return String(r.ID) === String(id); });
   if (!existing) throw new Error('Reminder not found.');
@@ -2682,7 +3046,7 @@ function svc_markContacted(session, id, outcome) {
 
 function svc_reassignReminder(session, id, agentEmail) {
   requireRole(session, TEAM_ROLES);
-  var sheet = getSheetByName('Reminders');
+  var sheet = getRemindersSheet();
 
   var agent = sheetToObjects(getSheetByName('Users')).find(function (u) {
     return String(u.Email).toLowerCase() === cleanEmail(agentEmail) && u.Role === 'agent' && isActive(u.Active);
@@ -2927,9 +3291,10 @@ function validateCompletion(next, type) {
   if (!next.hasBill) throw new Error('A bill screenshot is required to mark this sale as Completed.');
   if (!next.hasPayment) throw new Error('A payment screenshot is required to mark this sale as Completed.');
   if (next.PaymentMethod === 'UPI' && !next.UTR) throw new Error('UTR number is required for UPI payments.');
-  if (!(Number(next.Amount) > 0)) throw new Error('Enter the sale amount before marking it Completed.');
+  // Module rules first: they explain what's missing (members, services…).
   var hook = moduleHook(type, 'validateCompletion');
   if (hook) hook(next);
+  if (!(Number(next.Amount) > 0)) throw new Error('Enter the sale amount before marking it Completed.');
 }
 
 // Is a stored cell the same as a newly computed value? (Numbers come back
@@ -3218,7 +3583,8 @@ function svc_updateSale(session, type, id, data) {
   var pay = attachmentIntent(data.paymentScreenshot, existing.PaymentScreenshotUrl);
 
   if (existing.Status === 'Completed' && session.role === 'agent') {
-    var blocked = Object.keys(patch).filter(function (k) { return AGENT_COMPLETED_EDITABLE.indexOf(k) === -1; });
+    var editable = AGENT_COMPLETED_EDITABLE.concat(mod.agentEditableWhenCompleted || []);
+    var blocked = Object.keys(patch).filter(function (k) { return editable.indexOf(k) === -1; });
     if (blocked.length || bill.kind !== 'keep' || pay.kind !== 'keep') {
       throw new ForbiddenError('This sale is Completed and locked. You can still update its medicines and notes; ask a manager for anything else.');
     }
@@ -3569,8 +3935,7 @@ function setupSpreadsheet() {
   moduleIds().forEach(function (type) { getSaleSheet(type); });
   getPatientsSheet();
   getUserRequestsSheet();
-  getOrCreateSheet('Reminders', ['ID', 'PharmacySaleID', 'AgentEmail', 'AgentName', 'Reassigned', 'CustomerName', 'Contact',
-    'Products', 'SaleDate', 'Status', 'ResolutionReason', 'AttemptCount', 'LastAttemptDate', 'CreatedAt', 'UpdatedAt']);
+  getRemindersSheet();
   getActivitiesSheet();
   getListsSheet();
   getSettingsSheet();

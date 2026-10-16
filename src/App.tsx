@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { User, ToastMessage } from './types';
+import { User, ToastMessage, ModuleInfo } from './types';
+import { BUILT_IN_MODULES, isModulePage } from './modules';
 import { api, hasSession, AUTH_EXPIRED_EVENT, PASSWORD_CHANGE_EVENT } from './services/api';
 import { Sidebar, ActivePage } from './components/Sidebar';
 import { Dashboard } from './components/Dashboard';
@@ -16,6 +17,8 @@ export const App: React.FC = () => {
   const [checkingSession, setCheckingSession] = useState<boolean>(hasSession());
   const [changingPassword, setChangingPassword] = useState<boolean>(false);
   const [activePage, setActivePage] = useState<ActivePage>('dashboard');
+  // Sales modules, as the server lists them.
+  const [modules, setModules] = useState<ModuleInfo[]>(BUILT_IN_MODULES);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const lastExpiryToast = useRef<number>(0);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -111,6 +114,14 @@ export const App: React.FC = () => {
     );
   }
 
+  // Which sales modules exist (Medpass, Pharmacy, Homekare, …) comes from the server.
+  useEffect(() => {
+    if (!currentUser || currentUser.MustChangePassword) return;
+    api.getModules().then((res) => {
+      if (!res.error && Array.isArray(res.modules) && res.modules.length) setModules(res.modules);
+    });
+  }, [currentUser]);
+
   if (!currentUser) {
     return (
       <>
@@ -149,7 +160,9 @@ export const App: React.FC = () => {
     dashboard: 'Dashboard',
     medpass: 'Medpass Sales',
     pharmacy: 'Pharmacy Sales',
-    reminders: 'Refill Reminders',
+    homekare: 'Homekare',
+    lab: 'Lab & Radiology',
+    reminders: 'Reminders',
     settings: 'Incentives',
     users: 'User Management',
   };
@@ -167,6 +180,7 @@ export const App: React.FC = () => {
 
       <Sidebar
         user={currentUser}
+        modules={modules}
         activePage={activePage}
         onNavigate={(p) => {
           setActivePage(p);
@@ -216,17 +230,11 @@ export const App: React.FC = () => {
 
         {activePage === 'dashboard' && <Dashboard user={currentUser} onToast={addToast} onNavigate={setActivePage} />}
 
-        {activePage === 'medpass' && (
+        {isModulePage(activePage) && (
           <SalesView
-            type="medpass"
-            user={currentUser}
-            onToast={addToast}
-          />
-        )}
-
-        {activePage === 'pharmacy' && (
-          <SalesView
-            type="pharmacy"
+            key={activePage}
+            type={activePage}
+            moduleInfo={modules.find((m) => m.id === activePage)}
             user={currentUser}
             onToast={addToast}
           />

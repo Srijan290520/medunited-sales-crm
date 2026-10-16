@@ -184,7 +184,7 @@ export const api = {
     opts: { dryRun: boolean; agentEmail?: string; fileName?: string }
   ) => call('importSales', { type, rows, ...opts }),
 
-  getModules: () => call('getModules'),
+  getModules: () => call('getModules'), // → { modules: ModuleInfo[] }
 
   // ----- Medpass (price, discounts) -----
   getMedpassSettings: () => call('getMedpassSettings'),

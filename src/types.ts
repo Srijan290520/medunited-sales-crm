@@ -13,7 +13,38 @@ export interface User {
   MustChangePassword?: boolean;
 }
 
-export type SaleType = 'medpass' | 'pharmacy';
+export type SaleType = 'medpass' | 'pharmacy' | 'homekare' | 'lab';
+
+// A module as the server describes it (getModules).
+export interface ModuleInfo {
+  id: SaleType;
+  label: string;
+  priceTypes: boolean;
+  products: boolean;
+  reminders: boolean;
+  lineItems: boolean;
+  incentive: 'perSale' | 'percent' | 'none';
+  services?: HomekareService[]; // Homekare catalogue
+  testKinds?: string[]; // Lab & Radiology
+  reportVia?: string[];
+}
+
+export interface HomekareService {
+  name: string;
+  unit: string;
+  monthly: boolean;
+}
+
+export interface ServiceLine {
+  service: string;
+  price: number;
+}
+
+export interface TestLine {
+  name: string;
+  kind: 'Lab' | 'Radiology';
+  price: number;
+}
 export type SaleStatus = 'Pending' | 'Completed' | 'Cancelled';
 export type PriceType = 'Full Price' | 'Discounted' | 'Converted From OP' | '';
 export type LeadTemperature = 'Hot' | 'Warm' | 'Cold';
@@ -140,6 +171,18 @@ export interface Sale {
   ValidFrom?: string;
   ValidUntil?: string;
   PassStatus?: '' | 'active' | 'expired';
+
+  // Homekare
+  Services?: ServiceLine[];
+  MonthlyPackage?: boolean;
+
+  // Lab & Radiology
+  Tests?: TestLine[];
+  HomeCollection?: boolean;
+  CollectionDate?: string;
+  AppointmentDate?: string;
+  ReportDeliveredOn?: string;
+  ReportDeliveredVia?: string;
 }
 
 export type MedpassRelation = 'Father' | 'Mother' | 'Child';
@@ -233,6 +276,13 @@ export interface UserRequest {
 
 export interface Reminder {
   ID: string;
+  Kind: 'refill' | 'renewal'; // Pharmacy refill, or a monthly Homekare package ending
+  SaleType: SaleType;
+  SaleID: string;
+  Detail: string; // renewal: the monthly services
+  EndDate: string; // renewal: last day of the package
+  DueDate: string; // renewal: when the reminder becomes due
+  IsDue: boolean;
   PharmacySaleID: string;
   AgentEmail: string;
   AgentName: string;
@@ -312,6 +362,10 @@ export interface DashboardSummary {
     pharmacyCount: number;
     medpassAmount: number;
     pharmacyAmount: number;
+    homekareCount?: number;
+    homekareAmount?: number;
+    labCount?: number;
+    labAmount?: number;
   };
   agents: DashboardAgent[];
   pipeline: PipelineMetrics;

@@ -196,7 +196,7 @@ export const RemindersView: React.FC<RemindersViewProps> = ({ user, onToast }) =
       const q = search.toLowerCase();
       const nameHit = r.CustomerName.toLowerCase().includes(q);
       const phoneHit = r.Contact.includes(q);
-      const medHit = r.Products?.some((p) => p.name.toLowerCase().includes(q));
+      const medHit = r.Products?.some((p) => p.name.toLowerCase().includes(q)) || (r.Detail || '').toLowerCase().includes(q);
       if (!nameHit && !phoneHit && !medHit) return false;
     }
     return true;
@@ -215,6 +215,9 @@ export const RemindersView: React.FC<RemindersViewProps> = ({ user, onToast }) =
 
     const columns: CsvColumn<Reminder>[] = [
       { header: 'Reminder ID', accessor: (r) => r.ID },
+      { header: 'Type', accessor: (r) => (r.Kind === 'renewal' ? 'Homekare renewal' : 'Pharmacy refill') },
+      { header: 'Package / services', accessor: (r) => r.Detail || '' },
+      { header: 'Package ends', accessor: (r) => r.EndDate || '' },
       { header: 'Customer Name', accessor: (r) => r.CustomerName },
       { header: 'Contact Number', accessor: (r) => r.Contact },
       { header: 'Status', accessor: (r) => r.Status },
@@ -238,17 +241,17 @@ export const RemindersView: React.FC<RemindersViewProps> = ({ user, onToast }) =
 
     const timestamp = todayKey();
     const statusLabel = showResolved ? '_resolved' : '_active';
-    const filename = `MedUnited_Refill_Reminders_${timestamp}${statusLabel}.csv`;
+    const filename = `MedUnited_Reminders_${timestamp}${statusLabel}.csv`;
     exportToCsv(filename, columns, filteredReminders);
-    onToast(`Exported ${filteredReminders.length} refill reminders to CSV`, 'success');
+    onToast(`Exported ${filteredReminders.length} reminders to CSV`, 'success');
   };
 
   return (
     <div>
       <div className="topbar">
         <div>
-          <h1>Refill Reminders</h1>
-          <p className="subtitle">Pharmacy customer medicine supply countdown &amp; renewal contact</p>
+          <h1>Reminders</h1>
+          <p className="subtitle">Pharmacy medicine refills and Homekare monthly package renewals</p>
         </div>
         <div className="topbar-actions">
           {canManageAll && (
@@ -347,6 +350,7 @@ export const RemindersView: React.FC<RemindersViewProps> = ({ user, onToast }) =
               const choicesOpen = !!contactChoicesOpen[r.ID];
               const reassignActive = !!reassignOpen[r.ID];
 
+              const isRenewal = r.Kind === 'renewal';
               const visibleProducts = isExpanded ? r.Products : r.Products.slice(0, 2);
               const hasExtra = r.Products.length > 2;
 
@@ -361,11 +365,20 @@ export const RemindersView: React.FC<RemindersViewProps> = ({ user, onToast }) =
                     <div className="reminder-card-heading">
                       <div className="reminder-customer">{r.CustomerName}</div>
                       <div className="reminder-contact">{r.Contact || '—'}</div>
+                      <span className="also-in-chip" style={{ marginLeft: 0 }}>{isRenewal ? 'Homekare renewal' : 'Pharmacy refill'}</span>
                     </div>
 
                     {r.Status === 'Resolved' ? (
                       <span className="reminder-badge" style={{ background: '#e2e8f0', color: '#475569' }}>
                         Resolved
+                      </span>
+                    ) : isRenewal && isOverdue ? (
+                      <span className="reminder-badge overdue">
+                        Package ended {Math.abs(days)} day{Math.abs(days) === 1 ? '' : 's'} ago
+                      </span>
+                    ) : isRenewal ? (
+                      <span className={`reminder-badge ${r.IsDue ? 'overdue' : 'upcoming'}`}>
+                        {days === 0 ? 'Package ends today' : `Package ends in ${days} day${days === 1 ? '' : 's'}`}
                       </span>
                     ) : isOverdue ? (
                       <span className="reminder-badge overdue">
@@ -379,6 +392,18 @@ export const RemindersView: React.FC<RemindersViewProps> = ({ user, onToast }) =
                       </span>
                     )}
                   </div>
+
+                  {/* Homekare monthly package */}
+                  {isRenewal && (
+                    <div className="reminder-products">
+                      <div className="reminder-product-row">
+                        <span style={{ fontWeight: 600 }}>🏠 {r.Detail}</span>
+                        <span className="reminder-product-meta">
+                          {formatDate(r.SaleDate || '')} – {formatDate(r.EndDate)} · remind from {formatDate(r.DueDate)}
+                        </span>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Products */}
                   <div className="reminder-products">
@@ -476,6 +501,7 @@ export const RemindersView: React.FC<RemindersViewProps> = ({ user, onToast }) =
                         }}
                         onClick={() => openEditMedsModal(r)}
                         title="Edit prescribed medicines, dosages, and refill timing"
+                        hidden={isRenewal}
                       >
                         ✏️ Edit Meds
                       </button>

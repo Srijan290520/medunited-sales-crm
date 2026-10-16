@@ -148,7 +148,7 @@ function seed() {
   // His mother shares his number: Priya enters her, she goes to Rahul (one agent per household).
   medpass.push([priya, { customerName: 'Savitri Kumar', contact: '+91 98480 12345', priceType: 'Full Price', detail: 'Wants to be added to her son\'s plan', temperature: 'Warm', channel: 'Phone call', heardFrom: 'Friend or family', nextFollowUp: istDate(1) }]);
 
-  const created: { token: string; type: 'medpass' | 'pharmacy'; sale: any }[] = [];
+  const created: { token: string; type: 'medpass' | 'pharmacy' | 'homekare' | 'lab'; sale: any }[] = [];
   for (const [token, data] of medpass) {
     const r = raw('createSale', token, { type: 'medpass', data: { ...base, ...data } });
     if (!r.error) created.push({ token, type: 'medpass', sale: r.sale });
@@ -156,6 +156,34 @@ function seed() {
   for (const [token, data] of pharmacy) {
     const r = raw('createSale', token, { type: 'pharmacy', data: { ...base, ...data } });
     if (!r.error) created.push({ token, type: 'pharmacy', sale: r.sale });
+  }
+
+  // Homekare: a monthly caretaker package ending soon (shows a renewal reminder) and an open enquiry.
+  const homekare: [string, any][] = [
+    [rahul, { customerName: 'Kamala Bai', contact: '9848098480', status: 'Completed', paymentMethod: 'UPI', utr: '700012345678', date: istDate(-27), channel: 'Phone call', services: [
+      { service: 'HOMEKARE - CARETAKER SERVICE MONTHY', price: 24000 }, { service: 'HOMEKARE TRAVEL CHARGES', price: 600 },
+    ], ...proof('₹24,600') }],
+    [priya, { customerName: 'Joseph Mathew', contact: '9445566778', temperature: 'Hot', channel: 'OPD/IPD referral', nextFollowUp: istDate(0), notes: 'Discharged after knee surgery; needs dressing at home.', services: [
+      { service: 'HOMEKARE - MAJOR DRESSING', price: 900 }, { service: 'HOMEKARE - NURSING 4HRS', price: 1200 },
+    ] }],
+  ];
+  for (const [token, data] of homekare) {
+    const r = raw('createSale', token, { type: 'homekare', data: { ...base, ...data } });
+    if (!r.error) created.push({ token, type: 'homekare', sale: r.sale });
+  }
+
+  // Lab & Radiology: tests typed by hand; one with home collection and a delivered report.
+  const lab: [string, any][] = [
+    [rahul, { customerName: 'Sunita Devi', contact: '9701122334', status: 'Completed', paymentMethod: 'Cash', date: istDate(-2), channel: 'Phone call', tests: [
+      { name: 'Thyroid profile', kind: 'Lab', price: 650 }, { name: 'HbA1c', kind: 'Lab', price: 450 },
+    ], homeCollection: true, collectionDate: istDate(-2), reportDeliveredOn: istDate(-1), reportDeliveredVia: 'WhatsApp', ...proof('₹1,100') }],
+    [priya, { customerName: 'Mohan Krishna', contact: '9000123456', temperature: 'Warm', channel: 'WhatsApp', nextFollowUp: istDate(1), tests: [
+      { name: 'MRI Lumbar spine', kind: 'Radiology', price: 6500 },
+    ], appointmentDate: istDate(3) }],
+  ];
+  for (const [token, data] of lab) {
+    const r = raw('createSale', token, { type: 'lab', data: { ...base, ...data } });
+    if (!r.error) created.push({ token, type: 'lab', sale: r.sale });
   }
 
   const find = (name: string) => created.find((c) => c.sale.CustomerName === name)!;
