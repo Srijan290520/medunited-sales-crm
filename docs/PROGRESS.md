@@ -18,7 +18,7 @@ Live state: the Sheet's Apps Script project has v2 code saved and
 |---|---|---|
 | 1. One agent per patient (people + households) + module engine | `phase1-patient-ownership` | **Done on branch, PR open — not deployed** |
 | 1b. Medpass rules + family members + senior role | `phase1b-medpass-rules` (stacked on phase 1) | **Done on branch, PR open (base: Phase 1 branch) — not deployed** |
-| 2. Lab & Radiology, HOMEKARE modules | `phase2-new-modules` (from 1b) | Homekare service list received (38, no prices); waiting for prices, Lab/Radiology list, incentive rules |
+| 2. Lab & Radiology, HOMEKARE modules | `phase2-new-modules` (from 1b) | Homekare service list received (38, no prices); Lab & Radiology = typed by hand for now; waiting for Homekare prices/answers, Lab tracking + incentive rules |
 | 3. Bulk reassign | — | Not started (agent handover partly pulled into Phase 1) |
 | 4. Calmer module pages + widget dashboard | — | Not started (mockup first) |
 | 5. Settings page, Incentives page, per-agent targets | — | Blocked on user answers (revenue vs count, agent visibility, target→incentive) |
@@ -311,3 +311,9 @@ pass; single parent allowed on a family pass.
   renewal reminders?, what to track per order (dates, visits, staff), one
   order = one service or several?, Homekare incentive rule; and still the
   Lab & Radiology list + home collection / appointment / report questions.
+- **2026-10-16** — User decision: **Lab & Radiology tests/packages are typed
+  by hand for now** (no catalogue). Plan: each record has lines of
+  { name, Lab or Radiology, price } typed by the agent; the amount is the sum
+  (server-side). A catalogue can be added later without changing records.
+  Still to ask for Lab: home sample collection / appointment date / report
+  delivery tracking, and the incentive rule.
