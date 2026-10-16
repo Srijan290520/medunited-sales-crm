@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { User, UserRequest } from '../types';
+import { isSeniorRole } from '../utils/roles';
 import { api } from '../services/api';
 import { formatDate } from '../utils/date';
 
@@ -15,7 +16,7 @@ interface Props {
 export const UserRequestsPanel: React.FC<Props> = ({ user, refreshKey, onToast, onChanged }) => {
   const [requests, setRequests] = useState<UserRequest[]>([]);
   const [busyId, setBusyId] = useState<string | null>(null);
-  const isAdmin = user.Role === 'admin';
+  const isAdmin = isSeniorRole(user.Role); // who can approve
 
   const load = async () => {
     const res = await api.listUserRequests(false);

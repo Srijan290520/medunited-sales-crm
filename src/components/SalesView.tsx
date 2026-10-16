@@ -17,6 +17,7 @@ import {
   ContactCheck,
 } from '../types';
 import { api } from '../services/api';
+import { isTeamRole } from '../utils/roles';
 import { formatMoney, formatDate, formatDateTime, formatTimeAgo, initials, todayKey } from '../utils/date';
 import { exportToCsv, CsvColumn } from '../utils/exportCsv';
 import { readScreenshot } from '../utils/image';
@@ -39,7 +40,7 @@ const ImportModal = lazy(() => import('./ImportModal').then((m) => ({ default: m
 export const SalesView: React.FC<SalesViewProps> = ({ type, user, onToast }) => {
   const isMedpass = type === 'medpass';
   const pageTitle = isMedpass ? 'Medpass Sales & Inquiries' : 'Pharmacy Deliveries & Refills';
-  const canManageAll = user.Role === 'admin' || user.Role === 'manager';
+  const canManageAll = isTeamRole(user.Role);
 
   const [sales, setSales] = useState<Sale[]>([]);
   const [loading, setLoading] = useState<boolean>(true);

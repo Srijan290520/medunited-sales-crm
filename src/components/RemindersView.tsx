@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { User, Reminder, ProductLine, MedicineForm } from '../types';
+import { isTeamRole } from '../utils/roles';
 import { api } from '../services/api';
 import { formatDate, initials, todayKey } from '../utils/date';
 import { exportToCsv, CsvColumn } from '../utils/exportCsv';
@@ -40,7 +41,7 @@ interface RemindersViewProps {
 }
 
 export const RemindersView: React.FC<RemindersViewProps> = ({ user, onToast }) => {
-  const canManageAll = user.Role === 'admin' || user.Role === 'manager';
+  const canManageAll = isTeamRole(user.Role);
 
   const [reminders, setReminders] = useState<Reminder[]>([]);
   const [loading, setLoading] = useState<boolean>(true);

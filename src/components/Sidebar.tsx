@@ -1,5 +1,6 @@
 import React from 'react';
 import { User } from '../types';
+import { isTeamRole } from '../utils/roles';
 import { initials } from '../utils/date';
 
 export type ActivePage = 'dashboard' | 'medpass' | 'pharmacy' | 'reminders' | 'settings' | 'users';
@@ -27,9 +28,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
   isCollapsedDesktop,
   onToggleDesktopCollapse,
 }) => {
-  const canSeeIncentives = user.Role === 'admin' || user.Role === 'manager';
+  const canSeeIncentives = isTeamRole(user.Role);
   // Managers see the team (read-only) so they can ask for deactivations.
-  const canSeeUsers = user.Role === 'admin' || user.Role === 'manager';
+  const canSeeUsers = isTeamRole(user.Role);
 
   const handleNav = (p: ActivePage) => {
     onNavigate(p);
@@ -209,7 +210,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </span>
           </div>
           <div style={{ fontSize: '0.7rem', color: '#94a3b8' }}>
-            {user.Role === 'admin' ? '🛡️ Admin Controls Active' : user.Role === 'manager' ? '📊 Team Manager Roster' : '💼 Agent Sales View'}
+            {user.Role === 'admin' ? '🛡️ Admin Controls Active' : user.Role === 'senior_manager' ? '🛡️ Senior Manager' : user.Role === 'manager' ? '📊 Team Manager Roster' : '💼 Agent Sales View'}
           </div>
           <div style={{ fontSize: '0.66rem', color: '#64748b', marginTop: '4px' }}>
             Shortcut: <kbd style={{ background: '#374151', padding: '1px 4px', borderRadius: '3px', color: '#e5e7eb' }}>Ctrl+B</kbd> toggles menu

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { User, OptionLists } from '../types';
+import { isTeamRole, isSeniorRole } from '../utils/roles';
 import { api } from '../services/api';
 import { initials } from '../utils/date';
 import { PatientOwnersCard } from './PatientOwnersCard';
@@ -10,8 +11,8 @@ interface SettingsViewProps {
 }
 
 export const SettingsView: React.FC<SettingsViewProps> = ({ user, onToast }) => {
-  const isAdmin = user.Role === 'admin';
-  const canEditTarget = user.Role === 'admin' || user.Role === 'manager';
+  const isAdmin = isSeniorRole(user.Role); // lists and approvals: admins and senior managers
+  const canEditTarget = isTeamRole(user.Role);
 
   const [agents, setAgents] = useState<User[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
