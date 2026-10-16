@@ -445,7 +445,7 @@ incentive report uses current rates (no per-sale snapshot).
 
 ---
 
-## 2026-10-16 — WENT LIVE. Resume here.
+## 2026-10-16 — WENT LIVE (superseded: see the next section)
 
 ### Where things stand
 - **Code:** everything (Phases 1–5 + Performance) is on `master` via PR #12
@@ -489,35 +489,105 @@ checks each tab is read once per list request. 53/53 tests pass.
 4. Rebuild the site and push to `gh-pages` if the frontend changes.
 5. Close PRs #5–#11; decide the 7569199231 owner conflict.
 
-## 2026-10-16 (later): speed fix live, Patients page
+---
 
-- **Speed fix is live.** Utils.gs (into the live `Utlis.gs`) and Code.gs pasted
-  from eee6797, smokeTestV2 21/21 PASS, the user published a new version on
-  **Lead module sync**. Timed on the live site: `listSales` 13–15 s → 5.8–9.5 s;
-  small reads 2.4–4.5 s (≈ the 2.3–3.6 s `ping` floor).
-- **Patients page** (menu, under Dashboard): search every patient by phone or
-  name, register a caller (address, area, pincode, alternate phone, notes),
-  profile with every record in every module, reminders and one contact
-  history, **+ Medpass / Pharmacy / Homekare / Lab** opening the module form
-  on top of the page, and calls logged on the patient itself. Decisions by the
-  user: any agent may view any profile (read-only unless theirs); calls can be
-  logged on the patient. Backend: new `PatientProfiles.gs`; `Patients.gs`
-  (new columns) and `Code.gs` (routes) changed. 55/55 tests pass.
-- Also: a double click on Save no longer saves twice (guard in SalesView), and
-  a module page sends its start-up requests together instead of one by one.
-- Work now goes straight to `master` (user, 2026-10-16): no branches or PRs.
+## 2026-10-16 (evening) — Speed fix + Patients page LIVE. Resume here.
 
-**Next steps:**
-1. Live Apps Script: add a new file `PatientProfiles.gs`, replace `Patients.gs`
-   and `Code.gs`, run smokeTestV2, publish a new version on Lead module sync.
-2. Push the built site to `gh-pages` (done in the same session if possible).
-3. Then the remaining speed work: show cached lists instantly and refresh in
-   the background; fetch users / lists / Medpass settings once per login.
-4. Close PRs #5–#11; decide the 7569199231 owner conflict (duplicate from
-   repeated saves, per the user).
+### TL;DR
+- Everything below is on `master` **and live** (backend and website).
+- Work now goes **straight to `master`**: no branches, no PRs (user's rule).
+- Still open: speed (Google is slow and varies), one owner conflict, closing
+  old PRs. Details at the end.
 
-- **Patients page deployed** as a *new* Apps Script deployment
-  (`.../AKfycbxmtyQf3CHmZajoONjlVgjlhowKHUeiNgLBTEFtbMrFf-NzSnuEZNfQoemW4KRGnUI-qw/exec`);
-  `public/config.js` now points there. The old Lead module sync URL still runs
-  the previous code: future releases should update *this* deployment
-  (Manage deployments → pencil → New version) so the URL stays the same.
+### Live system, as of this note
+| Piece | Where | Version |
+|---|---|---|
+| Website | GitHub Pages, **`gh-pages` branch** → https://srijan290520.github.io/medunited-sales-crm/ | build of `master` 7a30561 |
+| Backend | Apps Script project `1Lt-SEfpiNC8n5BCDQMXZ-ePiC3f4ZC9AKEHDzuz4JbY8oshDvr5GwB7Y` (owner appsupport@medunited.in) | files from `master` 3751146 |
+| Backend URL | **new deployment** `https://script.google.com/macros/s/AKfycbxmtyQf3CHmZajoONjlVgjlhowKHUeiNgLBTEFtbMrFf-NzSnuEZNfQoemW4KRGnUI-qw/exec` (set in `public/config.js`) | |
+| Data | Google Sheet "MedUnited CRM" `1Pplho55cCViqIaPwzDlxxh_uTcD5ylJohK4JCdjebZo` | 17 patients |
+| Backup | "Copy of MedUnited CRM" `10Dz8O1GhJyRFIvyBa3JfOV_DIIyAh279VBOoQ9pcX4A` (made before go-live) | |
+
+Notes on the backend:
+- The old **Lead module sync** URL (`…AKfycbx2U7lL…/exec`) still answers but
+  runs the code from before the Patients page. Nothing uses it any more. It
+  can be archived (Deploy → Manage deployments → archive).
+- In the live project, Utils lives in the file named **`Utlis.gs`**. The name
+  doesn't matter to Apps Script; paste `apps-script/Utils.gs` into it.
+- `SmokeTest.gs` in the live project is the live copy; leave it as it is.
+
+### What shipped today (after go-live)
+1. **Speed fix (backend, commit eee6797).** A read-only request reads each tab
+   once instead of ~7 times (`withReadCache` in `Utils.gs`, used by `Code.gs`).
+   Measured on the live site: `listSales` 13–15 s → **5.8–9.5 s**; small
+   requests 2.4–4.5 s, close to Google's own `ping` (2.3–3.6 s at the time).
+2. **Patients page (commit 3751146).** Menu → **Patients**, right under
+   Dashboard (also in the phone bottom bar, where it replaced Pharmacy;
+   Pharmacy is under More).
+   - Search by phone or name across **all** patients.
+   - **Register this caller** when a number isn't found: name, phone,
+     alternate phone, date of birth, address, area, pincode, notes / medical
+     conditions. A relative on a known number goes to that household's agent.
+   - **Profile:** details, others on the number, every record in every module,
+     active reminders, one contact history.
+   - **+ Medpass / + Pharmacy / + Homekare / + Lab** opens that module's own
+     form over the page with the patient filled in (or opens their open record
+     in that module). After saving, the profile refreshes.
+   - **Log a call** on the patient itself (general enquiry) with a call-back
+     date. A new log replaces the call-back date; empty clears it.
+   - **Decisions by the user:** any agent may view any profile (read-only
+     unless it's their patient); calls can be logged on the patient; patient
+     fields are address/area/pincode, alternate phone and notes.
+   - Backend: new `apps-script/PatientProfiles.gs` (`listPatients`,
+     `getPatient`, `createPatient`, `updatePatient`, `logPatientActivity`).
+     `Patients.gs` gained 6 columns, added to the Sheet automatically on first
+     use (checked: present). Patient-level calls go to `SaleActivities` with
+     `SaleType = patient`. Frontend: `src/components/PatientsView.tsx`.
+   - The phone number can't be changed on the profile (it links the patient
+     to their household and records).
+3. **Double-save guard.** Clicking Save / Create twice saves once (this is
+   what caused the 7569199231 duplicate, per the user). Tested in the demo.
+4. **Module pages send their start-up requests together** instead of one by
+   one (`SalesView.loadData`).
+5. The ✕ close button on record panels was invisible (white on white); fixed.
+
+Checks: 55/55 backend tests (2 new for the Patients page), `tsc` and build
+clean, tested end to end in the demo (register, log a call, new Homekare
+record from the profile, double click, view-only profile), then checked on the
+live site as Admin (17 patients listed, a profile opens, no errors).
+
+### How to release (the routine that works)
+1. Code on `master`: `npm test` and `npm run build` must pass, then
+   `git push origin master`.
+2. **Backend changes:** in the live Apps Script project paste each changed
+   `.gs` (create new files with **+ → Script**, name without `.gs`), save,
+   run **`smokeTestV2`** (all PASS), then **Deploy → Manage deployments →
+   the deployment in `public/config.js` → pencil → New version → Deploy**.
+   Keep the same deployment so the URL never changes. In Claude Code's auto
+   mode, the user has to click Run and Deploy.
+3. **Website:** `npm run build`, then push the contents of `dist/` plus an
+   empty `.nojekyll` as an orphan commit to `gh-pages` (force push). Actions
+   are billing-locked, so this is manual. Pages updates in about a minute.
+4. Release the backend first when the website calls new actions.
+5. Local testing: `npm run build:demo` regenerates the in-browser backend
+   (`src/demo/gasBackend.generated.js`, commit it); `vite --config
+   vite.demo.config.ts` then serves `index.demo.html` with one-click demo
+   logins and sample data.
+
+### Open items, in order
+1. **Speed is still the main complaint.** On the evening test Google itself
+   was slow (`ping` 15.8 s once; a profile 8–19 s). Next, all frontend-only:
+   - show the last loaded list/profile at once and refresh it in the
+     background (stale-while-revalidate, sessionStorage);
+   - fetch users, dropdown lists and Medpass settings once per login instead
+     of on every page (some screens ask for `listUsers` 2–3 times);
+   - later, if needed: one combined request per page, a short server-side
+     cache for `listSales`, a timer that keeps the script warm.
+2. **Owner conflict:** 7569199231 (Amarjeet Dubey) has open records under
+   both Amar and HARI (from repeated saves). The user decides on Settings →
+   Patient owners.
+3. Close PRs #5–#11 (their code is already in `master`).
+4. Archive the old Lead module sync deployment.
+5. Later (from the user's earlier list): Medpass renewal rules, Homekare visit
+   tracking, incentives for Homekare and Lab, target bonuses, a Lab test
+   catalogue.
