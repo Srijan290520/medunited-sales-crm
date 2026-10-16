@@ -848,6 +848,15 @@ function computeDashboardSummary(session) {
   });
   var pendingDiscounts = isAgent ? null : svc_listPendingDiscounts(session).slice(0, 6);
   // An agent's own targets for this month (managers see the team target above).
+  // This month vs last month (same visibility as everything above).
+  var lastMonthPrefix = monthAdd(monthPrefix, -1);
+  var comparison = { thisMonth: { count: 0, amount: 0 }, lastMonth: { count: 0, amount: 0 } };
+  all.forEach(function (x) {
+    if (x.row.Status !== 'Completed') return;
+    var m = dateKey(x.row.Date).slice(0, 7);
+    var slot = m === monthPrefix ? comparison.thisMonth : m === lastMonthPrefix ? comparison.lastMonth : null;
+    if (slot) { slot.count++; slot.amount += Number(x.row.Amount) || 0; }
+  });
   var myTargets = isAgent ? svc_getTargets(session, monthPrefix).rows.filter(function (r) { return r.target !== null; }) : null;
 
   return {
@@ -857,6 +866,7 @@ function computeDashboardSummary(session) {
     remindersDue: remindersDue,
     pendingDiscounts: pendingDiscounts,
     myTargets: myTargets,
+    comparison: comparison,
     agents: agentsArray,
     pipeline: {
       completed: counts.Completed, pending: counts.Pending, cancelled: counts.Cancelled, totalLeads: total,

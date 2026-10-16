@@ -165,6 +165,8 @@ function dispatch(action, token, p) {
       return Object.assign({ error: false }, svc_copyTargets(session, p));
     case 'setTargetMeasure':
       return { error: false, measures: svc_setTargetMeasure(session, p) };
+    case 'performance':
+      return { error: false, performance: svc_performance(session, p) };
     case 'incentiveReport':
       return { error: false, report: svc_incentiveReport(session, p.month) };
     case 'listAuditLog':

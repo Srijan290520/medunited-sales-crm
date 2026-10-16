@@ -23,6 +23,7 @@ function dashboardWidgets() {
   var all = ['admin', 'senior_manager', 'manager', 'agent'];
   return {
     target: { title: 'This month vs target', roles: all },
+    comparison: { title: 'This month vs last month', roles: all },
     followups: { title: 'Follow-ups due', roles: all },
     reminders: { title: 'Reminders due', roles: all },
     temperature: { title: 'Open leads by temperature', roles: all },
@@ -38,9 +39,10 @@ function dashboardWidgets() {
 function layoutGroup(role) { return role === 'agent' ? 'agent' : 'team'; }
 
 var BUILT_IN_LAYOUTS = {
-  agent: [{ id: 'target', span: 4 }, { id: 'temperature', span: 4 }, { id: 'reminders', span: 4 }, { id: 'followups', span: 8 }, { id: 'modules', span: 4 }],
-  team: [{ id: 'target', span: 4 }, { id: 'discounts', span: 4 }, { id: 'temperature', span: 4 }, { id: 'team', span: 8 }, { id: 'modules', span: 4 },
-    { id: 'followups', span: 8 }, { id: 'reminders', span: 4 }]
+  agent: [{ id: 'target', span: 4 }, { id: 'comparison', span: 4 }, { id: 'temperature', span: 4 }, { id: 'followups', span: 8 }, { id: 'reminders', span: 4 },
+    { id: 'modules', span: 4 }],
+  team: [{ id: 'target', span: 4 }, { id: 'comparison', span: 4 }, { id: 'discounts', span: 4 }, { id: 'team', span: 8 }, { id: 'temperature', span: 4 },
+    { id: 'followups', span: 8 }, { id: 'reminders', span: 4 }, { id: 'modules', span: 4 }]
 };
 
 // Checks a layout for a role; drops nothing silently on save (throws), but

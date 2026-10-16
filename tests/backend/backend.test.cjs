@@ -1212,7 +1212,7 @@ test('dashboard layouts: role defaults, own layout per user, team widgets only f
   const { call, admin, arjun, divya, manager } = world();
   const mine = ok(call('getDashboardLayout', arjun, {}));
   assert.equal(mine.source, 'role');
-  assert.equal(mine.layout.map((w) => w.id).join(','), 'target,temperature,reminders,followups,modules');
+  assert.equal(mine.layout.map((w) => w.id).join(','), 'target,comparison,temperature,followups,reminders,modules');
   assert.ok(!mine.widgets.some((w) => w.id === 'team' || w.id === 'discounts'), 'agents can not pick team widgets');
   const team = ok(call('getDashboardLayout', manager, {}));
   assert.ok(team.layout.some((w) => w.id === 'team') && team.layout.some((w) => w.id === 'discounts'));
@@ -1363,4 +1363,58 @@ test('homekare service list: add and hide in Settings; hidden services still sav
   ok(call('updateSale', arjun, { type: 'homekare', id: s.ID, data: { services: [{ service: 'HOMEKARE - ECG', price: 700 }] } }));
   ok(call('updateHomekareCatalogue', admin, { show: 'HOMEKARE - ECG' }));
   assert.equal(ok(call('getModules', arjun, {})).modules.find((m) => m.id === 'homekare').services.find((x) => x.name === 'HOMEKARE - ECG').hidden, false);
+});
+
+// ===== Performance =====
+test('performance: this vs last month, last year and year to date; team table only for managers', () => {
+  const { call, arjun, divya, manager } = world();
+  const done = { status: 'Completed', paymentMethod: 'Cash', billScreenshot: PNG, paymentScreenshot: PNG };
+  const mp = (token, contact, date) => ok(call('createSale', token, { type: 'medpass', data: lead({ ...done, contact, date, members: FAMILY }) }));
+  mp(arjun, '9870000001', '2026-10-05');
+  mp(arjun, '9870000002', '2026-10-09');
+  mp(arjun, '9870000003', '2026-09-20');
+  mp(arjun, '9870000004', '2025-10-11');
+  mp(arjun, '9870000005', '2026-02-01');
+  mp(divya, '9870000006', '2026-10-12');
+  ok(call('createSale', arjun, { type: 'medpass', data: lead({ contact: '9870000007' }) })); // an open enquiry
+
+  const team = ok(call('performance', manager, { month: '2026-10' })).performance;
+  assert.equal(team.scope.type, 'team');
+  assert.equal(team.compare.thisMonth.count, 3);
+  assert.equal(team.compare.thisMonth.amount, 3 * 1499);
+  assert.equal(team.compare.lastMonth.count, 1);
+  assert.equal(team.compare.sameMonthLastYear.count, 1);
+  assert.equal(team.compare.ytd.count, 5, 'Jan–Oct 2026');
+  assert.equal(team.compare.ytdLastYear.count, 1, 'Jan–Oct 2025');
+  assert.equal(team.compare.thisMonth.avg, 1499);
+  assert.equal(team.series.length, 24);
+  assert.equal(team.series[23].month, '2026-10');
+  assert.equal(team.series[11].month, '2025-10');
+  assert.equal(team.agents[0].email, 'arjun@medunited.in');
+  assert.equal(team.agents[0].rank, 1);
+  assert.equal(team.agents[0].thisMonth.count, 2);
+  assert.equal(team.agents[1].thisMonth.count, 1);
+  assert.equal(team.modules.find((m) => m.id === 'medpass').thisMonth.count, 3);
+  assert.ok(!JSON.stringify(team).includes('incentive'), 'no incentive figures');
+
+  // One agent, picked by a manager.
+  const one = ok(call('performance', manager, { month: '2026-10', agentEmail: 'divya@medunited.in' })).performance;
+  assert.equal(one.scope.type, 'agent');
+  assert.equal(one.compare.thisMonth.count, 1);
+  assert.equal(one.agents, null);
+
+  // Agents: always their own, whatever they ask for.
+  const mine = ok(call('performance', arjun, { month: '2026-10', agentEmail: 'divya@medunited.in' })).performance;
+  assert.equal(mine.scope.email, 'arjun@medunited.in');
+  assert.equal(mine.compare.thisMonth.count, 2);
+  assert.equal(mine.agents, null);
+  assert.equal(mine.canPickAgent, false);
+  assert.match(call('performance', manager, { month: '2026-10', agentEmail: 'ghost@x.in' }).message, /not a user/);
+
+  // Dashboard: this month vs last month, same visibility.
+  const today = new Date(Date.now() + 5.5 * 3600 * 1000).toISOString().slice(0, 7);
+  if (today === '2026-10') {
+    assert.equal(ok(call('dashboardSummary', arjun)).summary.comparison.thisMonth.count, 2);
+    assert.equal(ok(call('dashboardSummary', manager)).summary.comparison.thisMonth.count, 3);
+  }
 });
