@@ -3119,3 +3119,23 @@ input:checked + .slider::before { transform: translateX(18px); }
 @media (max-width: 900px) {
   .dw-card { grid-column: span 12 !important; }
 }
+
+/* Phase 4 elements are plain buttons; keep the app-wide button hover
+   (solid accent + lift) off them and use light, quiet hovers instead. */
+.mp-row-main:hover, .mp-tab:hover, .mp-link:hover, .mp-menu button:hover, .dw-item:hover,
+.mp-chip:hover, .mp-icon-btn:hover, .dw-tools button:hover:not(:disabled), .mp-btn:hover, .mp-btn-primary:hover { transform: none; }
+.mp-row:hover { background: #f7f8fc; }
+.mp-row.selected, .mp-row.selected:hover { background: #eef0fb; }
+.mp-row-main:hover { background: transparent; color: inherit; }
+.mp-tab:hover { background: transparent; color: var(--text-primary); border-bottom-color: #c7cbe8; }
+.mp-tab.active:hover { border-bottom-color: #3730a3; }
+.mp-chip:hover { background: #f7f8fc; color: #374151; }
+.mp-chip.active:hover { background: #eef0fb; color: #312e81; }
+.mp-chip.active.temp-hot:hover { background: #fee4e2; color: #912018; }
+.mp-chip.active.temp-warm:hover { background: #fef0c7; color: #7a2e0e; }
+.mp-chip.active.temp-cold:hover { background: #e0f2fe; color: #0b4a6f; }
+.mp-link:hover { background: transparent; color: #312e81; text-decoration: underline; }
+.mp-menu button:hover { background: #f3f4f6; color: var(--text-primary); }
+.mp-icon-btn:hover, .dw-tools button:hover:not(:disabled) { background: #f7f8fc; color: var(--text-primary); }
+.dw-item:hover { background: #f7f8fc; color: inherit; }
+.mp-btn:hover:not(:disabled) { background: #f7f8fc; color: var(--text-primary); }
