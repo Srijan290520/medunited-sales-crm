@@ -18,7 +18,7 @@ Live state: the Sheet's Apps Script project has v2 code saved and
 |---|---|---|
 | 1. One agent per patient (people + households) + module engine | `phase1-patient-ownership` | **Done on branch, PR open — not deployed** |
 | 1b. Medpass rules + family members + senior role | `phase1b-medpass-rules` (stacked on phase 1) | **Done on branch, PR open (base: Phase 1 branch) — not deployed** |
-| 2. Lab & Radiology, HOMEKARE modules | `phase2-new-modules` (from 1b) | Homekare service list received (38, no prices); Lab & Radiology = typed by hand for now; Homekare prices typed per patient; incentives later (Phase 5); waiting for: multi-service orders?, tracking fields, monthly reminders, spellings |
+| 2. Lab & Radiology, HOMEKARE modules | `phase2-new-modules` (from 1b) | Homekare service list received (38, no prices); Lab & Radiology = typed by hand for now; Homekare prices typed per patient; incentives later (Phase 5); monthly-package renewal reminders: yes; waiting for "go" on the remaining defaults |
 | 3. Bulk reassign | — | Not started (agent handover partly pulled into Phase 1) |
 | 4. Calmer module pages + widget dashboard | — | Not started (mockup first) |
 | 5. Settings page, Incentives page, per-agent targets | — | Blocked on user answers (revenue vs count, agent visibility, target→incentive) |
@@ -329,3 +329,10 @@ pass; single parent allowed on a family pass.
   collection date, appointment date, report delivered date + how; Homekare:
   start/end date + staff name typed; renewal reminder for monthly packages
   left for later).
+- **2026-10-16** — User decision: **renewal reminders for monthly Homekare
+  packages: yes.** Plan: a completed Homekare order with a monthly service
+  (Recurring = monthly in the catalogue) creates a reminder due 5 days before
+  the package end date (start + 1 month if no end date is typed); shown on
+  the Reminders page next to refill reminders, same "contacted / not
+  interested" flow, owned by the patient's agent and moving with them on
+  reassign. Days-before setting editable later.
