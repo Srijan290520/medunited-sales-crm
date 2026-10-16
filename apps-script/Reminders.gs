@@ -294,7 +294,7 @@ function svc_markContacted(session, id, outcome) {
 }
 
 function svc_reassignReminder(session, id, agentEmail) {
-  requireRole(session, ['admin', 'manager']);
+  requireRole(session, TEAM_ROLES);
   var sheet = getSheetByName('Reminders');
 
   var agent = sheetToObjects(getSheetByName('Users')).find(function (u) {

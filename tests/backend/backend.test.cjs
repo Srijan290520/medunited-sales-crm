@@ -766,3 +766,41 @@ test('deactivating an agent: manager requests with a successor, admin approves, 
   assert.equal(ok(call('decideUserRequest', admin, { id: r2.ID, approve: false, note: 'Not now' })).request.Status, 'Rejected');
   assert.equal(div('medpass').length, 2);
 });
+
+// ===== Phase 1b =====
+
+test('senior manager: admin powers except admin accounts and hard deletes', () => {
+  const { call, admin, manager, arjun, divya } = world();
+  ok(call('createUser', admin, { data: { name: 'Sana Senior', email: 'sana@medunited.in', role: 'senior_manager', password: 'Joining2Team9' } }));
+  const senior = loginFresh(call, 'sana@medunited.in', 'Joining2Team9', 'Senior-Pass-2026');
+  assert.equal(call('createUser', manager, { data: { name: 'X', email: 'x@y.in', role: 'senior_manager', password: 'Joining2Team9' } }).forbidden, true);
+
+  // Users: yes for non-admins, no for admins.
+  ok(call('createUser', senior, { data: { name: 'New Agent', email: 'new@medunited.in', role: 'agent', password: 'Joining2Team9' } }));
+  assert.equal(call('createUser', senior, { data: { name: 'Sneaky', email: 'sneaky@medunited.in', role: 'admin', password: 'Joining2Team9' } }).forbidden, true);
+  const users = ok(call('listUsers', senior)).users;
+  const boss = users.find((u) => u.Email === 'boss@medunited.in');
+  const newbie = users.find((u) => u.Email === 'new@medunited.in');
+  assert.equal(call('updateUser', senior, { id: boss.ID, data: { name: 'Hacked' } }).forbidden, true);
+  assert.equal(call('updateUser', senior, { id: newbie.ID, data: { role: 'admin' } }).forbidden, true);
+  ok(call('updateUser', senior, { id: newbie.ID, data: { role: 'manager' } }));
+  assert.equal(call('deleteUser', senior, { id: newbie.ID, reason: 'test account' }).forbidden, true, 'hard delete is admin-only');
+
+  // Records: team-wide like a manager; no hard delete.
+  const s = ok(call('createSale', arjun, { type: 'medpass', data: lead() })).sale;
+  assert.equal(ok(call('listSales', senior, { type: 'medpass' })).sales.length, 1);
+  ok(call('reassignSale', senior, { type: 'medpass', id: s.ID, agentEmail: 'divya@medunited.in' }));
+  assert.equal(call('deleteSale', senior, { type: 'medpass', id: s.ID, reason: 'duplicate' }).forbidden, true);
+  ok(call('updateLists', senior, { data: { channels: ['Phone call', 'Walk-in'] } }));
+  ok(call('listPatientConflicts', senior, {}));
+  ok(call('migratePatients', senior, { dryRun: true }));
+
+  // Approves deactivations (but not about themselves).
+  const div = users.find((u) => u.Email === 'divya@medunited.in');
+  const req = ok(call('requestDeactivation', manager, { userId: div.ID, successorEmail: 'arjun@medunited.in', reason: 'Left the company' })).request;
+  ok(call('decideUserRequest', senior, { id: req.ID, approve: true }));
+  assert.equal(call('me', divya).authError, true);
+  const sana = users.find((u) => u.Email === 'sana@medunited.in');
+  const self = ok(call('requestDeactivation', admin, { userId: sana.ID, successorEmail: 'arjun@medunited.in', reason: 'Testing self' })).request;
+  assert.equal(call('decideUserRequest', senior, { id: self.ID, approve: true }).forbidden, true);
+});

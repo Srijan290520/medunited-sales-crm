@@ -1,7 +1,7 @@
 // Handover.gs — deactivating an agent without leaving patients behind.
 //
 // A manager asks for an agent to be deactivated and says who takes over
-// their patients (the successor). An admin approves or rejects. Approving
+// their patients (the successor). An admin or senior manager approves or rejects. Approving
 // moves everything the agent still handles to the successor in one locked,
 // audited step, then deactivates the account:
 //   - every patient they own (with all of those patients' open records in
@@ -80,7 +80,7 @@ function findUserById(id) {
 
 // Manager (or admin): ask for an agent to be deactivated, naming who takes over.
 function svc_requestDeactivation(session, data) {
-  requireRole(session, ['admin', 'manager']);
+  requireRole(session, TEAM_ROLES);
   data = data || {};
   var user = findUserById(data.userId);
   if (!user || !isActive(user.Active)) throw new Error('User not found or already inactive.');
@@ -113,21 +113,22 @@ function svc_requestDeactivation(session, data) {
 }
 
 function svc_listUserRequests(session, includeDecided) {
-  requireRole(session, ['admin', 'manager']);
+  requireRole(session, TEAM_ROLES);
   return sheetToObjects(getUserRequestsSheet())
     .filter(function (r) { return r.ID && (includeDecided || r.Status === 'Pending'); })
     .map(userRequestForClient)
     .sort(function (a, b) { return new Date(b.CreatedAt) - new Date(a.CreatedAt); });
 }
 
-// Admin: approve (hand over, then deactivate) or reject.
+// Admin or senior manager: approve (hand over, then deactivate) or reject.
 function svc_decideUserRequest(session, data) {
-  requireRole(session, ['admin']);
+  requireRole(session, SENIOR_ROLES);
   data = data || {};
   var sheet = getUserRequestsSheet();
   var req = sheetToObjects(sheet).find(function (r) { return String(r.ID) === String(data.id); });
   if (!req) throw new Error('Request not found.');
   if (req.Status !== 'Pending') throw new Error('This request was already decided.');
+  if (lowerEmail(req.UserEmail) === lowerEmail(session.email)) throw new ForbiddenError('You cannot decide a request about your own account.');
   var note = cleanText(data.note, 300);
   var approve = data.approve === true;
   var handover = null;

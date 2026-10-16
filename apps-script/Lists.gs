@@ -45,7 +45,7 @@ function svc_getLists(session) {
 }
 
 function svc_updateLists(session, data) {
-  requireRole(session, ['admin']);
+  requireRole(session, SENIOR_ROLES);
   var sheet = getListsSheet();
   var before = getLists();
   Object.keys(DEFAULT_LISTS).forEach(function (key) {
@@ -102,7 +102,7 @@ function svc_getMonthlyTarget(session) {
 }
 
 function svc_updateMonthlyTarget(session, amount) {
-  requireRole(session, ['admin', 'manager']);
+  requireRole(session, TEAM_ROLES);
   var value = Math.round(Number(amount));
   if (!isFinite(value) || value <= 0 || value > 1e10) throw new Error('Target must be a number greater than 0.');
   var before = getMonthlyTarget();

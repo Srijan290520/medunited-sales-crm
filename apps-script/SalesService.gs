@@ -597,7 +597,7 @@ function svc_reopenSale(session, type, id, reason) {
   var why = cleanText(reason, 300);
   if (existing.Status === 'Pending') throw new Error('This record is already open.');
   if (existing.Status === 'Completed') {
-    requireRole(session, ['admin', 'manager']);
+    requireRole(session, TEAM_ROLES);
     if (why.length < 3) throw new Error('Give a reason for reopening a completed sale.');
   }
   var world = loadPatientWorld();
@@ -625,7 +625,7 @@ function svc_reassignSale(session, type, id, agentEmail, scope, reason) {
 }
 
 function svc_deleteSale(session, type, id, reason) {
-  requireRole(session, ['admin']);
+  requireRole(session, ADMIN_ROLES); // hard delete: admins only
   var why = cleanText(reason, 300);
   if (why.length < 3) throw new Error('A reason (at least 3 characters) is required to delete a record.');
   var sheet = getSaleSheet(type);

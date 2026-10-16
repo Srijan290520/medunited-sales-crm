@@ -371,7 +371,7 @@ function movePatients(session, world, patients, target, why) {
 // another agent. Identify the patient by a record (type + id), a PatientID,
 // or a phone number (always the whole household).
 function svc_reassignPatient(session, data) {
-  requireRole(session, ['admin', 'manager']);
+  requireRole(session, TEAM_ROLES);
   data = data || {};
   var world = loadPatientWorld();
   var target = requireOwnerCandidate(world, data.agentEmail);
@@ -456,7 +456,7 @@ function migratePatientsCore(session, dryRun) {
 
 // Admin, from the app: a dry run unless dryRun is explicitly false.
 function svc_migratePatients(session, dryRun) {
-  requireRole(session, ['admin']);
+  requireRole(session, SENIOR_ROLES);
   return migratePatientsCore(session, dryRun !== false);
 }
 
@@ -510,7 +510,7 @@ function conflictList(world, keys) {
 }
 
 function svc_listPatientConflicts(session) {
-  requireRole(session, ['admin', 'manager']);
+  requireRole(session, TEAM_ROLES);
   var world = loadPatientWorld();
   var keys = {};
   world.records.forEach(function (x) { var k = recordContactKey(x.row); if (k) keys[k] = true; });
@@ -527,7 +527,7 @@ function svc_listPatientConflicts(session) {
 //   { contact, assignments: [{ patientId | name, agentEmail }] }
 // Open records move to the chosen agent; closed ones keep theirs.
 function svc_resolvePatientConflict(session, data) {
-  requireRole(session, ['admin']);
+  requireRole(session, SENIOR_ROLES);
   data = data || {};
   var key = phoneKey(data.contact);
   if (!key) throw new Error('A valid phone number is required.');

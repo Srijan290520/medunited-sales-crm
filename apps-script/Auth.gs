@@ -250,6 +250,12 @@ function requireSession(token) {
   return session;
 }
 
+// Role groups. A senior manager can do everything an admin can except
+// manage admin accounts and hard deletes (records and user accounts).
+var TEAM_ROLES = ['admin', 'senior_manager', 'manager']; // see the whole team, reassign, incentives
+var SENIOR_ROLES = ['admin', 'senior_manager'];          // approvals, users, lists, owner decisions
+var ADMIN_ROLES = ['admin'];                             // admin accounts, hard deletes
+
 function requireRole(session, allowedRoles) {
   if (allowedRoles.indexOf(session.role) === -1) {
     throw new ForbiddenError('You do not have permission to perform this action.');
