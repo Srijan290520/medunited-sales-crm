@@ -18,7 +18,7 @@ Live state: the Sheet's Apps Script project has v2 code saved and
 |---|---|---|
 | 1. One agent per patient (people + households) + module engine | `phase1-patient-ownership` | **Done on branch, PR open — not deployed** |
 | 1b. Medpass rules + family members + senior role | `phase1b-medpass-rules` (stacked on phase 1) | **Done on branch, PR open (base: Phase 1 branch) — not deployed** |
-| 2. Lab & Radiology, HOMEKARE modules | `phase2-new-modules` (from 1b) | Homekare service list received (38, no prices); Lab & Radiology = typed by hand for now; Homekare prices typed per patient; waiting for: multi-service orders?, tracking fields, monthly reminders, spellings, incentive rules (both) |
+| 2. Lab & Radiology, HOMEKARE modules | `phase2-new-modules` (from 1b) | Homekare service list received (38, no prices); Lab & Radiology = typed by hand for now; Homekare prices typed per patient; incentives later (Phase 5); waiting for: multi-service orders?, tracking fields, monthly reminders, spellings |
 | 3. Bulk reassign | — | Not started (agent handover partly pulled into Phase 1) |
 | 4. Calmer module pages + widget dashboard | — | Not started (mockup first) |
 | 5. Settings page, Incentives page, per-agent targets | — | Blocked on user answers (revenue vs count, agent visibility, target→incentive) |
@@ -321,3 +321,11 @@ pass; single parent allowed on a family pass.
   by hand.** Plan: agents pick the service from the 38-name list (consistent
   names for reports) and type the price; units/recurring flags from the CSV
   are kept as hints. Amount = sum of lines, computed on the server.
+- **2026-10-16** — User decision: **no incentives for Homekare or Lab &
+  Radiology yet — add later** (Phase 5). Build both modules with incentive
+  `{ kind: 'none' }` so they show revenue but pay 0 until a rule is set.
+  Proposed defaults sent to the user for the rest (several services per
+  Homekare order; keep service names exactly as given; Lab: optional home
+  collection date, appointment date, report delivered date + how; Homekare:
+  start/end date + staff name typed; renewal reminder for monthly packages
+  left for later).
