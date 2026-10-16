@@ -1101,3 +1101,107 @@ test('homekare and lab: one open record per patient per module, import and patie
   assert.match(row.Notes, /Mentioned: Thyroid profile/);
   assert.ok(sheets.get('Homekare') && sheets.get('Lab & Radiology'), 'tabs created');
 });
+
+// ===== Phase 3: bulk reassign =====
+
+test('bulk reassign: ticked records move their patients (household by default), dry run first', () => {
+  const { call, arjun, divya, manager } = world();
+  const ravi = ok(call('createSale', arjun, { type: 'medpass', data: lead() })).sale;
+  const mom = ok(call('createSale', arjun, { type: 'medpass', data: lead({ customerName: 'Lakshmi Kumar' }) })).sale;
+  ok(call('createSale', arjun, { type: 'pharmacy', data: { ...lead(), products: [] } })); // Ravi in Pharmacy
+  const other = ok(call('createSale', arjun, { type: 'medpass', data: lead({ customerName: 'Other', contact: '9811111111' }) })).sale;
+
+  assert.equal(call('bulkReassign', arjun, { type: 'medpass', ids: [ravi.ID], agentEmail: 'divya@medunited.in' }).forbidden, true);
+  assert.match(call('bulkReassign', manager, { type: 'medpass', ids: [], agentEmail: 'divya@medunited.in' }).message, /Select at least one/);
+
+  const preview = ok(call('bulkReassign', manager, { type: 'medpass', ids: [ravi.ID, other.ID, 'nope'], agentEmail: 'divya@medunited.in' }));
+  assert.equal(preview.dryRun, true, 'dry run unless dryRun is false');
+  assert.equal(preview.valid, 2);
+  assert.match(preview.results[2].errors[0], /No Medpass record/);
+  assert.equal(preview.toMove, 4, 'Ravi + Lakshmi (household) in Medpass, Ravi in Pharmacy, Other');
+  assert.equal(ok(call('listSales', divya, { type: 'medpass' })).sales.length, 0, 'dry run saves nothing');
+
+  const done = ok(call('bulkReassign', manager, { type: 'medpass', ids: [ravi.ID, other.ID, 'nope'], agentEmail: 'divya@medunited.in', dryRun: false, reason: 'Arjun moved to inbound' }));
+  assert.equal(done.moved.records, 4);
+  assert.equal(done.moved.patients, 3);
+  assert.equal(ok(call('listSales', divya, { type: 'medpass' })).sales.length, 3);
+  assert.equal(ok(call('listSales', divya, { type: 'pharmacy' })).sales.length, 1);
+  assert.equal(ok(call('listSales', arjun, { type: 'medpass' })).sales.length, 0);
+
+  // Person scope splits one person out; selecting someone already there is "nothing to move".
+  const split = ok(call('bulkReassign', manager, { type: 'medpass', ids: [mom.ID], agentEmail: 'arjun@medunited.in', scope: 'person', dryRun: false }));
+  assert.equal(split.moved.records, 1);
+  assert.deepEqual(ok(call('listSales', arjun, { type: 'medpass' })).sales.map((s) => s.ID), [mom.ID]);
+  const again = ok(call('bulkReassign', manager, { type: 'medpass', ids: [other.ID], agentEmail: 'divya@medunited.in' }));
+  assert.match(again.results[0].warnings.join(' '), /nothing to move/);
+  assert.equal(again.toMove, 0);
+});
+
+test('reassign from an edited export: changed Agent Email rows move, the rest is left alone', () => {
+  const { call, arjun, divya, manager, sheets } = world();
+  const a = ok(call('createSale', arjun, { type: 'medpass', data: lead({ customerName: 'A One', contact: '9820000001' }) })).sale;
+  const b = ok(call('createSale', arjun, { type: 'medpass', data: lead({ customerName: 'B Two', contact: '9820000002' }) })).sale;
+  const c = ok(call('createSale', arjun, { type: 'medpass', data: lead({ customerName: 'C Three', contact: '9820000003' }) })).sale;
+  const d1 = ok(call('createSale', arjun, { type: 'medpass', data: lead({ customerName: 'Dad', contact: '9820000004' }) })).sale;
+  const d2 = ok(call('createSale', arjun, { type: 'medpass', data: lead({ customerName: 'Mum', contact: '9820000004' }) })).sale;
+  const closed = ok(call('createSale', arjun, { type: 'medpass', data: lead({ customerName: 'E Five', contact: '9820000005', status: 'Cancelled', lostReason: 'Other' }) })).sale;
+  const rows = [
+    { _row: 2, id: a.ID, agentEmail: 'divya@medunited.in' },
+    { _row: 3, id: b.ID, agentEmail: 'meera@medunited.in' }, // a manager can handle patients too
+    { _row: 4, id: c.ID, agentEmail: 'arjun@medunited.in' }, // unchanged
+    { _row: 5, id: 'missing-id', agentEmail: 'divya@medunited.in' },
+    { _row: 6, id: c.ID, agentEmail: 'ghost@x.in' },
+    { _row: 7, id: d1.ID, agentEmail: 'divya@medunited.in' }, // same household, different agents
+    { _row: 8, id: d2.ID, agentEmail: 'meera@medunited.in' },
+    { _row: 9, id: closed.ID, agentEmail: 'divya@medunited.in' },
+  ];
+  assert.equal(call('importReassignments', divya, { type: 'medpass', rows }).forbidden, true);
+  const dry = ok(call('importReassignments', manager, { type: 'medpass', rows }));
+  assert.equal(dry.unchanged, 1);
+  const byRow = Object.fromEntries(dry.results.map((r) => [r.row, r]));
+  assert.equal(byRow[2].ok, true);
+  assert.equal(byRow[2].toAgent, 'Divya Agent');
+  assert.equal(byRow[3].toAgent, 'Meera Manager');
+  assert.match(byRow[5].errors[0], /No Medpass record/);
+  assert.match(byRow[6].errors[0], /not an active agent or manager/);
+  assert.match(byRow[7].errors[0], /Rows 7, 8 give this household different agents/);
+  assert.match(byRow[9].warnings[0], /Cancelled and keeps its agent/);
+  assert.equal(ok(call('listSales', divya, { type: 'medpass' })).sales.length, 0, 'dry run saves nothing');
+
+  const done = ok(call('importReassignments', manager, { type: 'medpass', rows, dryRun: false, fileName: 'medpass-export.csv' }));
+  assert.equal(done.moved.patients, 3, 'A, B and E (E has no open records but changes owner)');
+  assert.equal(done.moved.records, 2);
+  assert.deepEqual(ok(call('listSales', divya, { type: 'medpass' })).sales.map((s) => s.ID), [a.ID]);
+  assert.equal(ok(call('listSales', admin_(call), { type: 'medpass' })).sales.find((s) => s.ID === closed.ID).AgentEmail, 'arjun@medunited.in', 'closed record keeps its agent');
+  assert.equal(ok(call('checkContact', manager, { contact: '9820000005' })).owner.email, 'divya@medunited.in');
+  assert.equal(ok(call('listSales', arjun, { type: 'medpass' })).sales.filter((s) => s.ContactKey === '9820000004').length, 2, 'conflicting household untouched');
+  assert.ok(sheets.get('AuditLog').rows.some((r) => r.some((x) => String(x).includes('Reassigned from file medpass-export.csv'))));
+  assert.match(call('importReassignments', manager, { type: 'medpass', rows: Array(501).fill(rows[0]) }).message, /at most 500/);
+});
+
+function admin_(call) {
+  return loginFresh(call, 'boss@medunited.in', 'Adm1n-Secure-2026', 'Adm1n-Secure-2026');
+}
+
+test('agent handover: everything one agent handles moves, nobody is deactivated', () => {
+  const { call, arjun, divya, manager } = world();
+  const products = [{ name: 'Amlodipine 5mg', quantity: 30, frequency: 'Once a day', unitsPerDose: 1, formType: 'tablet' }];
+  ok(call('createSale', arjun, { type: 'medpass', data: lead() }));
+  ok(call('createSale', arjun, { type: 'pharmacy', data: { ...lead({ contact: '9830000001' }), products, status: 'Completed', paymentMethod: 'Card', amount: 640, billScreenshot: PNG, paymentScreenshot: PNG } }));
+  ok(call('createSale', arjun, { type: 'lab', data: { ...lead({ contact: '9830000002' }), tests: [] } }));
+
+  assert.equal(call('handoverAgent', arjun, { fromEmail: 'arjun@medunited.in', toEmail: 'divya@medunited.in' }).forbidden, true);
+  assert.match(call('handoverAgent', manager, { fromEmail: 'arjun@medunited.in', toEmail: 'arjun@medunited.in' }).message, /someone else/);
+  const dry = ok(call('handoverAgent', manager, { fromEmail: 'arjun@medunited.in', toEmail: 'divya@medunited.in' }));
+  assert.deepEqual(dry.preview, { from: 'Arjun Agent', to: 'Divya Agent', patients: 3, records: 2, reminders: 1 });
+  assert.match(call('handoverAgent', manager, { fromEmail: 'arjun@medunited.in', toEmail: 'divya@medunited.in', dryRun: false }).message, /reason/);
+
+  const done = ok(call('handoverAgent', manager, { fromEmail: 'arjun@medunited.in', toEmail: 'divya@medunited.in', dryRun: false, reason: 'On leave until 30 Nov' }));
+  assert.deepEqual(done.moved, { patients: 3, records: 2, reminders: 1 });
+  assert.equal(ok(call('me', arjun)).user.email, 'arjun@medunited.in', 'Arjun stays active');
+  assert.equal(ok(call('listSales', divya, { type: 'medpass' })).sales.length, 1);
+  assert.equal(ok(call('listSales', divya, { type: 'lab' })).sales.length, 1);
+  assert.equal(ok(call('listReminders', divya, {})).reminders.length, 1);
+  assert.equal(ok(call('listSales', arjun, { type: 'pharmacy' })).sales.length, 1, 'completed sale stays with Arjun');
+  assert.match(call('handoverAgent', manager, { fromEmail: 'arjun@medunited.in', toEmail: 'divya@medunited.in', dryRun: false, reason: 'Again' }).message, /nothing to hand over/);
+});

@@ -1,9 +1,8 @@
 import React, { useMemo, useState } from 'react';
-import Papa from 'papaparse';
-import readXlsxFile from 'read-excel-file';
 import { SaleType, User } from '../types';
 import { isTeamRole } from '../utils/roles';
 import { api } from '../services/api';
+import { readTable, cellToString, normHeader, MAX_FILE_BYTES } from '../utils/readTable';
 
 // Bulk-add leads from an Excel (.xlsx) or CSV file.
 //
@@ -64,23 +63,7 @@ const ALIASES: Record<Field, string[]> = {
 };
 
 const MAX_ROWS = 500;
-const MAX_FILE_BYTES = 5 * 1024 * 1024;
-
-const norm = (h: unknown) => String(h ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
-
-function cellToString(v: unknown): string {
-  if (v === null || v === undefined) return '';
-  if (v instanceof Date) {
-    if (isNaN(v.getTime())) return '';
-    // Excel dates are calendar days: use the local date parts, not UTC.
-    const y = v.getFullYear();
-    const m = String(v.getMonth() + 1).padStart(2, '0');
-    const d = String(v.getDate()).padStart(2, '0');
-    return `${y}-${m}-${d}`;
-  }
-  if (typeof v === 'number') return Number.isInteger(v) ? String(v) : String(v);
-  return String(v).trim();
-}
+const norm = normHeader;
 
 function mapColumns(header: unknown[]): { map: Partial<Record<Field, number>>; ignored: string[] } {
   const map: Partial<Record<Field, number>> = {};
@@ -158,24 +141,6 @@ export const ImportModal: React.FC<ImportModalProps> = ({ type, user, agents, on
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
-  };
-
-  const readTable = async (file: File): Promise<unknown[][]> => {
-    const name = file.name.toLowerCase();
-    if (name.endsWith('.xlsx')) {
-      return (await readXlsxFile(file)) as unknown[][];
-    }
-    if (name.endsWith('.csv') || name.endsWith('.txt') || file.type === 'text/csv') {
-      return new Promise((resolve, reject) => {
-        Papa.parse<unknown[]>(file, {
-          skipEmptyLines: 'greedy',
-          complete: (r) => resolve(r.data as unknown[][]),
-          error: (err) => reject(err),
-        });
-      });
-    }
-    if (name.endsWith('.xls')) throw new Error('Old .xls files are not supported. In Excel, use File → Save As → "Excel Workbook (.xlsx)" or CSV.');
-    throw new Error('Please choose an Excel (.xlsx) or CSV file.');
   };
 
   const handleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
