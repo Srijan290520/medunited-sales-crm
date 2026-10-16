@@ -93,11 +93,14 @@ function svc_logSaleActivity(session, type, saleId, data) {
   var label = (direction ? direction + ' ' : '') + actType + (outcome ? ' — ' + outcome : '');
 
   if (sale.Status === 'Cancelled' && (direction === 'Incoming' || outcome === 'Interested' || statusUpdate === 'reopen_pending')) {
-    var dup = findOpenRecordByPhone(String(sale.ContactKey || phoneKey(sale.Contact)), sale.ID);
-    if (dup) throw new Error('This number already has another open ' + SALE_TYPES[dup.type] + ' record managed by ' + dup.row.AgentName + '. Log the contact there instead.');
+    var world = loadPatientWorld();
+    var own = reopenOwnership(session, world, type, sale);
     patch = { Status: 'Pending', LostReason: '', Temperature: 'Hot' };
+    Object.keys(own).forEach(function (k) { patch[k] = own[k]; });
+    savePatientChanges(world);
     auditAction = 'reopen';
-    auditSummary = 'Customer got back in touch (' + label + '). Reopened as a Hot lead.';
+    auditSummary = 'Customer got back in touch (' + label + '). Reopened as a Hot lead.' +
+      (own.AgentName ? ' Moved to ' + own.AgentName + ', who handles this patient now.' : '');
   } else if (sale.Status === 'Pending') {
     if (outcome === 'Not interested' || outcome === 'Wrong number' || statusUpdate === 'cancel') {
       var lists = getLists();
@@ -122,7 +125,7 @@ function svc_logSaleActivity(session, type, saleId, data) {
   if (Object.keys(patch).length) {
     patch.UpdatedAt = nowIso();
     var updated = updateObjectById(sheet, sale.ID, patch);
-    if (type === 'pharmacy') syncReminderForSale(updated);
+    afterSaleSaved(type, updated);
     if (auditAction) audit(session, auditAction, saleEntity(type), sale.ID, saleChanges(sale, patch), auditSummary);
     sale = updated;
   }
@@ -683,7 +686,8 @@ function doPost(e) { return handleRequest(e); }
 var WRITE_ACTIONS = [
   'changePassword',
   'createSale', 'importSales', 'updateSale', 'deleteSale', 'reopenSale', 'reassignSale', 'logSaleActivity',
-  'createUser', 'updateUser', 'deleteUser', 'updateIncentives',
+  'reassignPatient', 'migratePatients', 'resolvePatientConflict',
+  'createUser', 'updateUser', 'deleteUser', 'updateIncentives', 'requestDeactivation', 'decideUserRequest',
   'markContacted', 'reassignReminder',
   'updateLists', 'updateMonthlyTarget'
 ];
@@ -755,23 +759,35 @@ function dispatch(action, token, p) {
     case 'changePassword':
       return Object.assign({ error: false }, svc_changePassword(session, p.currentPassword, p.newPassword));
 
-    // ----- Medpass & Pharmacy records -----
+    // ----- Module records (Medpass, Pharmacy, …) -----
+    case 'getModules':
+      return { error: false, modules: svc_getModules(session) };
     case 'listSales':
       return { error: false, sales: svc_listSales(session, p.type) };
     case 'getSale':
       return Object.assign({ error: false }, svc_getSale(session, p.type, p.id));
     case 'createSale':
-      return { error: false, sale: svc_createSale(session, p.type, p.data || {}) };
+      return Object.assign({ error: false }, svc_createSale(session, p.type, p.data || {}));
     case 'importSales':
       return Object.assign({ error: false }, svc_importSales(session, p.type, p.rows, { dryRun: p.dryRun === true, agentEmail: p.agentEmail, fileName: p.fileName }));
     case 'updateSale':
-      return { error: false, sale: svc_updateSale(session, p.type, p.id, p.data || {}) };
+      return Object.assign({ error: false }, svc_updateSale(session, p.type, p.id, p.data || {}));
     case 'deleteSale':
       return Object.assign({ error: false }, svc_deleteSale(session, p.type, p.id, p.reason));
     case 'reopenSale':
       return { error: false, sale: svc_reopenSale(session, p.type, p.id, p.reason) };
     case 'reassignSale':
-      return { error: false, sale: svc_reassignSale(session, p.type, p.id, p.agentEmail) };
+      return Object.assign({ error: false }, svc_reassignSale(session, p.type, p.id, p.agentEmail, p.scope, p.reason));
+    case 'reassignPatient':
+      return Object.assign({ error: false }, svc_reassignPatient(session, p));
+
+    // ----- Patients (owners, migration, conflicts) -----
+    case 'migratePatients':
+      return { error: false, migration: svc_migratePatients(session, p.dryRun) };
+    case 'listPatientConflicts':
+      return { error: false, conflicts: svc_listPatientConflicts(session) };
+    case 'resolvePatientConflict':
+      return Object.assign({ error: false }, svc_resolvePatientConflict(session, p));
     case 'logSaleActivity':
       return Object.assign({ error: false }, svc_logSaleActivity(session, p.type, p.id, p.data || {}));
     case 'getAuditHistory':
@@ -794,6 +810,12 @@ function dispatch(action, token, p) {
       return { error: false, user: svc_updateUser(session, p.id, p.data || {}) };
     case 'deleteUser':
       return Object.assign({ error: false }, svc_deleteUser(session, p.id, p.reason));
+    case 'requestDeactivation':
+      return { error: false, request: svc_requestDeactivation(session, p) };
+    case 'listUserRequests':
+      return { error: false, requests: svc_listUserRequests(session, p.includeDecided === true) };
+    case 'decideUserRequest':
+      return Object.assign({ error: false }, svc_decideUserRequest(session, p));
     case 'updateIncentives':
       return { error: false, user: svc_updateIncentives(session, p.id, p.data || {}) };
 
@@ -821,6 +843,163 @@ function dispatch(action, token, p) {
 }
 
 
+// ---- Handover.gs ----
+// Handover.gs — deactivating an agent without leaving patients behind.
+//
+// A manager asks for an agent to be deactivated and says who takes over
+// their patients (the successor). An admin approves or rejects. Approving
+// moves everything the agent still handles to the successor in one locked,
+// audited step, then deactivates the account:
+//   - every patient they own (with all of those patients' open records in
+//     every module and their active refill reminders);
+//   - any other open record or active reminder still in their name.
+// Completed and cancelled records stay in their name, so their incentives
+// and history are kept.
+//
+// The server never deactivates someone who still handles patients without a
+// successor (see svc_updateUser).
+
+var USER_REQUEST_HEADERS = ['ID', 'Type', 'UserEmail', 'UserName', 'SuccessorEmail', 'SuccessorName', 'Reason',
+  'RequestedByEmail', 'RequestedByName', 'Status', 'DecidedByEmail', 'DecidedByName', 'DecisionNote', 'CreatedAt', 'DecidedAt'];
+
+function getUserRequestsSheet() { return getOrCreateSheet('UserRequests', USER_REQUEST_HEADERS); }
+
+function userRequestForClient(r) {
+  return {
+    ID: String(r.ID), Type: String(r.Type), UserEmail: String(r.UserEmail), UserName: String(r.UserName),
+    SuccessorEmail: String(r.SuccessorEmail), SuccessorName: String(r.SuccessorName), Reason: String(r.Reason || ''),
+    RequestedByName: String(r.RequestedByName), Status: String(r.Status), DecidedByName: String(r.DecidedByName || ''),
+    DecisionNote: String(r.DecisionNote || ''), CreatedAt: isoString(r.CreatedAt), DecidedAt: isoString(r.DecidedAt)
+  };
+}
+
+// What this person still handles: patients they own, open records and
+// active reminders in their name.
+function openWorkOf(world, email) {
+  var e = lowerEmail(email);
+  world.records.forEach(function (x) { if (lowerEmail(x.row.AgentEmail) === e) ensureHousehold(world, recordContactKey(x.row)); });
+  var patients = world.patients.filter(function (p) { return p.OwnerStatus === PATIENT_OWNED && lowerEmail(p.OwnerEmail) === e; });
+  var records = world.records.filter(function (x) { return x.row.Status === 'Pending' && lowerEmail(x.row.AgentEmail) === e; });
+  var reminders = sheetToObjects(getSheetByName('Reminders')).filter(function (r) {
+    return r.Status === 'Active' && lowerEmail(r.AgentEmail) === e;
+  });
+  return { patients: patients, records: records, reminders: reminders };
+}
+
+function hasOpenWork(work) { return work.patients.length > 0 || work.records.length > 0 || work.reminders.length > 0; }
+
+// Moves all of `user`'s work to `successor`. Call inside the script lock.
+function handOverWork(session, world, user, successor, why) {
+  var work = openWorkOf(world, user.Email);
+  var res = movePatients(session, world, work.patients, successor, why);
+  var records = res.records.length;
+  var e = lowerEmail(user.Email);
+
+  // Open records whose patient isn't owned by them (e.g. an owner conflict
+  // still waiting for an admin): move the records, leave the patient as is.
+  world.records.forEach(function (x) {
+    if (x.row.Status !== 'Pending' || lowerEmail(x.row.AgentEmail) !== e) return;
+    var before = x.row;
+    var patch = { AgentEmail: successor.email, AgentName: successor.name, UpdatedAt: nowIso() };
+    x.row = updateObjectById(getSaleSheet(x.type), before.ID, patch);
+    addActivity(session, x.type, before.ID, { Type: 'Note', Notes: 'Reassigned from ' + before.AgentName + ' to ' + successor.name + '. Reason: ' + why });
+    audit(session, 'reassign', saleEntity(x.type), before.ID, saleChanges(before, patch), 'Reassigned from ' + before.AgentName + ' to ' + successor.name + '. Reason: ' + why);
+    records++;
+  });
+
+  var reminders = res.reminders;
+  var remSheet = getSheetByName('Reminders');
+  sheetToObjects(remSheet).forEach(function (r) {
+    if (r.Status !== 'Active' || lowerEmail(r.AgentEmail) !== e) return;
+    var patch = { AgentEmail: successor.email, AgentName: successor.name, Reassigned: true, UpdatedAt: nowIso() };
+    updateObjectById(remSheet, r.ID, patch);
+    audit(session, 'reassign', 'Reminder', r.ID, auditDiff(r, patch), 'Refill reminder handed over to ' + successor.name + '. Reason: ' + why);
+    reminders++;
+  });
+  savePatientChanges(world);
+  return { patients: work.patients.length, records: records, reminders: reminders };
+}
+
+function findUserById(id) {
+  return sheetToObjects(getUsersSheet()).find(function (u) { return String(u.ID) === String(id); }) || null;
+}
+
+// Manager (or admin): ask for an agent to be deactivated, naming who takes over.
+function svc_requestDeactivation(session, data) {
+  requireRole(session, ['admin', 'manager']);
+  data = data || {};
+  var user = findUserById(data.userId);
+  if (!user || !isActive(user.Active)) throw new Error('User not found or already inactive.');
+  if (String(user.ID) === String(session.id)) throw new Error('You cannot request your own deactivation.');
+  if (user.Role === 'admin') throw new ForbiddenError('Admin accounts can only be deactivated by an admin on the Users page.');
+  var why = cleanText(data.reason, 300);
+  if (why.length < 3) throw new Error('Give a reason (at least 3 characters).');
+  var world = loadPatientWorld();
+  var successor = requireOwnerCandidate(world, data.successorEmail);
+  if (lowerEmail(successor.email) === lowerEmail(user.Email)) throw new Error('Choose someone else to take over.');
+
+  var sheet = getUserRequestsSheet();
+  var pending = sheetToObjects(sheet).some(function (r) {
+    return r.Status === 'Pending' && lowerEmail(r.UserEmail) === lowerEmail(user.Email);
+  });
+  if (pending) throw new Error('There is already a pending deactivation request for ' + user.Name + '.');
+
+  var row = {
+    ID: newId(), Type: 'deactivate', UserEmail: user.Email, UserName: user.Name,
+    SuccessorEmail: successor.email, SuccessorName: successor.name, Reason: why,
+    RequestedByEmail: session.email, RequestedByName: session.name, Status: 'Pending',
+    DecidedByEmail: '', DecidedByName: '', DecisionNote: '', CreatedAt: nowIso(), DecidedAt: ''
+  };
+  appendObject(sheet, row);
+  var work = openWorkOf(world, user.Email);
+  audit(session, 'request_deactivation', 'User', user.ID, { Successor: { from: '', to: successor.email } },
+    'Asked to deactivate ' + user.Email + ' (' + work.patients.length + ' patients, ' + work.records.length +
+    ' open records) and hand over to ' + successor.name + '. Reason: ' + why);
+  return userRequestForClient(row);
+}
+
+function svc_listUserRequests(session, includeDecided) {
+  requireRole(session, ['admin', 'manager']);
+  return sheetToObjects(getUserRequestsSheet())
+    .filter(function (r) { return r.ID && (includeDecided || r.Status === 'Pending'); })
+    .map(userRequestForClient)
+    .sort(function (a, b) { return new Date(b.CreatedAt) - new Date(a.CreatedAt); });
+}
+
+// Admin: approve (hand over, then deactivate) or reject.
+function svc_decideUserRequest(session, data) {
+  requireRole(session, ['admin']);
+  data = data || {};
+  var sheet = getUserRequestsSheet();
+  var req = sheetToObjects(sheet).find(function (r) { return String(r.ID) === String(data.id); });
+  if (!req) throw new Error('Request not found.');
+  if (req.Status !== 'Pending') throw new Error('This request was already decided.');
+  var note = cleanText(data.note, 300);
+  var approve = data.approve === true;
+  var handover = null;
+
+  if (approve) {
+    var user = sheetToObjects(getUsersSheet()).find(function (u) { return lowerEmail(u.Email) === lowerEmail(req.UserEmail); });
+    if (!user || !isActive(user.Active)) throw new Error('This account is already inactive. Reject the request instead.');
+    var world = loadPatientWorld();
+    var successor = requireOwnerCandidate(world, req.SuccessorEmail);
+    handover = handOverWork(session, world, user, successor, 'Deactivation of ' + user.Name + ' approved.' + (note ? ' ' + note : ''));
+    updateObjectById(getUsersSheet(), user.ID, { Active: false });
+    audit(session, 'update', 'User', user.ID, { Active: { from: true, to: false } },
+      'Deactivated ' + user.Email + '; ' + handover.patients + ' patients, ' + handover.records + ' open records and ' +
+      handover.reminders + ' reminders handed to ' + successor.name);
+  }
+  var patch = {
+    Status: approve ? 'Approved' : 'Rejected', DecidedByEmail: session.email, DecidedByName: session.name,
+    DecisionNote: note, DecidedAt: nowIso()
+  };
+  var updated = updateObjectById(sheet, req.ID, patch);
+  audit(session, approve ? 'approve_request' : 'reject_request', 'UserRequest', req.ID, auditDiff(req, patch),
+    (approve ? 'Approved' : 'Rejected') + ' deactivation of ' + req.UserEmail + (note ? '. Note: ' + note : ''));
+  return { request: userRequestForClient(updated), handover: handover };
+}
+
+
 // ---- Import.gs ----
 // Import.gs — bulk-add leads from a spreadsheet (Excel / CSV is parsed in the
 // browser; this receives plain rows).
@@ -831,9 +1010,11 @@ function dispatch(action, token, p) {
 //                  and save only the rows that pass, in one batch
 //
 // Imported rows are always new Pending leads. The same rules as one-by-one
-// entry apply: a valid phone number, one open record per phone number
-// (checked against the sheet AND within the file), values from the admin's
-// dropdown lists, and agents can only import leads for themselves.
+// entry apply: a valid phone number, one open record per patient (phone +
+// name) per module (checked against the sheet AND within the file), values
+// from the admin's dropdown lists, agents can only import leads for
+// themselves, and a row for a patient someone already handles goes to them
+// (shown as a warning in the preview).
 
 var IMPORT_MAX_ROWS = 500;
 
@@ -866,7 +1047,7 @@ function parseYesNo(value, fallback) {
 }
 
 function svc_importSales(session, type, rows, options) {
-  saleSheetName(type);
+  var mod = getModule(type);
   options = options || {};
   if (!Array.isArray(rows) || rows.length === 0) throw new Error('The file has no rows to import.');
   if (rows.length > IMPORT_MAX_ROWS) throw new Error('You can import at most ' + IMPORT_MAX_ROWS + ' rows at a time. Split the file and import it in parts.');
@@ -876,17 +1057,9 @@ function svc_importSales(session, type, rows, options) {
   var activeByEmail = {};
   users.forEach(function (u) { if (isActive(u.Active)) activeByEmail[String(u.Email).toLowerCase()] = u; });
 
-  // Phone numbers that already have an open record, in either module.
-  var openKeys = {};
-  Object.keys(SALE_TYPES).forEach(function (t) {
-    sheetToObjects(getSaleSheet(t)).forEach(function (s) {
-      if (s.Status === 'Pending') {
-        var k = String(s.ContactKey || phoneKey(s.Contact));
-        if (k) openKeys[k] = { module: SALE_TYPES[t], agent: String(s.AgentName), mine: canAccessSale(session, s) };
-      }
-    });
-  });
-
+  // Patients and their owners, so each row goes to the agent who already
+  // handles that person (or that household).
+  var world = loadPatientWorld();
   var seenInFile = {};
   var results = [];
   var toSave = [];
@@ -902,10 +1075,15 @@ function svc_importSales(session, type, rows, options) {
     if (!name) errors.push('Customer name is missing.');
     var contact = cleanText(r.contact, 30);
     var key = phoneKey(contact);
+    var person = key + '|' + nameKey(name);
     if (!key) errors.push('Phone number is missing or invalid.');
-    else if (seenInFile[key]) errors.push('Same phone number as row ' + seenInFile[key] + ' in this file.');
-    else if (openKeys[key]) errors.push('Already has an open ' + openKeys[key].module + ' record' + ' (managed by ' + openKeys[key].agent + ').');
-    if (key && !seenInFile[key]) seenInFile[key] = rowNo;
+    else if (name && seenInFile[person]) errors.push('Same person (phone number and name) as row ' + seenInFile[person] + ' in this file.');
+    else if (name) {
+      ensureHousehold(world, key);
+      var dup = findOpenRecordForPatient(world, type, findPerson(world, key, name));
+      if (dup) errors.push('Already has an open ' + SALE_TYPES[type] + ' record (managed by ' + dup.row.AgentName + ').');
+    }
+    if (key && name && !seenInFile[person]) seenInFile[person] = rowNo;
 
     var temperature = 'Warm';
     if (cleanText(r.temperature)) {
@@ -939,7 +1117,7 @@ function svc_importSales(session, type, rows, options) {
     if (dnd === null) { errors.push('Do Not Call must be Yes or No.'); dnd = false; }
 
     var priceType = '';
-    if (type === 'medpass') {
+    if (mod.priceTypes) {
       priceType = 'Full Price';
       if (cleanText(r.priceType)) {
         priceType = matchOption(r.priceType, PRICE_TYPES);
@@ -966,9 +1144,17 @@ function svc_importSales(session, type, rows, options) {
 
     var notes = cleanText(r.notes, MAX_LONG_TEXT);
     var detail = cleanText(r.detail, MAX_LONG_TEXT);
-    if (type === 'pharmacy' && detail) {
+    if (mod.products && detail) {
       notes = (notes ? notes + '\n' : '') + 'Medicines mentioned: ' + detail;
       detail = '';
+    }
+
+    // Only rows that pass get a patient, so a bad row never adds anyone.
+    var link = null;
+    if (!errors.length) {
+      link = resolvePatientOwner(world, { contactKey: key, contact: contact, name: name, requested: owner });
+      if (link.notice) warnings.push(link.notice);
+      owner = link.owner;
     }
 
     results.push({
@@ -987,7 +1173,7 @@ function svc_importSales(session, type, rows, options) {
       Contact: contact,
       ContactKey: key,
       Detail: detail,
-      Products: type === 'pharmacy' ? '[]' : '',
+      Products: mod.products ? '[]' : '',
       Amount: amount,
       Status: 'Pending',
       PriceType: priceType,
@@ -1005,7 +1191,8 @@ function svc_importSales(session, type, rows, options) {
       LostReason: '',
       NextFollowUp: nextFollowUp,
       CreatedAt: now,
-      UpdatedAt: now
+      UpdatedAt: now,
+      PatientID: link.patient.ID
     });
   });
 
@@ -1019,6 +1206,7 @@ function svc_importSales(session, type, rows, options) {
   };
   if (options.dryRun || toSave.length === 0) return summary;
 
+  savePatientChanges(world);
   // One write for all rows instead of hundreds of appendRow calls.
   var sheet = getSaleSheet(type);
   var headers = sheetHeaders(sheet);
@@ -1153,6 +1341,653 @@ function svc_updateMonthlyTarget(session, amount) {
   setSetting(session, 'monthlyTarget', value);
   audit(session, 'update_target', 'Settings', 'monthlyTarget', { MonthlyTarget: { from: before, to: value } });
   return value;
+}
+
+
+// ---- Modules.gs ----
+// Modules.gs — the sales modules (Medpass, Pharmacy, …) as configuration.
+//
+// Every module is a tab with the same columns (SALE_HEADERS) and runs on
+// the same engine (SalesService.gs, Import.gs, the dashboard). What differs
+// between modules is described here, so adding a module means adding an
+// entry, not copying code:
+//
+//   id            value of the `type` parameter in the API
+//   label         shown to people, also the tab name
+//   priceTypes    true → PriceType is required (Full Price / Discounted / …)
+//   products      true → medicines list (Products JSON); Detail is a summary of it
+//   needsProducts true → can't be Completed without at least one product
+//   reminders     true → completed sales get refill reminders
+//   incentive     { kind: 'perSale' } flat ₹ per sale by price type, or
+//                 { kind: 'percent' } % of the amount — rates live on the Users tab
+
+var MODULES = {
+  medpass: {
+    id: 'medpass', label: 'Medpass',
+    priceTypes: true, products: false, needsProducts: false, reminders: false,
+    incentive: { kind: 'perSale', fullRateField: 'MedpassFullRate', discountRateField: 'MedpassDiscountRate' }
+  },
+  pharmacy: {
+    id: 'pharmacy', label: 'Pharmacy',
+    priceTypes: false, products: true, needsProducts: true, reminders: true,
+    incentive: { kind: 'percent', percentField: 'PharmacyIncentivePercent' }
+  }
+};
+
+// Module id → label. Kept under its old name because it is used everywhere.
+var SALE_TYPES = {};
+Object.keys(MODULES).forEach(function (id) { SALE_TYPES[id] = MODULES[id].label; });
+
+function moduleIds() { return Object.keys(MODULES); }
+
+function getModule(type) {
+  var mod = MODULES.hasOwnProperty(type) ? MODULES[type] : null;
+  if (!mod) throw new Error('Invalid sale type.');
+  return mod;
+}
+
+// Incentive earned on one Completed sale, given the agent's rates row.
+function incentiveForSale(mod, row, rates) {
+  if (!rates) return 0;
+  var inc = mod.incentive || {};
+  if (inc.kind === 'perSale') {
+    var field = row.PriceType === 'Discounted' ? inc.discountRateField : inc.fullRateField;
+    return Number(rates[field]) || 0;
+  }
+  if (inc.kind === 'percent') {
+    return (Number(row.Amount) || 0) * ((Number(rates[inc.percentField]) || 0) / 100);
+  }
+  return 0;
+}
+
+// Module side effects after a record is saved or deleted.
+function afterSaleSaved(type, sale) {
+  if (getModule(type).reminders) syncReminderForSale(sale);
+}
+
+function afterSaleDeleted(type, saleId) {
+  if (getModule(type).reminders) removeReminderForSale(saleId);
+}
+
+// What the browser needs to build its menus and forms.
+function svc_getModules(session) {
+  return moduleIds().map(function (id) {
+    var m = MODULES[id];
+    return { id: m.id, label: m.label, priceTypes: m.priceTypes, products: m.products, reminders: m.reminders };
+  });
+}
+
+
+// ---- Patients.gs ----
+// Patients.gs — one agent per patient, across every module.
+//
+// A patient is a person: a phone number + a name. Relatives often share one
+// number (a Medpass holder's parents, children…), so everyone on a number is
+// a "household". By default a household has one owner agent; a manager can
+// split a person out to another agent.
+//
+//   Patients  ID | ContactKey | Contact | Name | NameKey | DOB | OwnerEmail |
+//             OwnerName | OwnerStatus | ConflictAgents | SplitFromHousehold |
+//             CreatedAt | UpdatedAt
+//
+// Module records point at their patient through the PatientID column. Rows
+// saved before Patients existed have no PatientID; they are matched by phone
+// number + name until migratePatients() (or any save touching that number)
+// links them.
+//
+// OwnerStatus is 'Owned' or 'Conflict'. A household whose existing records
+// were handled by more than one agent is never guessed: its people are marked
+// Conflict, with the candidate agents in ConflictAgents, until an admin
+// decides (keep together under one agent, or split).
+//
+// Rules enforced here and in SalesService.gs:
+//  - a new record for a known patient goes to that patient's owner, whoever
+//    enters it; a new person on a known number goes to the household owner;
+//  - one open (Pending) record per patient per module;
+//  - reassigning moves every open record of the patient (or household) in
+//    every module, plus active refill reminders; closed records keep their
+//    agent, so incentives stay with whoever closed the sale.
+
+var PATIENT_HEADERS = ['ID', 'ContactKey', 'Contact', 'Name', 'NameKey', 'DOB', 'OwnerEmail', 'OwnerName', 'OwnerStatus',
+  'ConflictAgents', 'SplitFromHousehold', 'CreatedAt', 'UpdatedAt'];
+var PATIENT_OWNED = 'Owned';
+var PATIENT_CONFLICT = 'Conflict';
+
+function getPatientsSheet() { return getOrCreateSheet('Patients', PATIENT_HEADERS); }
+
+// "Ravi  Kumar", "ravi kumar." and "RAVI KUMAR" are the same name. Letters in
+// any script are kept, so Telugu / Hindi names compare too.
+function nameKey(value) {
+  return cleanText(value, 120).toLowerCase().replace(/[.,'"`_\-]+/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function recordContactKey(row) { return String(row.ContactKey || phoneKey(row.Contact)); }
+
+function lowerEmail(v) { return String(v || '').toLowerCase(); }
+
+// ===== The in-memory picture of patients and records =====
+// Loaded once per request. Changes are collected here and written by
+// savePatientChanges(), so a request that fails validation writes nothing.
+function loadPatientWorld() {
+  var world = {
+    patients: [], byId: {}, byPerson: {}, byHousehold: {},
+    records: [], users: {}, added: [], changed: {}
+  };
+  sheetToObjects(getPatientsSheet()).forEach(function (p) { if (p.ID) indexPatient(world, p); });
+  moduleIds().forEach(function (type) {
+    sheetToObjects(getSaleSheet(type)).forEach(function (r) { if (r.ID) world.records.push({ type: type, row: r }); });
+  });
+  sheetToObjects(getSheetByName('Users')).forEach(function (u) { world.users[lowerEmail(u.Email)] = u; });
+  return world;
+}
+
+function indexPatient(world, p) {
+  world.patients.push(p);
+  world.byId[String(p.ID)] = p;
+  world.byPerson[String(p.ContactKey) + '|' + String(p.NameKey)] = p;
+  (world.byHousehold[String(p.ContactKey)] = world.byHousehold[String(p.ContactKey)] || []).push(p);
+}
+
+function householdOf(world, key) { return world.byHousehold[String(key)] || []; }
+
+function findPerson(world, key, name) { return world.byPerson[String(key) + '|' + nameKey(name)] || null; }
+
+// The patient a record belongs to (null if that number was never linked).
+function recordPatient(world, row) {
+  if (row.PatientID && world.byId[String(row.PatientID)]) return world.byId[String(row.PatientID)];
+  return findPerson(world, recordContactKey(row), row.CustomerName);
+}
+
+function householdRecords(world, key) {
+  return world.records.filter(function (x) { return recordContactKey(x.row) === String(key); });
+}
+
+function patientRecords(world, patient) {
+  return householdRecords(world, patient.ContactKey).filter(function (x) {
+    var p = recordPatient(world, x.row);
+    return p && String(p.ID) === String(patient.ID);
+  });
+}
+
+function activeUser(world, email) {
+  var u = world.users[lowerEmail(email)];
+  return u && isActive(u.Active) ? u : null;
+}
+
+// Who handles this patient now, or null (no owner yet, owner inactive, or
+// waiting for an admin to resolve a conflict).
+function ownerOfPatient(world, p) {
+  if (!p || p.OwnerStatus === PATIENT_CONFLICT || !p.OwnerEmail) return null;
+  var u = activeUser(world, p.OwnerEmail);
+  return u ? { email: u.Email, name: u.Name } : null;
+}
+
+// Distinct active owners of a household's people.
+function householdOwners(world, key) {
+  var seen = {};
+  var out = [];
+  householdOf(world, key).forEach(function (p) {
+    var o = ownerOfPatient(world, p);
+    if (o && !seen[lowerEmail(o.email)]) { seen[lowerEmail(o.email)] = true; out.push(o); }
+  });
+  return out;
+}
+
+function newPatientRow(world, key, contact, name, owner) {
+  var now = nowIso();
+  var p = {
+    ID: newId(), ContactKey: String(key), Contact: contact, Name: cleanText(name, 120), NameKey: nameKey(name), DOB: '',
+    OwnerEmail: owner ? owner.email : '', OwnerName: owner ? owner.name : '', OwnerStatus: PATIENT_OWNED,
+    ConflictAgents: '', SplitFromHousehold: false, CreatedAt: now, UpdatedAt: now
+  };
+  indexPatient(world, p);
+  world.added.push(p);
+  return p;
+}
+
+function changePatient(world, p, patch) {
+  Object.keys(patch).forEach(function (k) { p[k] = patch[k]; });
+  p.UpdatedAt = nowIso();
+  if (world.added.indexOf(p) !== -1) return; // not saved yet — it'll be written whole
+  var c = world.changed[String(p.ID)] || (world.changed[String(p.ID)] = {});
+  Object.keys(patch).forEach(function (k) { c[k] = patch[k]; });
+  c.UpdatedAt = p.UpdatedAt;
+}
+
+// Creates Patients for any records on this number that don't have one yet
+// (rows from before Patients existed). Owner: the one agent who handled the
+// household's records; more than one → Conflict for an admin to resolve.
+function ensureHousehold(world, key) {
+  var rows = householdRecords(world, key);
+  var groups = {};
+  var order = [];
+  rows.forEach(function (x) {
+    if (recordPatient(world, x.row)) return;
+    var nk = nameKey(x.row.CustomerName);
+    if (!groups[nk]) { groups[nk] = []; order.push(nk); }
+    groups[nk].push(x);
+  });
+  if (!order.length) return;
+
+  var stats = {};
+  var statOrder = [];
+  function stat(email, name) {
+    var k = lowerEmail(email);
+    if (!stats[k]) { stats[k] = { email: String(email), name: String(name || email), open: 0, closed: 0 }; statOrder.push(k); }
+    return stats[k];
+  }
+  rows.forEach(function (x) {
+    if (!x.row.AgentEmail) return;
+    var s = stat(x.row.AgentEmail, x.row.AgentName);
+    if (x.row.Status === 'Pending') s.open++; else s.closed++;
+  });
+  householdOf(world, key).forEach(function (p) { if (p.OwnerEmail && p.OwnerStatus === PATIENT_OWNED) stat(p.OwnerEmail, p.OwnerName); });
+
+  order.forEach(function (nk) {
+    var first = groups[nk][0].row;
+    var p;
+    if (statOrder.length === 1) {
+      var only = stats[statOrder[0]];
+      var u = activeUser(world, only.email);
+      p = newPatientRow(world, key, String(first.Contact || ''), first.CustomerName, { email: u ? u.Email : only.email, name: u ? u.Name : only.name });
+    } else {
+      p = newPatientRow(world, key, String(first.Contact || ''), first.CustomerName, null);
+      p.OwnerStatus = PATIENT_CONFLICT;
+      p.ConflictAgents = JSON.stringify(statOrder.map(function (k) { return stats[k]; }));
+    }
+  });
+}
+
+// Decides which patient a new or edited record belongs to and who must handle
+// it. `requested` is the agent the person entering chose (or themselves).
+// Returns { patient, owner, notice, conflict }.
+function resolvePatientOwner(world, opts) {
+  var key = String(opts.contactKey);
+  var requested = opts.requested;
+  ensureHousehold(world, key);
+
+  var patient = null;
+  if (opts.patientId) {
+    patient = world.byId[String(opts.patientId)] || null;
+    if (!patient || String(patient.ContactKey) !== key) throw new Error('That person is not on this phone number. Pick them again or add them as someone new.');
+  }
+  if (!patient) patient = findPerson(world, key, opts.name);
+
+  var owner;
+  if (patient) {
+    owner = ownerOfPatient(world, patient);
+    if (!owner) {
+      owner = requested;
+      // No conflict, just no usable owner (e.g. deactivated before handovers
+      // existed): the person entering takes the patient over.
+      if (patient.OwnerStatus !== PATIENT_CONFLICT) changePatient(world, patient, { OwnerEmail: owner.email, OwnerName: owner.name });
+    }
+  } else {
+    var owners = householdOwners(world, key);
+    if (owners.length === 1) owner = owners[0];
+    else if (owners.length > 1) {
+      owner = owners.filter(function (o) { return lowerEmail(o.email) === lowerEmail(requested.email); })[0] || owners[0];
+    } else owner = requested;
+    patient = newPatientRow(world, key, opts.contact, opts.name, owner);
+  }
+
+  var conflict = patient.OwnerStatus === PATIENT_CONFLICT;
+  var notice = '';
+  if (conflict) notice = 'This patient is waiting for an admin to choose who handles them; the record was saved as entered.';
+  else if (lowerEmail(owner.email) !== lowerEmail(requested.email)) notice = 'Already handled by ' + owner.name + ' — assigned to them.';
+  return { patient: patient, owner: owner, notice: notice, conflict: conflict };
+}
+
+// The open record this patient already has in this module, if any.
+function findOpenRecordForPatient(world, type, patient, exceptId) {
+  if (!patient) return null;
+  var hit = null;
+  householdRecords(world, patient.ContactKey).forEach(function (x) {
+    if (hit || x.type !== type || x.row.Status !== 'Pending' || String(x.row.ID) === String(exceptId || '')) return;
+    var p = recordPatient(world, x.row);
+    if (p && String(p.ID) === String(patient.ID)) hit = x;
+  });
+  return hit;
+}
+
+function openRecordMessage(session, type, dup, tail) {
+  return 'This patient already has an open ' + SALE_TYPES[type] + ' record' +
+    (canAccessSale(session, dup.row) ? ' (' + dup.row.CustomerName + ')' : '') +
+    ', managed by ' + dup.row.AgentName + '. ' + tail;
+}
+
+// Before a closed record goes back to Pending: it must follow the patient's
+// current owner, and the patient can't already have an open one in this module.
+// Returns the AgentEmail/AgentName patch to apply (may be empty).
+function reopenOwnership(session, world, type, row) {
+  ensureHousehold(world, recordContactKey(row));
+  var patient = recordPatient(world, row);
+  var dup = findOpenRecordForPatient(world, type, patient, row.ID);
+  if (dup) throw new Error(openRecordMessage(session, type, dup, 'Close that one first.'));
+  var patch = {};
+  if (patient && !row.PatientID) patch.PatientID = patient.ID;
+  var owner = ownerOfPatient(world, patient);
+  if (owner && lowerEmail(owner.email) !== lowerEmail(row.AgentEmail)) {
+    if (session.role === 'agent') {
+      throw new ForbiddenError('This patient is now handled by ' + owner.name + '. Ask them or a manager to reopen it.');
+    }
+    patch.AgentEmail = owner.email;
+    patch.AgentName = owner.name;
+  }
+  return patch;
+}
+
+// Writes new and changed Patients rows (call inside the script lock, after
+// validation has passed).
+function savePatientChanges(world) {
+  var sheet = getPatientsSheet();
+  if (world.added.length) {
+    var headers = sheetHeaders(sheet);
+    var values = world.added.map(function (p) {
+      return headers.map(function (h) { return safeCellValue(p[h] !== undefined ? p[h] : ''); });
+    });
+    sheet.getRange(sheet.getLastRow() + 1, 1, values.length, headers.length).setValues(values);
+    world.added = [];
+  }
+  Object.keys(world.changed).forEach(function (id) { updateObjectById(sheet, id, world.changed[id]); });
+  world.changed = {};
+}
+
+// ===== Per-record extras for the browser =====
+// AlsoIn: the other modules where this patient has records.
+// HouseholdSize: how many people share the number.
+function recordExtras(world) {
+  var modulesByPerson = {};
+  var peopleByKey = {};
+  world.records.forEach(function (x) {
+    var p = recordPatient(world, x.row);
+    var key = recordContactKey(x.row);
+    var person = p ? 'p:' + p.ID : 'n:' + key + '|' + nameKey(x.row.CustomerName);
+    (modulesByPerson[person] = modulesByPerson[person] || {})[x.type] = true;
+    (peopleByKey[key] = peopleByKey[key] || {})[person] = true;
+  });
+  return function (type, row) {
+    var p = recordPatient(world, row);
+    var key = recordContactKey(row);
+    var person = p ? 'p:' + p.ID : 'n:' + key + '|' + nameKey(row.CustomerName);
+    var mods = modulesByPerson[person] || {};
+    return {
+      PatientID: p ? String(p.ID) : '',
+      AlsoIn: moduleIds().filter(function (t) { return t !== type && mods[t]; }).map(function (t) { return SALE_TYPES[t]; }),
+      HouseholdSize: Object.keys(peopleByKey[key] || {}).length || 1
+    };
+  };
+}
+
+// ===== Reassigning =====
+// A patient can be handled by an active agent or manager.
+function requireOwnerCandidate(world, email) {
+  var u = activeUser(world, cleanEmail(email));
+  if (!u || ['agent', 'manager'].indexOf(String(u.Role)) === -1) throw new Error('Target agent not found or inactive.');
+  return { email: u.Email, name: u.Name };
+}
+
+// Gives `patients` to `target`: every open record of theirs in every module
+// and their active refill reminders move too. Completed/Cancelled records
+// keep their agent, so incentives stay with whoever closed the sale.
+// Writes as it goes — call inside the script lock, after all checks.
+function movePatients(session, world, patients, target, why) {
+  var ids = {};
+  var keys = {};
+  patients.forEach(function (p) { ids[String(p.ID)] = true; keys[String(p.ContactKey)] = true; });
+  var note = why ? ' Reason: ' + why : '';
+  var moved = [];
+  var reminderSales = {};
+
+  world.records.forEach(function (x) {
+    if (!keys[recordContactKey(x.row)]) return;
+    var p = recordPatient(world, x.row);
+    if (!p || !ids[String(p.ID)]) return;
+    if (getModule(x.type).reminders) reminderSales[String(x.row.ID)] = true;
+    var patch = {};
+    if (!x.row.PatientID) patch.PatientID = p.ID;
+    var moving = x.row.Status === 'Pending' && lowerEmail(x.row.AgentEmail) !== lowerEmail(target.email);
+    if (moving) { patch.AgentEmail = target.email; patch.AgentName = target.name; }
+    if (!Object.keys(patch).length) return;
+    patch.UpdatedAt = nowIso();
+    var before = x.row;
+    x.row = updateObjectById(getSaleSheet(x.type), before.ID, patch);
+    if (!moving) return;
+    addActivity(session, x.type, before.ID, { Type: 'Note', Notes: 'Reassigned from ' + before.AgentName + ' to ' + target.name + '.' + note });
+    audit(session, 'reassign', saleEntity(x.type), before.ID, saleChanges(before, patch),
+      'Reassigned from ' + before.AgentName + ' to ' + target.name + note);
+    moved.push({ type: x.type, id: String(before.ID) });
+  });
+
+  var reminders = 0;
+  var remSheet = getSheetByName('Reminders');
+  sheetToObjects(remSheet).forEach(function (r) {
+    if (r.Status !== 'Active' || !reminderSales[String(r.PharmacySaleID)] || lowerEmail(r.AgentEmail) === lowerEmail(target.email)) return;
+    var patch = { AgentEmail: target.email, AgentName: target.name, Reassigned: true, UpdatedAt: nowIso() };
+    updateObjectById(remSheet, r.ID, patch);
+    audit(session, 'reassign', 'Reminder', r.ID, auditDiff(r, patch), 'Refill reminder moved with the patient to ' + target.name);
+    reminders++;
+  });
+
+  patients.forEach(function (p) {
+    var before = { OwnerEmail: p.OwnerEmail, OwnerName: p.OwnerName, OwnerStatus: p.OwnerStatus };
+    var patch = { OwnerEmail: target.email, OwnerName: target.name, OwnerStatus: PATIENT_OWNED, ConflictAgents: '' };
+    if (before.OwnerEmail === patch.OwnerEmail && before.OwnerStatus === PATIENT_OWNED) return;
+    changePatient(world, p, patch);
+    audit(session, 'reassign', 'Patient', p.ID, auditDiff(before, { OwnerEmail: patch.OwnerEmail, OwnerName: patch.OwnerName, OwnerStatus: patch.OwnerStatus }),
+      p.Name + ' is now handled by ' + target.name + note);
+  });
+
+  // A household with more than one owner has been split on purpose.
+  Object.keys(keys).forEach(function (key) {
+    var split = householdOwners(world, key).length > 1;
+    householdOf(world, key).forEach(function (p) {
+      if (asBool(p.SplitFromHousehold) !== split) changePatient(world, p, { SplitFromHousehold: split });
+    });
+  });
+  return { records: moved, reminders: reminders };
+}
+
+// Manager/admin: hand a patient — or by default their whole household — to
+// another agent. Identify the patient by a record (type + id), a PatientID,
+// or a phone number (always the whole household).
+function svc_reassignPatient(session, data) {
+  requireRole(session, ['admin', 'manager']);
+  data = data || {};
+  var world = loadPatientWorld();
+  var target = requireOwnerCandidate(world, data.agentEmail);
+  var scope = data.scope === 'person' ? 'person' : 'household';
+  var patient = null;
+  if (data.type !== undefined && data.id !== undefined) {
+    getModule(data.type);
+    var rec = world.records.filter(function (x) { return x.type === data.type && String(x.row.ID) === String(data.id); })[0];
+    if (!rec) throw new Error('Record not found.');
+    ensureHousehold(world, recordContactKey(rec.row));
+    patient = recordPatient(world, rec.row);
+  } else if (data.patientId) {
+    patient = world.byId[String(data.patientId)] || null;
+  } else if (data.contact) {
+    var key = phoneKey(data.contact);
+    if (key) { ensureHousehold(world, key); patient = householdOf(world, key)[0] || null; }
+    scope = 'household';
+  }
+  if (!patient) throw new Error('Patient not found.');
+  var group = scope === 'person' ? [patient] : householdOf(world, patient.ContactKey).slice();
+  var result = movePatients(session, world, group, target, cleanText(data.reason, 300));
+  savePatientChanges(world);
+  return { moved: result.records, reminders: result.reminders, patients: group.length, agentName: target.name };
+}
+
+// ===== Migration: build Patients from existing records =====
+// Safe to run any number of times. It only ADDS Patients rows and fills the
+// empty PatientID cell of records; it never changes who a record belongs to.
+// A number whose records were handled by more than one agent becomes a
+// Conflict for an admin to resolve (listPatientConflicts / resolvePatientConflict).
+function migratePatientsCore(session, dryRun) {
+  var world = loadPatientWorld();
+  var keys = {};
+  world.records.forEach(function (x) { var k = recordContactKey(x.row); if (k) keys[k] = true; });
+  Object.keys(keys).forEach(function (k) { ensureHousehold(world, k); });
+
+  var links = {};
+  var linked = 0;
+  world.records.forEach(function (x) {
+    if (x.row.PatientID) return;
+    var p = recordPatient(world, x.row);
+    if (!p) return;
+    (links[x.type] = links[x.type] || {})[String(x.row.ID)] = String(p.ID);
+    linked++;
+  });
+  var created = world.added.length;
+  var conflictKeys = {};
+  world.added.forEach(function (p) { if (p.OwnerStatus === PATIENT_CONFLICT) conflictKeys[String(p.ContactKey)] = true; });
+  var summary = {
+    dryRun: !!dryRun,
+    households: Object.keys(keys).length,
+    patientsCreated: created,
+    recordsLinked: linked,
+    newConflicts: Object.keys(conflictKeys).length,
+    conflicts: conflictList(world, Object.keys(conflictKeys)).slice(0, 50)
+  };
+  if (dryRun) return summary;
+
+  savePatientChanges(world);
+  Object.keys(links).forEach(function (type) {
+    var sheet = getSaleSheet(type);
+    var headers = sheetHeaders(sheet);
+    var idCol = headers.indexOf('ID');
+    var pidCol = headers.indexOf('PatientID');
+    var last = sheet.getLastRow();
+    if (idCol === -1 || pidCol === -1 || last < 2) return;
+    var ids = sheet.getRange(2, idCol + 1, last - 1, 1).getValues();
+    var pids = sheet.getRange(2, pidCol + 1, last - 1, 1).getValues();
+    var changed = false;
+    for (var i = 0; i < ids.length; i++) {
+      var want = links[type][String(ids[i][0])];
+      if (want && !pids[i][0]) { pids[i][0] = safeCellValue(want); changed = true; }
+    }
+    if (changed) sheet.getRange(2, pidCol + 1, last - 1, 1).setValues(pids);
+  });
+  audit(session, 'migrate', 'Patients', '', {
+    PatientsCreated: { from: '', to: created }, RecordsLinked: { from: '', to: linked }, Conflicts: { from: '', to: summary.newConflicts }
+  }, 'Patients migration: ' + created + ' patients created, ' + linked + ' records linked, ' +
+    summary.newConflicts + ' households need an owner decision.');
+  return summary;
+}
+
+// Admin, from the app: a dry run unless dryRun is explicitly false.
+function svc_migratePatients(session, dryRun) {
+  requireRole(session, ['admin']);
+  return migratePatientsCore(session, dryRun !== false);
+}
+
+// From the Apps Script editor: back up the Sheet (File → Make a copy), run
+// migratePatientsDryRun and read the log, then run migratePatients.
+var MIGRATION_SESSION = { id: 'migration', email: 'migration', name: 'Migration script', role: 'system' };
+
+function migratePatientsDryRun() {
+  var s = migratePatientsCore(MIGRATION_SESSION, true);
+  Logger.log(JSON.stringify(s, null, 2));
+  return s;
+}
+
+function migratePatients() {
+  var s = withScriptLock(function () { return migratePatientsCore(MIGRATION_SESSION, false); });
+  bumpDataVersion();
+  Logger.log(JSON.stringify(s, null, 2));
+  return s;
+}
+
+// ===== Conflicts =====
+// Households where an admin has to decide who handles whom.
+function conflictList(world, keys) {
+  return keys.map(function (key) {
+    var people = householdOf(world, key);
+    var agents = {};
+    people.forEach(function (p) {
+      if (p.OwnerStatus !== PATIENT_CONFLICT) return;
+      var list = [];
+      try { list = JSON.parse(p.ConflictAgents || '[]'); } catch (e) { list = []; }
+      list.forEach(function (a) { agents[lowerEmail(a.email)] = a; });
+    });
+    return {
+      contactKey: String(key),
+      contact: String((people[0] && people[0].Contact) || key),
+      agents: Object.keys(agents).map(function (k) { return agents[k]; }),
+      people: people.map(function (p) {
+        var o = ownerOfPatient(world, p);
+        return {
+          ID: world.added.indexOf(p) === -1 ? String(p.ID) : '',
+          Name: String(p.Name),
+          Conflict: p.OwnerStatus === PATIENT_CONFLICT,
+          OwnerName: o ? o.name : '',
+          records: patientRecords(world, p).map(function (x) {
+            return { module: SALE_TYPES[x.type], status: String(x.row.Status), agentName: String(x.row.AgentName), date: dateKey(x.row.Date) };
+          })
+        };
+      })
+    };
+  });
+}
+
+function svc_listPatientConflicts(session) {
+  requireRole(session, ['admin', 'manager']);
+  var world = loadPatientWorld();
+  var keys = {};
+  world.records.forEach(function (x) { var k = recordContactKey(x.row); if (k) keys[k] = true; });
+  // In memory only, so numbers not migrated yet show up too.
+  Object.keys(keys).forEach(function (k) { ensureHousehold(world, k); });
+  var conflictKeys = {};
+  world.patients.forEach(function (p) { if (p.OwnerStatus === PATIENT_CONFLICT) conflictKeys[String(p.ContactKey)] = true; });
+  return conflictList(world, Object.keys(conflictKeys));
+}
+
+// Admin decides. Either the whole household to one agent:
+//   { contact, agentEmail }
+// or person by person (a split):
+//   { contact, assignments: [{ patientId | name, agentEmail }] }
+// Open records move to the chosen agent; closed ones keep theirs.
+function svc_resolvePatientConflict(session, data) {
+  requireRole(session, ['admin']);
+  data = data || {};
+  var key = phoneKey(data.contact);
+  if (!key) throw new Error('A valid phone number is required.');
+  var world = loadPatientWorld();
+  ensureHousehold(world, key);
+  var household = householdOf(world, key);
+  if (!household.some(function (p) { return p.OwnerStatus === PATIENT_CONFLICT; })) {
+    throw new Error('This number has no owner conflict. Use Reassign to move patients.');
+  }
+  var groups = [];
+  if (data.agentEmail) {
+    groups.push({ target: requireOwnerCandidate(world, data.agentEmail), people: household.slice() });
+  } else if (Array.isArray(data.assignments) && data.assignments.length) {
+    var byTarget = {};
+    data.assignments.forEach(function (a) {
+      a = a && typeof a === 'object' ? a : {};
+      var p = a.patientId ? world.byId[String(a.patientId)] : findPerson(world, key, a.name);
+      if (!p || String(p.ContactKey) !== key) throw new Error('A person in the list is not on this phone number.');
+      var t = requireOwnerCandidate(world, a.agentEmail);
+      var k = lowerEmail(t.email);
+      if (!byTarget[k]) { byTarget[k] = { target: t, people: [] }; groups.push(byTarget[k]); }
+      if (byTarget[k].people.indexOf(p) === -1) byTarget[k].people.push(p);
+    });
+  } else {
+    throw new Error('Choose an agent for the household, or one for each person.');
+  }
+  var moved = [];
+  var reminders = 0;
+  groups.forEach(function (g) {
+    var r = movePatients(session, world, g.people, g.target, 'Owner conflict resolved by admin.');
+    moved = moved.concat(r.records);
+    reminders += r.reminders;
+  });
+  savePatientChanges(world);
+  return {
+    moved: moved,
+    reminders: reminders,
+    remainingConflicts: householdOf(world, key).filter(function (p) { return p.OwnerStatus === PATIENT_CONFLICT; }).length
+  };
 }
 
 
@@ -1489,10 +2324,11 @@ function svc_reassignReminder(session, id, agentEmail) {
 //  - a Completed sale is locked for agents except its medicines and notes;
 //  - Completed needs payment method, both screenshots, a UTR for UPI and an
 //    amount above zero;
-//  - one open (Pending) record per phone number across both modules;
+//  - one open (Pending) record per patient per module, and every record of a
+//    patient goes to the patient's owner agent (see Patients.gs);
 //  - only admins delete, and only with a reason.
 
-var SALE_TYPES = { medpass: 'Medpass', pharmacy: 'Pharmacy' };
+// The modules themselves (and SALE_TYPES) are defined in Modules.gs.
 var SALE_STATUSES = ['Pending', 'Completed', 'Cancelled'];
 var PRICE_TYPES = ['Full Price', 'Discounted', 'Converted From OP'];
 var PAYMENT_METHODS = ['UPI', 'Cash', 'Card', 'Net Banking'];
@@ -1501,19 +2337,17 @@ var ATTACHED = 'attached'; // what the browser sees instead of a Drive link
 var SALE_HEADERS = ['ID', 'Date', 'AgentEmail', 'AgentName', 'CustomerName', 'Contact', 'ContactKey', 'Detail',
   'Products', 'Amount', 'Status', 'PriceType', 'PaymentMethod', 'UTR', 'BillScreenshotUrl', 'PaymentScreenshotUrl',
   'Notes', 'Temperature', 'Direction', 'Channel', 'HeardFrom', 'Consent', 'DoNotCall', 'LostReason', 'NextFollowUp',
-  'CreatedAt', 'UpdatedAt'];
+  'CreatedAt', 'UpdatedAt', 'PatientID'];
 
 function saleSheetName(type) {
-  var name = SALE_TYPES[type];
-  if (!name) throw new Error('Invalid sale type.');
-  return name;
+  return getModule(type).label;
 }
 
 function getSaleSheet(type) {
   return getOrCreateSheet(saleSheetName(type), SALE_HEADERS);
 }
 
-function saleEntity(type) { return SALE_TYPES[type] + 'Sale'; }
+function saleEntity(type) { return getModule(type).label + 'Sale'; }
 
 // Agents can only see/touch their own rows.
 function canAccessSale(session, sale) {
@@ -1531,10 +2365,15 @@ function followUpStatusOf(row) {
 
 // A sale row as the browser should see it. Drive links never leave the
 // server — the browser gets "attached" and fetches images via getAttachment.
-function saleForClient(row, activities) {
+// `extras` (from recordExtras in Patients.gs) adds the patient fields.
+function saleForClient(row, activities, extras) {
   if (!row) return row;
   var acts = activities || [];
+  var ex = extras || { PatientID: String(row.PatientID || ''), AlsoIn: [], HouseholdSize: 1 };
   return {
+    PatientID: ex.PatientID,
+    AlsoIn: ex.AlsoIn,
+    HouseholdSize: ex.HouseholdSize,
     ID: String(row.ID),
     Date: dateKey(row.Date),
     AgentEmail: String(row.AgentEmail || ''),
@@ -1577,10 +2416,18 @@ function requireSale(session, type, id) {
 }
 
 // ===== Reads =====
+// A record with fresh activities and patient fields (used after every write).
+function fullSaleForClient(type, row) {
+  return saleForClient(row, activitiesForSale(row.ID), recordExtras(loadPatientWorld())(type, row));
+}
+
 function svc_listSales(session, type) {
-  var rows = sheetToObjects(getSaleSheet(type)).filter(function (r) { return r.ID && canAccessSale(session, r); });
+  getModule(type);
+  var world = loadPatientWorld();
+  var extras = recordExtras(world);
+  var rows = world.records.filter(function (x) { return x.type === type && canAccessSale(session, x.row); });
   var acts = activitiesBySale();
-  var list = rows.map(function (r) { return saleForClient(r, acts[String(r.ID)]); });
+  var list = rows.map(function (x) { return saleForClient(x.row, acts[String(x.row.ID)], extras(type, x.row)); });
   var rank = { overdue: 0, today: 1, upcoming: 2, '': 3 };
   list.sort(function (a, b) {
     if (a.Status === 'Pending' && b.Status === 'Pending' && rank[a.FollowUpStatus] !== rank[b.FollowUpStatus]) {
@@ -1594,7 +2441,7 @@ function svc_listSales(session, type) {
 function saleDetail(session, type, row) {
   var acts = activitiesForSale(row.ID);
   return {
-    sale: saleForClient(row, acts),
+    sale: saleForClient(row, acts, recordExtras(loadPatientWorld())(type, row)),
     activities: acts.map(activityForClient),
     auditHistory: auditHistoryFor([row.ID])
   };
@@ -1609,54 +2456,78 @@ function svc_getAuditHistory(session, type, id) {
   return auditHistoryFor([row.ID]);
 }
 
-// Used by the form as soon as a phone number is typed: is this person
-// already an open enquiry, or an existing customer? Agents learn that another
-// agent has an open record and who owns it — not the record itself.
+/// Used by the form as soon as a phone number is typed: who handles this
+// number, who is already on it, and which modules have open records.
+// Managers/admins and the owner see the people on the number; any other
+// agent learns only that it is handled and by whom — never names or records.
 function svc_checkContact(session, contact, exceptId) {
   var key = phoneKey(contact);
-  if (!key) return { activeSales: [], pastCompletedCount: 0 };
+  if (!key) return { activeSales: [], pastCompletedCount: 0, owner: null, owners: [], people: [], othersCount: 0, conflict: false };
+  var world = loadPatientWorld();
+  ensureHousehold(world, key); // in memory only: a read never writes
+  var except = String(exceptId || '');
   var active = [];
   var completed = 0;
-  Object.keys(SALE_TYPES).forEach(function (type) {
-    sheetToObjects(getSaleSheet(type)).forEach(function (s) {
-      if (String(s.ID) === String(exceptId || '')) return;
-      if (String(s.ContactKey || phoneKey(s.Contact)) !== key) return;
-      if (s.Status === 'Completed') completed++;
-      if (s.Status === 'Pending') {
-        var mine = canAccessSale(session, s);
-        active.push({
-          ID: mine ? String(s.ID) : '',
-          CustomerName: mine ? String(s.CustomerName) : 'another customer record',
-          AgentName: String(s.AgentName),
-          Module: SALE_TYPES[type],
-          Mine: mine
-        });
-      }
-    });
+  householdRecords(world, key).forEach(function (x) {
+    var s = x.row;
+    if (String(s.ID) === except) return;
+    if (s.Status === 'Completed') completed++;
+    if (s.Status === 'Pending') {
+      var mine = canAccessSale(session, s);
+      active.push({
+        ID: mine ? String(s.ID) : '',
+        CustomerName: mine ? String(s.CustomerName) : 'another customer record',
+        AgentName: String(s.AgentName),
+        Module: SALE_TYPES[x.type],
+        Mine: mine
+      });
+    }
   });
-  return { activeSales: active, pastCompletedCount: completed };
-}
 
-function findOpenRecordByPhone(key, exceptId) {
-  if (!key) return null;
-  var hit = null;
-  Object.keys(SALE_TYPES).forEach(function (type) {
-    if (hit) return;
-    sheetToObjects(getSaleSheet(type)).forEach(function (s) {
-      if (hit || s.Status !== 'Pending' || String(s.ID) === String(exceptId || '')) return;
-      if (String(s.ContactKey || phoneKey(s.Contact)) === key) hit = { type: type, row: s };
+  var me = lowerEmail(session.email);
+  var privileged = session.role !== 'agent';
+  var people = [];
+  var others = 0;
+  householdOf(world, key).forEach(function (p) {
+    var o = ownerOfPatient(world, p);
+    var mine = !!o && lowerEmail(o.email) === me;
+    if (!privileged && !mine) { others++; return; }
+    var open = {};
+    patientRecords(world, p).forEach(function (x) {
+      if (x.row.Status === 'Pending' && String(x.row.ID) !== except) open[x.type] = true;
+    });
+    people.push({
+      // People found only from old rows aren't saved yet; the form then sends
+      // the name, which matches them just the same.
+      ID: world.added.indexOf(p) === -1 ? String(p.ID) : '',
+      Name: String(p.Name),
+      OwnerName: o ? o.name : '',
+      OwnerEmail: o ? o.email : '',
+      Mine: mine,
+      Conflict: p.OwnerStatus === PATIENT_CONFLICT,
+      OpenModules: moduleIds().filter(function (t) { return open[t]; }).map(function (t) { return SALE_TYPES[t]; })
     });
   });
-  return hit;
+  var owners = householdOwners(world, key);
+  return {
+    activeSales: active,
+    pastCompletedCount: completed,
+    owner: owners.length === 1 ? { name: owners[0].name, email: privileged ? owners[0].email : '', isMe: lowerEmail(owners[0].email) === me } : null,
+    owners: privileged ? owners : [],
+    people: people,
+    othersCount: others,
+    conflict: householdOf(world, key).some(function (p) { return p.OwnerStatus === PATIENT_CONFLICT; })
+  };
 }
 
 // ===== Validation helpers =====
 function validateCompletion(next, type) {
   if (next.Status !== 'Completed') return;
-  if (type === 'pharmacy') {
+  var mod = getModule(type);
+  if (mod.needsProducts) {
     var lines = [];
     try { lines = JSON.parse(next.Products || '[]'); } catch (e) { lines = []; }
-    if (!lines.length) throw new Error('Add the medicines before marking this Pharmacy sale as Completed.');
+    if (!lines.length) throw new Error('Add the medicines before marking this ' + mod.label + ' sale as Completed.');
   }
   if (!next.PaymentMethod) throw new Error('Payment method is required to mark this sale as Completed.');
   if (!next.hasBill) throw new Error('A bill screenshot is required to mark this sale as Completed.');
@@ -1764,6 +2635,7 @@ function resolveAssignee(session, agentEmail) {
 
 // ===== Create =====
 function svc_createSale(session, type, data) {
+  var mod = getModule(type);
   var sheet = getSaleSheet(type);
   var customerName = cleanText(data.customerName, 120);
   if (!customerName) throw new Error('Customer name is required.');
@@ -1773,13 +2645,17 @@ function svc_createSale(session, type, data) {
 
   var status = String(data.status || 'Pending');
   requireOneOf(status, SALE_STATUSES, 'Status');
+
+  // Whose patient is this? A known patient (or a new person on a known
+  // number) goes to the agent who already handles them.
+  var world = loadPatientWorld();
+  var link = resolvePatientOwner(world, {
+    contactKey: contactKey, contact: contact, name: customerName,
+    patientId: cleanText(data.patientId, 60), requested: resolveAssignee(session, data.agentEmail)
+  });
   if (status === 'Pending') {
-    var dup = findOpenRecordByPhone(contactKey);
-    if (dup) {
-      throw new Error('This number already has an open ' + SALE_TYPES[dup.type] + ' record' +
-        (canAccessSale(session, dup.row) ? ' (' + dup.row.CustomerName + ')' : '') +
-        ', managed by ' + dup.row.AgentName + '. Open that record instead of creating a new one.');
-    }
+    var dup = findOpenRecordForPatient(world, type, link.patient);
+    if (dup) throw new Error(openRecordMessage(session, type, dup, 'Open that record instead of creating a new one.'));
   }
   var date = data.date ? optionalDateKey(data.date, 'Date') : todayKey();
   var amount = cleanAmount(data.amount);
@@ -1787,12 +2663,12 @@ function svc_createSale(session, type, data) {
   if (paymentMethod) requireOneOf(paymentMethod, PAYMENT_METHODS, 'Payment method');
   var utr = cleanText(data.utr, 40);
   var priceType = cleanText(data.priceType, 30);
-  if (type === 'medpass') requireOneOf(priceType, PRICE_TYPES, 'Price type');
+  if (mod.priceTypes) requireOneOf(priceType, PRICE_TYPES, 'Price type');
   else priceType = '';
 
   var detail = cleanText(data.detail, MAX_LONG_TEXT);
   var products = [];
-  if (type === 'pharmacy') {
+  if (mod.products) {
     products = validateProducts(data.products === undefined ? [] : data.products, status !== 'Completed');
     detail = summarizeProducts(products);
   }
@@ -1811,7 +2687,7 @@ function svc_createSale(session, type, data) {
   validateCompletion({ Status: status, PaymentMethod: paymentMethod, UTR: utr, Amount: amount, hasBill: bill.present, hasPayment: pay.present,
     Products: JSON.stringify(products) }, type);
 
-  var owner = resolveAssignee(session, data.agentEmail);
+  var owner = link.owner;
   var id = newId();
   var now = nowIso();
   var sale = {
@@ -1823,7 +2699,7 @@ function svc_createSale(session, type, data) {
     Contact: contact,
     ContactKey: contactKey,
     Detail: detail,
-    Products: type === 'pharmacy' ? JSON.stringify(products) : '',
+    Products: mod.products ? JSON.stringify(products) : '',
     Amount: amount,
     Status: status,
     PriceType: priceType,
@@ -1841,13 +2717,16 @@ function svc_createSale(session, type, data) {
     LostReason: lostReason,
     NextFollowUp: lead.NextFollowUp,
     CreatedAt: now,
-    UpdatedAt: now
+    UpdatedAt: now,
+    PatientID: link.patient.ID
   };
+  savePatientChanges(world);
   appendObject(sheet, sale);
-  if (type === 'pharmacy') syncReminderForSale(sale);
+  afterSaleSaved(type, sale);
   audit(session, status === 'Completed' ? 'complete' : 'create', saleEntity(type), id, saleChanges(null, sale),
-    'Created ' + SALE_TYPES[type] + ' record for ' + customerName + ' (' + status + ')');
-  return saleForClient(sale, []);
+    'Created ' + SALE_TYPES[type] + ' record for ' + customerName + ' (' + status + ')' +
+    (link.notice && !link.conflict ? '; assigned to ' + owner.name + ', who handles this patient' : ''));
+  return { sale: fullSaleForClient(type, sale), notice: link.notice };
 }
 
 // ===== Update =====
@@ -1855,6 +2734,7 @@ function svc_createSale(session, type, data) {
 var AGENT_COMPLETED_EDITABLE = ['Products', 'Detail', 'Notes'];
 
 function svc_updateSale(session, type, id, data) {
+  var mod = getModule(type);
   var sheet = getSaleSheet(type);
   var existing = requireSale(session, type, id);
   var patch = {};
@@ -1880,11 +2760,12 @@ function svc_updateSale(session, type, id, data) {
   }
   if (data.utr !== undefined) patch.UTR = cleanText(data.utr, 40);
   if (data.notes !== undefined) patch.Notes = cleanText(data.notes, MAX_LONG_TEXT);
-  if (type === 'medpass') {
-    if (data.priceType !== undefined) { patch.PriceType = cleanText(data.priceType, 30); requireOneOf(patch.PriceType, PRICE_TYPES, 'Price type'); }
-    if (data.detail !== undefined) patch.Detail = cleanText(data.detail, MAX_LONG_TEXT);
+  if (mod.priceTypes && data.priceType !== undefined) {
+    patch.PriceType = cleanText(data.priceType, 30);
+    requireOneOf(patch.PriceType, PRICE_TYPES, 'Price type');
   }
-  if (type === 'pharmacy' && data.products !== undefined) {
+  if (!mod.products && data.detail !== undefined) patch.Detail = cleanText(data.detail, MAX_LONG_TEXT);
+  if (mod.products && data.products !== undefined) {
     var products = validateProducts(data.products, String(data.status || existing.Status) !== 'Completed');
     patch.Products = JSON.stringify(products);
     patch.Detail = summarizeProducts(products);
@@ -1948,9 +2829,52 @@ function svc_updateSale(session, type, id, data) {
     next.LostReason = patch.LostReason;
   }
 
-  if (next.Status === 'Pending' && (patch.ContactKey || (patch.Status !== undefined && existing.Status !== 'Pending'))) {
-    var dup = findOpenRecordByPhone(String(next.ContactKey || phoneKey(next.Contact)), existing.ID);
-    if (dup) throw new Error('This number already has another open ' + SALE_TYPES[dup.type] + ' record managed by ' + dup.row.AgentName + '. Close that one first.');
+  // Patient and owner. A new phone number or name may make this someone
+  // else's patient; going back to Pending must follow the current owner; and
+  // a patient has at most one open record per module.
+  var world = null;
+  var notice = '';
+  var relink = patch.ContactKey !== undefined || patch.CustomerName !== undefined;
+  var reopening = next.Status === 'Pending' && patch.Status !== undefined && existing.Status !== 'Pending';
+  if (relink || reopening) {
+    world = loadPatientWorld();
+    var key = String(next.ContactKey || phoneKey(next.Contact));
+    var patient = null;
+    if (relink) {
+      ensureHousehold(world, recordContactKey(existing));
+      var current = recordPatient(world, existing);
+      var shared = current && patientRecords(world, current).some(function (x) { return String(x.row.ID) !== String(existing.ID); });
+      if (current && String(current.ContactKey) === key && !shared && !findPerson(world, key, next.CustomerName)) {
+        // Only this record uses the patient: a spelling fix, not a new person.
+        changePatient(world, current, { Name: cleanText(next.CustomerName, 120), NameKey: nameKey(next.CustomerName) });
+        patient = current;
+      } else {
+        var link = resolvePatientOwner(world, {
+          contactKey: key, contact: next.Contact, name: next.CustomerName,
+          requested: { email: existing.AgentEmail, name: existing.AgentName }
+        });
+        patient = link.patient;
+        if (!link.conflict && lowerEmail(link.owner.email) !== lowerEmail(existing.AgentEmail)) {
+          if (session.role === 'agent') {
+            throw new ForbiddenError('This number belongs to a patient handled by ' + link.owner.name + '. Ask a manager to move the record.');
+          }
+          if (next.Status === 'Pending') {
+            patch.AgentEmail = link.owner.email; patch.AgentName = link.owner.name;
+            next.AgentEmail = link.owner.email; next.AgentName = link.owner.name;
+            notice = 'Moved to ' + link.owner.name + ', who handles this patient.';
+          }
+        }
+      }
+      if (String(existing.PatientID || '') !== String(patient.ID)) { patch.PatientID = patient.ID; next.PatientID = patient.ID; }
+    } else {
+      var own = reopenOwnership(session, world, type, existing);
+      Object.keys(own).forEach(function (k) { patch[k] = own[k]; next[k] = own[k]; });
+      if (own.AgentName) notice = 'Moved to ' + own.AgentName + ', who handles this patient now.';
+    }
+    if (relink && next.Status === 'Pending') {
+      var dup = findOpenRecordForPatient(world, type, patient, existing.ID);
+      if (dup) throw new Error(openRecordMessage(session, type, dup, 'Close that one first.'));
+    }
   }
 
   next.hasBill = bill.present;
@@ -1963,20 +2887,23 @@ function svc_updateSale(session, type, id, data) {
   if (pay.kind === 'upload') patch.PaymentScreenshotUrl = saveAttachmentFromDataUrl(data.paymentScreenshot, type + '_' + existing.ID + '_payment');
   if (pay.kind === 'clear') patch.PaymentScreenshotUrl = '';
 
-  if (Object.keys(patch).length === 0) return saleForClient(existing, activitiesForSale(existing.ID));
+  if (Object.keys(patch).length === 0) return { sale: fullSaleForClient(type, existing), notice: '' };
 
+  if (world) savePatientChanges(world);
   patch.UpdatedAt = nowIso();
   var updated = updateObjectById(sheet, existing.ID, patch);
-  if (type === 'pharmacy') syncReminderForSale(updated);
+  afterSaleSaved(type, updated);
   var changes = saleChanges(existing, patch);
   if (!summary) summary = 'Updated ' + (changes.map(function (c) { return c.field; }).join(', ') || 'details');
+  if (notice) summary += ' ' + notice;
   audit(session, action, saleEntity(type), existing.ID, changes, summary);
-  return saleForClient(updated, activitiesForSale(existing.ID));
+  return { sale: fullSaleForClient(type, updated), notice: notice };
 }
 
 // Customer came back: Cancelled → Pending (Hot, follow up today). Reopening a
 // Completed sale undoes revenue and incentives, so only a manager or admin
-// may do that, and they must say why.
+// may do that, and they must say why. The record follows the patient's
+// current owner.
 function svc_reopenSale(session, type, id, reason) {
   var sheet = getSaleSheet(type);
   var existing = requireSale(session, type, id);
@@ -1986,37 +2913,28 @@ function svc_reopenSale(session, type, id, reason) {
     requireRole(session, ['admin', 'manager']);
     if (why.length < 3) throw new Error('Give a reason for reopening a completed sale.');
   }
-  var dup = findOpenRecordByPhone(String(existing.ContactKey || phoneKey(existing.Contact)), existing.ID);
-  if (dup) throw new Error('This number already has another open ' + SALE_TYPES[dup.type] + ' record managed by ' + dup.row.AgentName + '. Close that one first.');
+  var world = loadPatientWorld();
+  var own = reopenOwnership(session, world, type, existing);
 
   var patch = { Status: 'Pending', LostReason: '', Temperature: 'Hot', NextFollowUp: todayKey(), UpdatedAt: nowIso() };
+  Object.keys(own).forEach(function (k) { patch[k] = own[k]; });
+  savePatientChanges(world);
   var updated = updateObjectById(sheet, existing.ID, patch);
   var summary = why || 'Customer came back and is interested. Reopened as a Hot lead.';
+  if (own.AgentName) summary += ' Moved to ' + own.AgentName + ', who handles this patient now.';
   addActivity(session, type, existing.ID, { Type: 'Note', Notes: 'Reopened: ' + summary, NextFollowUp: todayKey() });
-  if (type === 'pharmacy') syncReminderForSale(updated);
+  afterSaleSaved(type, updated);
   audit(session, 'reopen', saleEntity(type), existing.ID, saleChanges(existing, patch), summary);
-  return saleForClient(updated, activitiesForSale(existing.ID));
+  return fullSaleForClient(type, updated);
 }
 
-function svc_reassignSale(session, type, id, agentEmail) {
-  requireRole(session, ['admin', 'manager']);
-  var sheet = getSaleSheet(type);
-  var existing = findSaleRow(type, id);
-  if (!existing) throw new Error('Record not found.');
-  var email = cleanEmail(agentEmail);
-  var agent = sheetToObjects(getSheetByName('Users')).find(function (u) {
-    return String(u.Email).toLowerCase() === email && u.Role === 'agent' && isActive(u.Active);
-  });
-  if (!agent) throw new Error('Target agent not found or inactive.');
-  if (String(existing.AgentEmail).toLowerCase() === email) return saleForClient(existing, activitiesForSale(existing.ID));
-
-  var patch = { AgentEmail: agent.Email, AgentName: agent.Name, UpdatedAt: nowIso() };
-  var updated = updateObjectById(sheet, existing.ID, patch);
-  addActivity(session, type, existing.ID, { Type: 'Note', Notes: 'Reassigned from ' + existing.AgentName + ' to ' + agent.Name + '.' });
-  if (type === 'pharmacy') syncReminderForSale(updated);
-  audit(session, 'reassign', saleEntity(type), existing.ID, saleChanges(existing, patch),
-    'Reassigned from ' + existing.AgentName + ' to ' + agent.Name);
-  return saleForClient(updated, activitiesForSale(existing.ID));
+// Reassigning a record reassigns its patient: by default the whole household
+// (scope 'household'), or only this person (scope 'person', a split). All of
+// their open records in every module move; closed ones keep their agent.
+function svc_reassignSale(session, type, id, agentEmail, scope, reason) {
+  var result = svc_reassignPatient(session, { type: type, id: id, agentEmail: agentEmail, scope: scope, reason: reason });
+  var row = findSaleRow(type, id);
+  return { sale: fullSaleForClient(type, row), moved: result.moved, reminders: result.reminders, patients: result.patients };
 }
 
 function svc_deleteSale(session, type, id, reason) {
@@ -2029,7 +2947,7 @@ function svc_deleteSale(session, type, id, reason) {
   var rowIndex = findRowIndexById(sheet, existing.ID);
   if (rowIndex === -1) throw new Error('Record not found.');
   sheet.deleteRow(rowIndex);
-  if (type === 'pharmacy') removeReminderForSale(existing.ID);
+  afterSaleDeleted(type, existing.ID);
   var snapshot = auditDiff(existing, null);
   delete snapshot.BillScreenshotUrl;
   delete snapshot.PaymentScreenshotUrl;
@@ -2080,46 +2998,41 @@ function svc_dashboardSummary(session) {
   return summary;
 }
 
-// Only Completed sales count toward revenue and incentives. Medpass pays a
-// flat per-sale rate (Full Price vs Discounted; "Converted From OP" counts as
-// Full Price); Pharmacy pays a percentage of the amount.
+// Only Completed sales count toward revenue and incentives; how each module
+// pays is in its config (Modules.gs → incentiveForSale). Per-module figures
+// are named <module>Count / <module>Amount (e.g. medpassCount).
 function computeDashboardSummary(session) {
   var isAgent = session.role === 'agent';
-  var medpassAll = sheetToObjects(getSaleSheet('medpass')).filter(function (r) { return r.ID && canAccessSale(session, r); });
-  var pharmacyAll = sheetToObjects(getSaleSheet('pharmacy')).filter(function (r) { return r.ID && canAccessSale(session, r); });
-  function completed(rows) { return rows.filter(function (r) { return r.Status === 'Completed'; }); }
-  var medpass = completed(medpassAll);
-  var pharmacy = completed(pharmacyAll);
-
-  var rateByEmail = {};
-  sheetToObjects(getSheetByName('Users')).forEach(function (u) {
-    rateByEmail[String(u.Email).toLowerCase()] = {
-      full: Number(u.MedpassFullRate) || 0,
-      discount: Number(u.MedpassDiscountRate) || 0,
-      percent: Number(u.PharmacyIncentivePercent) || 0
-    };
+  var all = [];
+  moduleIds().forEach(function (type) {
+    sheetToObjects(getSaleSheet(type)).forEach(function (r) {
+      if (r.ID && canAccessSale(session, r)) all.push({ type: type, row: r });
+    });
   });
 
+  var ratesByEmail = {};
+  sheetToObjects(getSheetByName('Users')).forEach(function (u) { ratesByEmail[String(u.Email).toLowerCase()] = u; });
+
+  var totals = {};
+  moduleIds().forEach(function (type) { totals[type + 'Count'] = 0; totals[type + 'Amount'] = 0; });
   var agents = {};
   function ensureAgent(key, name) {
-    if (!agents[key]) agents[key] = { agentName: String(name), agentEmail: key, medpassCount: 0, pharmacyCount: 0, medpassAmount: 0, pharmacyAmount: 0, incentive: 0 };
+    if (!agents[key]) {
+      agents[key] = { agentName: String(name), agentEmail: key, incentive: 0 };
+      moduleIds().forEach(function (type) { agents[key][type + 'Count'] = 0; agents[key][type + 'Amount'] = 0; });
+    }
     return agents[key];
   }
-  medpass.forEach(function (r) {
-    var key = String(r.AgentEmail).toLowerCase();
-    var a = ensureAgent(key, r.AgentName);
-    a.medpassCount += 1;
-    a.medpassAmount += Number(r.Amount) || 0;
-    var rate = rateByEmail[key] || { full: 0, discount: 0 };
-    a.incentive += r.PriceType === 'Discounted' ? rate.discount : rate.full;
-  });
-  pharmacy.forEach(function (r) {
-    var key = String(r.AgentEmail).toLowerCase();
-    var a = ensureAgent(key, r.AgentName);
-    var amount = Number(r.Amount) || 0;
-    a.pharmacyCount += 1;
-    a.pharmacyAmount += amount;
-    a.incentive += amount * (((rateByEmail[key] || {}).percent || 0) / 100);
+  all.forEach(function (x) {
+    if (x.row.Status !== 'Completed') return;
+    var key = String(x.row.AgentEmail).toLowerCase();
+    var amount = Number(x.row.Amount) || 0;
+    var a = ensureAgent(key, x.row.AgentName);
+    a[x.type + 'Count'] += 1;
+    a[x.type + 'Amount'] += amount;
+    a.incentive += incentiveForSale(getModule(x.type), x.row, ratesByEmail[key]);
+    totals[x.type + 'Count'] += 1;
+    totals[x.type + 'Amount'] += amount;
   });
   var agentsArray = Object.keys(agents).map(function (k) {
     var a = agents[k];
@@ -2128,14 +3041,14 @@ function computeDashboardSummary(session) {
     return a;
   });
 
-  var all = medpassAll.map(function (r) { return { type: 'medpass', row: r }; })
-    .concat(pharmacyAll.map(function (r) { return { type: 'pharmacy', row: r }; }));
   var counts = { Completed: 0, Pending: 0, Cancelled: 0 };
   all.forEach(function (x) { if (counts[x.row.Status] !== undefined) counts[x.row.Status]++; });
   var total = all.length;
 
   var medMap = {};
-  pharmacyAll.forEach(function (s) {
+  all.forEach(function (x) {
+    if (!getModule(x.type).products) return;
+    var s = x.row;
     var prods = [];
     try { prods = JSON.parse(s.Products || '[]'); } catch (e) { prods = []; }
     prods.forEach(function (p) {
@@ -2192,12 +3105,7 @@ function computeDashboardSummary(session) {
   var target = getMonthlyTarget();
 
   return {
-    totals: {
-      medpassCount: medpass.length,
-      pharmacyCount: pharmacy.length,
-      medpassAmount: medpass.reduce(function (s, r) { return s + (Number(r.Amount) || 0); }, 0),
-      pharmacyAmount: pharmacy.reduce(function (s, r) { return s + (Number(r.Amount) || 0); }, 0)
-    },
+    totals: totals,
     agents: agentsArray,
     pipeline: {
       completed: counts.Completed, pending: counts.Pending, cancelled: counts.Cancelled, totalLeads: total,
@@ -2227,8 +3135,9 @@ function computeDashboardSummary(session) {
 // already exist. Safe to run any number of times; it never deletes data.
 function setupSpreadsheet() {
   getUsersSheet();
-  getSaleSheet('medpass');
-  getSaleSheet('pharmacy');
+  moduleIds().forEach(function (type) { getSaleSheet(type); });
+  getPatientsSheet();
+  getUserRequestsSheet();
   getOrCreateSheet('Reminders', ['ID', 'PharmacySaleID', 'AgentEmail', 'AgentName', 'Reassigned', 'CustomerName', 'Contact',
     'Products', 'SaleDate', 'Status', 'ResolutionReason', 'AttemptCount', 'LastAttemptDate', 'CreatedAt', 'UpdatedAt']);
   getActivitiesSheet();
@@ -2241,7 +3150,7 @@ function setupSpreadsheet() {
 
 // Rows saved before v2 have no ContactKey; fill it so duplicate-phone checks see them.
 function backfillContactKeys_() {
-  ['medpass', 'pharmacy'].forEach(function (type) {
+  moduleIds().forEach(function (type) {
     var sheet = getSaleSheet(type);
     var headers = sheetHeaders(sheet);
     var keyCol = headers.indexOf('ContactKey');
@@ -2354,7 +3263,7 @@ function smokeTestV2() {
     var miss = SALE_HEADERS.filter(function (x) { return h.indexOf(x) === -1; });
     check(n + ' has all v2 columns', miss.length === 0, miss.join(','));
   });
-  ['SaleActivities', 'Settings', 'Lists', 'AuditLog', 'Reminders', 'Users'].forEach(function (n) {
+  ['SaleActivities', 'Settings', 'Lists', 'AuditLog', 'Reminders', 'Users', 'Patients', 'UserRequests'].forEach(function (n) {
     check('tab ' + n + ' exists', !!getSpreadsheet().getSheetByName(n));
   });
   var admin = sheetToObjects(getSheetByName('Users')).filter(function (u) {
@@ -2489,6 +3398,22 @@ function svc_updateUser(session, id, data) {
     ((patch.Role !== undefined && patch.Role !== 'admin') || patch.Active === false);
   if (losingAdmin && otherActiveAdmins(users, id).length === 0) {
     throw new Error('This is the only active admin. Make someone else an admin first.');
+  }
+
+  // Someone who still handles patients can't simply be switched off: their
+  // work goes to a successor first (see Handover.gs).
+  if (patch.Active === false && isActive(existing.Active)) {
+    var world = loadPatientWorld();
+    var work = openWorkOf(world, existing.Email);
+    if (hasOpenWork(work)) {
+      if (!data.successorEmail) {
+        throw new Error(existing.Name + ' still handles ' + work.patients.length + ' patient(s), ' + work.records.length +
+          ' open record(s) and ' + work.reminders.length + ' reminder(s). Choose who takes over before deactivating.');
+      }
+      var successor = requireOwnerCandidate(world, data.successorEmail);
+      if (lowerEmail(successor.email) === lowerEmail(existing.Email)) throw new Error('Choose someone else to take over.');
+      handOverWork(session, world, existing, successor, 'Account of ' + existing.Name + ' deactivated by an admin.');
+    }
   }
 
   var updated = updateObjectById(sheet, id, patch);

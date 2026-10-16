@@ -1,4 +1,4 @@
-import React, { useState, useEffect, Suspense, lazy } from 'react';
+import React, { useState, useEffect, useMemo, Suspense, lazy } from 'react';
 import {
   User,
   Sale,
@@ -14,6 +14,7 @@ import {
   ActivityOutcome,
   OptionLists,
   AuditEntry,
+  ContactCheck,
 } from '../types';
 import { api } from '../services/api';
 import { formatMoney, formatDate, formatDateTime, formatTimeAgo, initials, todayKey } from '../utils/date';
@@ -27,6 +28,10 @@ interface SalesViewProps {
   user: User;
   onToast: (msg: string, type?: 'error' | 'success') => void;
 }
+
+// Same comparison as the server's nameKey(): case, dots and extra spaces don't matter.
+const normName = (v: string) => v.toLowerCase().replace(/[.,'"`_-]+/g, ' ').replace(/\s+/g, ' ').trim();
+const samePersonName = (a: string, b: string) => !!normName(b) && normName(a) === normName(b);
 
 // The importer pulls in the Excel/CSV parsers, so it's only downloaded when opened.
 const ImportModal = lazy(() => import('./ImportModal').then((m) => ({ default: m.ImportModal })));
@@ -113,7 +118,10 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, user, onToast }) => 
   ]);
 
   // Duplicate phone warning
-  const [contactWarning, setContactWarning] = useState<{ message: string; blocking: boolean } | null>(null);
+  const [contactInfo, setContactInfo] = useState<ContactCheck | null>(null);
+  const [personChoice, setPersonChoice] = useState<string>(''); // '' = someone new on this number
+  const [formPatientId, setFormPatientId] = useState<string>('');
+  const [reassignScope, setReassignScope] = useState<'household' | 'person'>('household');
 
   // Activity Log inputs
   const [actType, setActType] = useState<ActivityType>('Call');
@@ -176,7 +184,7 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, user, onToast }) => 
         return;
       }
       if (contactWarning?.blocking && !editingSale) {
-        setFormError('An active pending entry already exists for this phone number.');
+        setFormError(contactWarning?.message || 'This person already has an open record in this module.');
         return;
       }
       setActiveStep(2);
@@ -222,7 +230,7 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, user, onToast }) => 
       if (canManageAll) {
         const uRes = await api.listUsers();
         if (!uRes.error && uRes.users) {
-          setAgentRoster(uRes.users.filter((u: User) => u.Role === 'agent' && u.Active));
+          setAgentRoster(uRes.users.filter((u: User) => (u.Role === 'agent' || u.Role === 'manager') && u.Active));
         }
       }
     } finally {
@@ -234,44 +242,57 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, user, onToast }) => 
     loadData();
   }, [type, user]);
 
-  // Real-time duplicate phone validation
+  // Who handles this number, and who is already on it (checked as the phone
+  // number is typed). The server makes the final decision on save.
   useEffect(() => {
+    setPersonChoice('');
+    setFormPatientId('');
     const digits = formContact.replace(/\D/g, '');
     if (digits.length < 6) {
-      setContactWarning(null);
+      setContactInfo(null);
       return;
     }
 
     const timer = setTimeout(async () => {
       const res = await api.checkContact(formContact, editingSale?.ID);
-      if (res.error) {
-        setContactWarning(null);
-        return;
-      }
-
-      const parts: string[] = [];
-      let blocking = false;
-
-      if (res.activeSales && res.activeSales.length > 0) {
-        blocking = true;
-        res.activeSales.forEach((s: any) => {
-          parts.push(`Active pending ${s.Module} entry: ${s.CustomerName} (managed by ${s.AgentName}).`);
-        });
-      }
-
-      if (res.pastCompletedCount > 0) {
-        parts.push(`Existing customer with ${res.pastCompletedCount} previous completed purchase(s).`);
-      }
-
-      if (parts.length > 0) {
-        setContactWarning({ message: parts.join(' | '), blocking });
-      } else {
-        setContactWarning(null);
-      }
+      setContactInfo(res.error ? null : (res as unknown as ContactCheck));
     }, 400);
 
     return () => clearTimeout(timer);
   }, [formContact, editingSale]);
+
+  const moduleLabel = isMedpass ? 'Medpass' : 'Pharmacy';
+  const matchedPerson = contactInfo?.people.find((p) => samePersonName(p.Name, formCustomerName)) || null;
+
+  // The agent a new record will go to, if the number already has one.
+  const lockedOwner: { name: string } | null = (() => {
+    if (!contactInfo || contactInfo.conflict || editingSale) return null;
+    if (matchedPerson?.OwnerName) return { name: matchedPerson.OwnerName };
+    if (contactInfo.owner) return { name: contactInfo.owner.name };
+    return null;
+  })();
+
+  const contactWarning = useMemo((): { message: string; blocking: boolean } | null => {
+    if (!contactInfo) return null;
+    const parts: string[] = [];
+    let blocking = false;
+    if (!editingSale && matchedPerson && matchedPerson.OpenModules.includes(moduleLabel)) {
+      blocking = true;
+      parts.push(`${matchedPerson.Name} already has an open ${moduleLabel} record. Open that record instead.`);
+    }
+    if (contactInfo.conflict) {
+      parts.push('An admin still has to decide who handles this number; the record will be saved as entered.');
+    } else if (contactInfo.owner && !contactInfo.owner.isMe) {
+      parts.push(`This number is handled by ${contactInfo.owner.name}. ${editingSale ? '' : 'New records for it go to them.'}`.trim());
+    } else if (!contactInfo.owner && contactInfo.owners.length > 1) {
+      parts.push(`People on this number are handled by ${contactInfo.owners.map((o) => o.name).join(' and ')}.`);
+    }
+    if (contactInfo.pastCompletedCount > 0) {
+      parts.push(`Existing customer: ${contactInfo.pastCompletedCount} completed purchase(s) on this number.`);
+    }
+    return parts.length ? { message: parts.join(' '), blocking } : null;
+  }, [contactInfo, matchedPerson, editingSale, moduleLabel]);
+
 
   const openNewModal = () => {
     setEditingSale(null);
@@ -300,7 +321,9 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, user, onToast }) => 
     setFormNextFollowUp(todayKey());
     setFormAgentEmail(user.Email);
     setFormProducts([{ name: '', quantity: 30, frequency: 'Once a day', unitsPerDose: 1, formType: 'tablet', unitName: 'tabs' }]);
-    setContactWarning(null);
+    setContactInfo(null);
+    setPersonChoice('');
+    setFormPatientId('');
     setFormError(null);
     setActiveStep(1);
     setEditMainTab('details');
@@ -333,6 +356,7 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, user, onToast }) => 
     setFormLostReason(sale.LostReason || '');
     setFormNextFollowUp(sale.NextFollowUp || '');
     setFormAgentEmail(sale.AgentEmail);
+    setReassignScope('household');
 
     if (!isMedpass) {
       try {
@@ -402,7 +426,7 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, user, onToast }) => 
     }
 
     if (contactWarning?.blocking && !editingSale) {
-      setFormError('An active pending entry already exists for this phone number.');
+      setFormError(contactWarning?.message || 'This person already has an open record in this module.');
       return;
     }
 
@@ -469,6 +493,7 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, user, onToast }) => 
       lostReason: formLostReason,
       nextFollowUp: formNextFollowUp,
       agentEmail: formAgentEmail,
+      ...(editingSale ? {} : { patientId: formPatientId }),
     };
 
     if (isMedpass) {
@@ -490,7 +515,8 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, user, onToast }) => 
       if (res.error) {
         setFormError(res.message || 'Could not save entry.');
       } else {
-        onToast(editingSale ? 'Saved successfully' : 'Created successfully', 'success');
+        // e.g. "Already handled by Arjun — assigned to them."
+        onToast(res.notice || (editingSale ? 'Saved successfully' : 'Created successfully'), 'success');
         setModalOpen(false);
         loadData();
       }
@@ -644,11 +670,13 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, user, onToast }) => 
   const handleReassignSale = async (targetEmail: string) => {
     if (!editingSale || !targetEmail) return;
     try {
-      const res = await api.reassignSale(type, editingSale.ID, targetEmail);
+      const scope = (editingSale.HouseholdSize || 1) > 1 ? reassignScope : 'household';
+      const res = await api.reassignSale(type, editingSale.ID, targetEmail, scope);
       if (res.error) {
         onToast(res.message || 'Could not reassign entry', 'error');
       } else {
-        onToast('Assigned to ' + res.sale.AgentName, 'success');
+        const n = (res.moved || []).length;
+        onToast(`Assigned to ${res.sale.AgentName}` + (n > 1 ? ` — ${n} open records moved` : ''), 'success');
         setEditingSale(res.sale);
         setFormAgentEmail(res.sale.AgentEmail);
         const detailRes = await api.getSale(type, res.sale.ID);
@@ -1149,6 +1177,9 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, user, onToast }) => 
                             <div className="kanban-customer">
                               {s.CustomerName}
                               {s.DoNotCall && <span className="dnd-tag" style={{ marginLeft: '6px' }}>DND</span>}
+                              {s.AlsoIn && s.AlsoIn.length > 0 && (
+                                <span className="also-in-chip" title="This patient also has records in these modules">Also in: {s.AlsoIn.join(', ')}</span>
+                              )}
                             </div>
                             <div className="muted small-text">{s.Contact || 'No phone'}</div>
                             <div className="kanban-detail">{s.Detail || 'No detail'}</div>
@@ -1323,6 +1354,9 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, user, onToast }) => 
                           <td>
                             <strong>{s.CustomerName}</strong>
                             {s.DoNotCall && <span className="dnd-tag" style={{ marginLeft: '6px' }}>DND</span>}
+                            {s.AlsoIn && s.AlsoIn.length > 0 && (
+                                <span className="also-in-chip" title="This patient also has records in these modules">Also in: {s.AlsoIn.join(', ')}</span>
+                              )}
                             <div>
                               <small className="muted">{s.Contact || '—'}</small>
                             </div>
@@ -1528,6 +1562,9 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, user, onToast }) => 
                         </span>
                       )}
                       {editingSale.DoNotCall && <span className="dnd-tag">DND Restricted</span>}
+                      {editingSale.AlsoIn && editingSale.AlsoIn.length > 0 && (
+                        <span className="also-in-chip">Also in: {editingSale.AlsoIn.join(', ')}</span>
+                      )}
                     </>
                   )}
                   <button type="button" className="popup-close" onClick={() => setModalOpen(false)} title="Close">
@@ -1658,6 +1695,51 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, user, onToast }) => 
                   </div>
                 )}
 
+                {!editingSale && activeStep === 1 && contactInfo && contactInfo.people.length > 0 && (
+                  <div className="form-group" style={{ marginBottom: '16px' }}>
+                    <label htmlFor="person-choice">Who is this? (people already on this number)</label>
+                    <select
+                      id="person-choice"
+                      value={personChoice}
+                      onChange={(e) => {
+                        const p = contactInfo.people.find((x) => x.Name === e.target.value);
+                        setPersonChoice(e.target.value);
+                        setFormPatientId(p ? p.ID : '');
+                        if (p) setFormCustomerName(p.Name);
+                      }}
+                    >
+                      <option value="">Someone new on this number (family member, relative…)</option>
+                      {contactInfo.people.map((p) => (
+                        <option key={p.Name} value={p.Name}>
+                          {p.Name}
+                          {p.OpenModules.length > 0 ? ` — open in ${p.OpenModules.join(', ')}` : ''}
+                          {p.OwnerName && !p.Mine ? ` · handled by ${p.OwnerName}` : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+                {!editingSale && activeStep === 1 && canManageAll && (
+                  <div className="form-group" style={{ marginBottom: '16px' }}>
+                    <label htmlFor="assign-to">Assign to</label>
+                    {lockedOwner ? (
+                      <div className="contact-check">Already handled by {lockedOwner.name} — the record goes to them.</div>
+                    ) : (
+                      <select id="assign-to" value={formAgentEmail} onChange={(e) => setFormAgentEmail(e.target.value)}>
+                        <option value={user.Email}>Me ({user.Name})</option>
+                        {agentRoster
+                          .filter((a) => a.Email.toLowerCase() !== user.Email.toLowerCase())
+                          .map((a) => (
+                            <option key={a.Email} value={a.Email}>
+                              {a.Name}{a.Role === 'manager' ? ' (manager)' : ''}
+                            </option>
+                          ))}
+                      </select>
+                    )}
+                  </div>
+                )}
+
                 {/* Reopen / Customer Contacted Back Callout Banner */}
                 {editingSale && editingSale.Status === 'Cancelled' && (
                   <div className="reopen-banner" style={{ marginBottom: '20px' }}>
@@ -1694,6 +1776,18 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, user, onToast }) => 
                     <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-secondary)' }}>
                       Assigned Agent:
                     </span>
+                    {(editingSale.HouseholdSize || 1) > 1 && (
+                      <select
+                        aria-label="Who to reassign"
+                        value={reassignScope}
+                        onChange={(e) => setReassignScope(e.target.value as 'household' | 'person')}
+                        style={{ padding: '6px 10px', fontSize: '0.85rem' }}
+                        title="Everyone on this phone number, or only this person"
+                      >
+                        <option value="household">Everyone on this number ({editingSale.HouseholdSize})</option>
+                        <option value="person">Only {editingSale.CustomerName}</option>
+                      </select>
+                    )}
                     <select
                       value={editingSale.AgentEmail}
                       onChange={(e) => handleReassignSale(e.target.value)}

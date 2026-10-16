@@ -120,6 +120,71 @@ export interface Sale {
   NextFollowUp?: string;
   FollowUpStatus?: 'overdue' | 'today' | 'upcoming' | '';
   AttemptCount?: number;
+
+  // Patient (one owner agent per patient; relatives on one number = a household)
+  PatientID?: string;
+  AlsoIn?: string[]; // other modules where this patient has records
+  HouseholdSize?: number; // people sharing this phone number
+}
+
+// A person on a phone number, as returned by checkContact. Only the owner of
+// the number and managers/admins get these.
+export interface ContactPerson {
+  ID: string; // '' for people known only from older records — send the name instead
+  Name: string;
+  OwnerName: string;
+  OwnerEmail: string;
+  Mine: boolean;
+  Conflict: boolean;
+  OpenModules: string[];
+}
+
+export interface ContactCheck {
+  activeSales: { ID: string; CustomerName: string; AgentName: string; Module: string; Mine: boolean }[];
+  pastCompletedCount: number;
+  owner: { name: string; email: string; isMe: boolean } | null;
+  owners: { name: string; email: string }[];
+  people: ContactPerson[];
+  othersCount: number;
+  conflict: boolean;
+}
+
+export interface PatientConflict {
+  contactKey: string;
+  contact: string;
+  agents: { email: string; name: string; open: number; closed: number }[];
+  people: {
+    ID: string;
+    Name: string;
+    Conflict: boolean;
+    OwnerName: string;
+    records: { module: string; status: string; agentName: string; date: string }[];
+  }[];
+}
+
+export interface MigrationSummary {
+  dryRun: boolean;
+  households: number;
+  patientsCreated: number;
+  recordsLinked: number;
+  newConflicts: number;
+  conflicts: PatientConflict[];
+}
+
+export interface UserRequest {
+  ID: string;
+  Type: 'deactivate';
+  UserEmail: string;
+  UserName: string;
+  SuccessorEmail: string;
+  SuccessorName: string;
+  Reason: string;
+  RequestedByName: string;
+  Status: 'Pending' | 'Approved' | 'Rejected';
+  DecidedByName: string;
+  DecisionNote: string;
+  CreatedAt: string;
+  DecidedAt: string;
 }
 
 export interface Reminder {
