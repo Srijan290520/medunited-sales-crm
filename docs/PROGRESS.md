@@ -17,7 +17,7 @@ Live state: the Sheet's Apps Script project has v2 code saved and
 | Phase | Branch | Status |
 |---|---|---|
 | 1. One agent per patient (people + households) + module engine | `phase1-patient-ownership` | **Done on branch, PR open — not deployed** |
-| 1b. Medpass rules + family members + senior role | `phase1b-medpass-rules` | Rules mostly given; a few questions open |
+| 1b. Medpass rules + family members + senior role | `phase1b-medpass-rules` (stacked on phase 1) | **Backend done (38 tests); frontend in progress** |
 | 2. Lab & Radiology, HOMEKARE modules | — | Blocked on user input (service list, tests, incentive rules) |
 | 3. Bulk reassign | — | Not started (agent handover partly pulled into Phase 1) |
 | 4. Calmer module pages + widget dashboard | — | Not started (mockup first) |
@@ -278,3 +278,13 @@ pass; single parent allowed on a family pass.
   README on the real Sheet (backup → paste files → setupSpreadsheet →
   migratePatientsDryRun → migratePatients → smokeTestV2 → new deployment);
   Phase 1b answers (new role name, 4th child, single parent); Phase 2 inputs.
+- **2026-10-16** — Phase 1b started on `phase1b-medpass-rules` (branched from
+  the Phase 1 branch; its PR will be stacked on PR #5). Defaults chosen for
+  the two open questions (configurable in Settings): single parent allowed;
+  at most 1 extra child (a 4th child needs a separate pass). Backend done:
+  role `senior_manager` (TEAM_ROLES / SENIOR_ROLES / ADMIN_ROLES in Auth.gs),
+  module extraHeaders + hooks, Medpass.gs (members with DOB, server-side
+  price, discount request/approval, OP credit, validity + coverage warning).
+  Members are a JSON column on the Medpass row (like Products), not a
+  separate tab. **Next:** frontend (role, Medpass form, approvals, Medpass
+  settings card), demo, README, PR.
