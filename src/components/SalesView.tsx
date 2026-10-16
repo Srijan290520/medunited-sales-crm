@@ -17,11 +17,14 @@ import {
   ContactCheck,
   MedpassMember,
   MedpassSettings,
+  ModuleInfo,
 } from '../types';
 import { api } from '../services/api';
 import { isTeamRole, isSeniorRole } from '../utils/roles';
 import { MedpassMembersEditor, MedpassQuoteBox, medpassQuote } from './MedpassFields';
 import { PendingDiscountsPanel } from './PendingDiscountsPanel';
+import { HomekareServicesEditor, LabTestsEditor, LabTrackingFields, ServiceDraft, TestDraft, LabTracking, linesTotal } from './LineItemEditors';
+import { MODULE_TEXT } from '../modules';
 import { formatMoney, formatDate, formatDateTime, formatTimeAgo, initials, todayKey } from '../utils/date';
 import { exportToCsv, CsvColumn } from '../utils/exportCsv';
 import { readScreenshot } from '../utils/image';
@@ -30,6 +33,7 @@ import { AttachmentImage, AttachmentRef } from './AttachmentImage';
 
 interface SalesViewProps {
   type: SaleType;
+  moduleInfo?: ModuleInfo; // from getModules: label, Homekare catalogue, Lab options
   user: User;
   onToast: (msg: string, type?: 'error' | 'success') => void;
 }
@@ -41,9 +45,15 @@ const samePersonName = (a: string, b: string) => !!normName(b) && normName(a) ==
 // The importer pulls in the Excel/CSV parsers, so it's only downloaded when opened.
 const ImportModal = lazy(() => import('./ImportModal').then((m) => ({ default: m.ImportModal })));
 
-export const SalesView: React.FC<SalesViewProps> = ({ type, user, onToast }) => {
+const EMPTY_LAB: LabTracking = { homeCollection: false, collectionDate: '', appointmentDate: '', reportDeliveredOn: '', reportDeliveredVia: '' };
+
+export const SalesView: React.FC<SalesViewProps> = ({ type, moduleInfo, user, onToast }) => {
   const isMedpass = type === 'medpass';
-  const pageTitle = isMedpass ? 'Medpass Sales & Inquiries' : 'Pharmacy Deliveries & Refills';
+  const isPharmacy = type === 'pharmacy';
+  const isHomekare = type === 'homekare';
+  const isLab = type === 'lab';
+  const text = MODULE_TEXT[type];
+  const pageTitle = text.title;
   const canManageAll = isTeamRole(user.Role);
 
   const [sales, setSales] = useState<Sale[]>([]);
@@ -107,6 +117,10 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, user, onToast }) => 
   const [formOpCredit, setFormOpCredit] = useState<string>('');
   const [medpassSettings, setMedpassSettings] = useState<MedpassSettings | null>(null);
   const [discountsKey, setDiscountsKey] = useState<number>(0);
+  // Homekare services and Lab & Radiology tests: typed price lines (the server adds them up).
+  const [formServices, setFormServices] = useState<ServiceDraft[]>([]);
+  const [formTests, setFormTests] = useState<TestDraft[]>([]);
+  const [formLab, setFormLab] = useState<LabTracking>(EMPTY_LAB);
   const [formPaymentMethod, setFormPaymentMethod] = useState<string>('');
   const [formUtr, setFormUtr] = useState<string>('');
   const [formBillScreenshot, setFormBillScreenshot] = useState<string>('');
@@ -206,7 +220,7 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, user, onToast }) => 
         setFormError('Amount must be a non-negative number.');
         return;
       }
-      if (!isMedpass) {
+      if (isPharmacy) {
         // Blank lines are fine for an enquiry; named lines need a quantity.
         const valid = formProducts.filter((p) => p.name.trim()).every((p) => p.quantity > 0);
         if (!valid) {
@@ -278,7 +292,7 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, user, onToast }) => 
     return () => clearTimeout(timer);
   }, [formContact, editingSale]);
 
-  const moduleLabel = isMedpass ? 'Medpass' : 'Pharmacy';
+  const moduleLabel = moduleInfo?.label || (isMedpass ? 'Medpass' : isPharmacy ? 'Pharmacy' : isHomekare ? 'Homekare' : 'Lab & Radiology');
   const matchedPerson = contactInfo?.people.find((p) => samePersonName(p.Name, formCustomerName)) || null;
 
   // The agent a new record will go to, if the number already has one.
@@ -321,6 +335,9 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, user, onToast }) => 
     setFormDate(todayKey());
     setFormDetail('');
     setFormMembers([]);
+    setFormServices([]);
+    setFormTests([]);
+    setFormLab(EMPTY_LAB);
     setFormDiscount('');
     setFormDiscountReason('');
     setFormOpCredit('');
@@ -361,6 +378,12 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, user, onToast }) => 
     setFormDate(sale.Date || todayKey());
     setFormDetail(sale.Detail || '');
     setFormMembers((sale.Members || []).map((m) => ({ ...m })));
+    setFormServices((sale.Services || []).map((l) => ({ service: l.service, price: String(l.price) })));
+    setFormTests((sale.Tests || []).map((l) => ({ name: l.name, kind: l.kind, price: String(l.price) })));
+    setFormLab({
+      homeCollection: !!sale.HomeCollection, collectionDate: sale.CollectionDate || '', appointmentDate: sale.AppointmentDate || '',
+      reportDeliveredOn: sale.ReportDeliveredOn || '', reportDeliveredVia: sale.ReportDeliveredVia || '',
+    });
     setFormDiscount(sale.DiscountAmount ? String(sale.DiscountAmount) : '');
     setFormDiscountReason(sale.DiscountReason || '');
     setFormOpCredit(sale.OPCredit ? String(sale.OPCredit) : '');
@@ -383,7 +406,7 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, user, onToast }) => 
     setFormAgentEmail(sale.AgentEmail);
     setReassignScope('household');
 
-    if (!isMedpass) {
+    if (isPharmacy) {
       try {
         const parsed = JSON.parse(sale.Products || '[]');
         if (Array.isArray(parsed) && parsed.length > 0) {
@@ -462,7 +485,7 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, user, onToast }) => 
     }
 
     const namedProducts = formProducts.filter((p) => p.name.trim());
-    if (!isMedpass) {
+    if (isPharmacy) {
       if (!namedProducts.every((p) => p.quantity > 0)) {
         setFormError('Please enter a valid quantity for every medicine.');
         return;
@@ -521,6 +544,17 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, user, onToast }) => 
       ...(editingSale ? {} : { patientId: formPatientId }),
     };
 
+    if (isHomekare) {
+      payload.services = formServices.filter((l) => l.service).map((l) => ({ service: l.service, price: l.price === '' ? '' : Number(l.price) }));
+    }
+    if (isLab) {
+      payload.tests = formTests.filter((l) => l.name.trim()).map((l) => ({ name: l.name.trim(), kind: l.kind, price: l.price === '' ? '' : Number(l.price) }));
+      payload.homeCollection = formLab.homeCollection;
+      payload.collectionDate = formLab.homeCollection ? formLab.collectionDate : '';
+      payload.appointmentDate = formLab.appointmentDate;
+      payload.reportDeliveredOn = formLab.reportDeliveredOn;
+      payload.reportDeliveredVia = formLab.reportDeliveredVia;
+    }
     if (isMedpass) {
       payload.detail = formDetail.trim();
       payload.priceType = formPriceType;
@@ -530,7 +564,7 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, user, onToast }) => 
         payload.discountReason = formDiscountReason.trim();
       }
       if (formPriceType === 'Converted From OP') payload.opCredit = formOpCredit === '' ? '' : Number(formOpCredit);
-    } else {
+    } else if (isPharmacy) {
       payload.products = namedProducts;
     }
 
@@ -842,6 +876,10 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, user, onToast }) => 
   // Prescribed medications and dosing are NEVER locked - agents and managers can always adjust dosages & refills
   const isLocked = false;
 
+  // Step 2 counts as filled in once the module's main list has something in it.
+  const step2Done = isMedpass ? formMembers.length > 0 : isPharmacy ? formProducts.some((p) => p.name.trim())
+    : isHomekare ? formServices.some((l) => l.service) : formTests.some((l) => l.name.trim());
+
   // Medpass price preview; records from before the price rules keep their amount once completed.
   const medpassLegacyAmount = editingSale && editingSale.Status === 'Completed' && (editingSale.ListPrice === null || editingSale.ListPrice === undefined) ? editingSale.Amount : null;
   const quote = isMedpass && medpassSettings ? medpassQuote(medpassSettings, formMembers, formPriceType, formDiscount, formOpCredit) : null;
@@ -929,7 +967,7 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, user, onToast }) => 
       { header: 'Lead Direction', accessor: (s) => s.Direction || 'Inbound' },
       { header: 'Lead Channel', accessor: (s) => s.Channel || '' },
       { header: 'Heard From', accessor: (s) => s.HeardFrom || '' },
-      { header: isMedpass ? 'Plan Detail' : 'Prescribed Medicines', accessor: (s) => s.Detail || '' },
+      { header: isPharmacy ? 'Prescribed Medicines' : text.detail, accessor: (s) => s.Detail || '' },
       { header: 'Amount (INR)', accessor: (s) => s.Amount || 0 },
       { header: 'Price Type', accessor: (s) => s.PriceType || '' },
       { header: 'Payment Method', accessor: (s) => s.PaymentMethod || '' },
@@ -948,7 +986,7 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, user, onToast }) => 
     ];
 
     const timestamp = todayKey();
-    const typeLabel = isMedpass ? 'Medpass' : 'Pharmacy';
+    const typeLabel = moduleLabel;
     const tabSuffix = activeTab !== 'all' ? `_${activeTab}` : '';
     const filename = `MedUnited_${typeLabel}_Sales_${timestamp}${tabSuffix}.csv`;
 
@@ -1023,7 +1061,7 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, user, onToast }) => 
             </button>
           </div>
           <button type="button" onClick={openNewModal}>
-            + New {isMedpass ? 'Medpass' : 'Pharmacy'} Record
+            + New {moduleLabel} Record
           </button>
         </div>
       </div>
@@ -1242,7 +1280,7 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, user, onToast }) => 
                             </div>
                             <div className="muted small-text">{s.Contact || 'No phone'}</div>
                             <div className="kanban-detail">{s.Detail || 'No detail'}</div>
-                            {!isMedpass && (
+                            {isPharmacy && (
                               <button
                                 type="button"
                                 style={{
@@ -1382,7 +1420,7 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, user, onToast }) => 
                     <th>Status</th>
                     <th>Temp</th>
                     <th>Source</th>
-                    <th>{isMedpass ? 'Plan Detail' : 'Medicines'}</th>
+                    <th>{text.detail}</th>
                     <th>Amount</th>
                     <th>Follow-up / Due</th>
                     <th>Attempts</th>
@@ -1519,7 +1557,7 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, user, onToast }) => 
                               >
                                 View
                               </button>
-                              {!isMedpass && (
+                              {isPharmacy && (
                                 <button
                                   type="button"
                                   style={{
@@ -1594,10 +1632,10 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, user, onToast }) => 
                       <h3>
                         {editingSale
                           ? editingSale.CustomerName
-                          : `New ${isMedpass ? 'Medpass' : 'Pharmacy'} Record`}
+                          : `New ${moduleLabel} Record`}
                       </h3>
                       <span className="modal-header-badge">
-                        {isMedpass ? 'Medpass Subscription' : 'Pharmacy Pipeline'}
+                        {text.badge}
                       </span>
                       {editingSale && (
                         <span className={`status-pill stage-${editingSale.Status.toLowerCase()}`}>
@@ -1662,7 +1700,7 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, user, onToast }) => 
                     >
                       <span>📝</span> Record Details
                     </button>
-                    {!isMedpass && (
+                    {isPharmacy && (
                       <button
                         type="button"
                         className={`edit-tab-btn ${editMainTab === 'details' && activeStep === 2 ? 'active' : ''}`}
@@ -1710,17 +1748,17 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, user, onToast }) => 
 
                     <button
                       type="button"
-                      className={`stepper-step ${activeStep === 2 ? 'active' : ''} ${(isMedpass ? formMembers.length > 0 : formProducts.some((p) => p.name.trim())) ? 'completed' : ''}`}
+                      className={`stepper-step ${activeStep === 2 ? 'active' : ''} ${step2Done ? 'completed' : ''}`}
                       onClick={() => {
                         if (formCustomerName.trim() || editingSale) setActiveStep(2);
                       }}
                     >
                       <div className="step-num">
-                        {(isMedpass ? formMembers.length > 0 : formProducts.some((p) => p.name.trim())) && activeStep > 2 ? '✓' : '2'}
+                        {step2Done && activeStep > 2 ? '✓' : '2'}
                       </div>
                       <div className="step-meta">
-                        <span className="step-name">{isMedpass ? '2. Medpass Plan' : '2. Medicines &amp; Dosing'}</span>
-                        <span className="step-hint">{isMedpass ? 'Plan tier & pricing' : 'Dosages & refill cycles'}</span>
+                        <span className="step-name">{text.step}</span>
+                        <span className="step-hint">{text.hint}</span>
                       </div>
                     </button>
 
@@ -1730,7 +1768,7 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, user, onToast }) => 
                       onClick={() => {
                         if (
                           (formCustomerName.trim() &&
-                            (isMedpass ? formMembers.length > 0 : formProducts.some((p) => p.name.trim()))) ||
+                            step2Done) ||
                           editingSale
                         ) {
                           setActiveStep(3);
@@ -1756,7 +1794,8 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, user, onToast }) => 
                     className="form-error show"
                     style={{ background: '#fef3c7', color: '#92400e', marginBottom: '16px' }}
                   >
-                    🔒 Financial amount &amp; payment proofs are locked on Completed sales. Prescribed medications, dosages, and notes can still be edited freely.
+                    🔒 Financial amount &amp; payment proofs are locked on Completed sales.{' '}
+                    {isPharmacy ? 'Prescribed medications, dosages, and notes can still be edited freely.' : isLab ? 'Collection, appointment and report details, and notes, can still be updated.' : 'Notes can still be updated.'}
                   </div>
                 )}
 
@@ -2078,7 +2117,12 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, user, onToast }) => 
                               />
                             </div>
 
-                            {isMedpass ? (
+                            {isHomekare || isLab ? (
+                              <div>
+                                <label>Total Amount</label>
+                                <div className="contact-check">{formatMoney(linesTotal(isHomekare ? formServices : formTests))} — the sum of the {isHomekare ? 'services' : 'tests'} below</div>
+                              </div>
+                            ) : isMedpass ? (
                               <div>
                                 <label>Price</label>
                                 {quote ? <MedpassQuoteBox quote={quote} priceType={formPriceType} legacyAmount={medpassLegacyAmount}
@@ -2119,7 +2163,7 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, user, onToast }) => 
                         </div>
 
                         {/* Pharmacy Specific: Medicines List with Refill Countdown */}
-                        {!isMedpass && (
+                        {isPharmacy && (
                           <div className="form-section-block">
                             <div className="form-section-header">
                               <div className="form-section-title" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', flexWrap: 'wrap', gap: '8px' }}>
@@ -2866,6 +2910,19 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, user, onToast }) => 
                             </div>
                           </div>
                         )}
+
+                        {isHomekare && (
+                          <div className="form-section-block">
+                            <HomekareServicesEditor lines={formServices} onChange={setFormServices} catalogue={moduleInfo?.services || []} disabled={isFinancialLocked} />
+                          </div>
+                        )}
+
+                        {isLab && (
+                          <div className="form-section-block">
+                            <LabTestsEditor lines={formTests} onChange={setFormTests} kinds={moduleInfo?.testKinds || ['Lab', 'Radiology']} disabled={isFinancialLocked} />
+                            <LabTrackingFields value={formLab} onChange={setFormLab} via={moduleInfo?.reportVia || ['WhatsApp', 'Email', 'Collected', 'Other']} />
+                          </div>
+                        )}
                       </div>
                     )}
 
@@ -3158,7 +3215,7 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, user, onToast }) => 
 
                         {activeStep < 3 ? (
                           <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                            {activeStep === 2 && editingSale && !isMedpass && (
+                            {activeStep === 2 && editingSale && isPharmacy && (
                               <button
                                 type="button"
                                 disabled={saving}
@@ -3180,7 +3237,7 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, user, onToast }) => 
                               </button>
                             )}
                             <button type="button" onClick={handleNextStep}>
-                              Next: {activeStep === 1 ? (isMedpass ? 'Plan Details' : 'Prescription') : 'Status & Payment'} &rarr;
+                              Next: {activeStep === 1 ? text.next : 'Status & Payment'} &rarr;
                             </button>
                           </div>
                         ) : (

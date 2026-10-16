@@ -322,7 +322,7 @@ function movePatients(session, world, patients, target, why) {
     if (!keys[recordContactKey(x.row)]) return;
     var p = recordPatient(world, x.row);
     if (!p || !ids[String(p.ID)]) return;
-    if (getModule(x.type).reminders) reminderSales[String(x.row.ID)] = true;
+    reminderSales[String(x.row.ID)] = true; // refill and renewal reminders follow the patient
     var patch = {};
     if (!x.row.PatientID) patch.PatientID = p.ID;
     var moving = x.row.Status === 'Pending' && lowerEmail(x.row.AgentEmail) !== lowerEmail(target.email);
@@ -339,9 +339,9 @@ function movePatients(session, world, patients, target, why) {
   });
 
   var reminders = 0;
-  var remSheet = getSheetByName('Reminders');
+  var remSheet = getRemindersSheet();
   sheetToObjects(remSheet).forEach(function (r) {
-    if (r.Status !== 'Active' || !reminderSales[String(r.PharmacySaleID)] || lowerEmail(r.AgentEmail) === lowerEmail(target.email)) return;
+    if (r.Status !== 'Active' || !reminderSales[reminderSaleId(r)] || lowerEmail(r.AgentEmail) === lowerEmail(target.email)) return;
     var patch = { AgentEmail: target.email, AgentName: target.name, Reassigned: true, UpdatedAt: nowIso() };
     updateObjectById(remSheet, r.ID, patch);
     audit(session, 'reassign', 'Reminder', r.ID, auditDiff(r, patch), 'Refill reminder moved with the patient to ' + target.name);

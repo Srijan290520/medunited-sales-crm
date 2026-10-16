@@ -221,9 +221,10 @@ function validateCompletion(next, type) {
   if (!next.hasBill) throw new Error('A bill screenshot is required to mark this sale as Completed.');
   if (!next.hasPayment) throw new Error('A payment screenshot is required to mark this sale as Completed.');
   if (next.PaymentMethod === 'UPI' && !next.UTR) throw new Error('UTR number is required for UPI payments.');
-  if (!(Number(next.Amount) > 0)) throw new Error('Enter the sale amount before marking it Completed.');
+  // Module rules first: they explain what's missing (members, services…).
   var hook = moduleHook(type, 'validateCompletion');
   if (hook) hook(next);
+  if (!(Number(next.Amount) > 0)) throw new Error('Enter the sale amount before marking it Completed.');
 }
 
 // Is a stored cell the same as a newly computed value? (Numbers come back
@@ -512,7 +513,8 @@ function svc_updateSale(session, type, id, data) {
   var pay = attachmentIntent(data.paymentScreenshot, existing.PaymentScreenshotUrl);
 
   if (existing.Status === 'Completed' && session.role === 'agent') {
-    var blocked = Object.keys(patch).filter(function (k) { return AGENT_COMPLETED_EDITABLE.indexOf(k) === -1; });
+    var editable = AGENT_COMPLETED_EDITABLE.concat(mod.agentEditableWhenCompleted || []);
+    var blocked = Object.keys(patch).filter(function (k) { return editable.indexOf(k) === -1; });
     if (blocked.length || bill.kind !== 'keep' || pay.kind !== 'keep') {
       throw new ForbiddenError('This sale is Completed and locked. You can still update its medicines and notes; ask a manager for anything else.');
     }

@@ -395,8 +395,16 @@ export const Dashboard: React.FC<DashboardProps> = ({ user, onToast, onNavigate 
               <span>Pharmacy: {formatMoney(summary?.totals.pharmacyAmount ?? 0)} ({summary?.totals.pharmacyCount ?? 0} orders)</span>
             </div>
             <div className="target-stat-item">
+              <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#f472b6' }}></span>
+              <span>Homekare: {formatMoney(summary?.totals.homekareAmount ?? 0)} ({summary?.totals.homekareCount ?? 0} orders)</span>
+            </div>
+            <div className="target-stat-item">
+              <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#60a5fa' }}></span>
+              <span>Lab &amp; Radiology: {formatMoney(summary?.totals.labAmount ?? 0)} ({summary?.totals.labCount ?? 0} orders)</span>
+            </div>
+            <div className="target-stat-item">
               <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#fbbf24' }}></span>
-              <span>Total Orders: {(summary?.totals.medpassCount ?? 0) + (summary?.totals.pharmacyCount ?? 0)} completed</span>
+              <span>Total Orders: {(summary?.totals.medpassCount ?? 0) + (summary?.totals.pharmacyCount ?? 0) + (summary?.totals.homekareCount ?? 0) + (summary?.totals.labCount ?? 0)} completed</span>
             </div>
           </div>
         </div>

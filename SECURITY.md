@@ -40,7 +40,9 @@ Report problems privately to the repository owner, not in public issues.
   handover and the deactivation happen in one locked, audited step. Managers
   can only request it; admins approve.
 - Medpass prices are computed on the server from the members, price type and
-  Settings; an amount sent by the browser is ignored. A discount can't be
+  Settings; Homekare and Lab & Radiology amounts are the server's sum of the
+  typed lines (Homekare services must come from the catalogue). An amount sent
+  by the browser is ignored for these modules. A discount can't be
   completed until an admin or senior manager approves it, and the decision is
   audited.
 - Patient migration never changes a record's agent and never guesses an owner:

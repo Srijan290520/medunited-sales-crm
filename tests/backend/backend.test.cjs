@@ -487,7 +487,7 @@ test('smokeTestV2 passes on a set-up sheet and saves nothing', () => {
 test('modules come from one config; unknown module ids are rejected', () => {
   const { call, arjun } = world();
   const mods = ok(call('getModules', arjun, {})).modules;
-  assert.equal(mods.map((m) => m.id).join(','), 'medpass,pharmacy');
+  assert.equal(mods.map((m) => m.id).join(','), 'medpass,pharmacy,homekare,lab');
   assert.equal(mods.find((m) => m.id === 'pharmacy').products, true);
   assert.equal(mods.find((m) => m.id === 'medpass').priceTypes, true);
   for (const type of ['constructor', '__proto__', 'toString', 'Medpass', '']) {
@@ -960,4 +960,144 @@ test('medpass settings, completed passes keep their price, older rows and import
   assert.equal(imp.imported, 1);
   assert.match(imp.results[1].errors.join(' '), /Discounts can't be imported/);
   assert.equal(ok(call('listSales', arjun, { type: 'medpass' })).sales.find((s) => s.CustomerName === 'Imported One').Amount, 1599);
+});
+
+// ===== Phase 2: Homekare and Lab & Radiology =====
+const HK_NURSE = 'HOMEKARE - NURSING 12Hrs';
+const HK_CARE_MONTHLY = 'HOMEKARE - CARETAKER SERVICE MONTHY';
+const HK_TRAVEL = 'HOMEKARE TRAVEL CHARGES';
+
+test('homekare: services from the catalogue, prices typed per patient, amount worked out on the server', () => {
+  const { call, arjun, manager, admin } = world();
+  const mods = ok(call('getModules', arjun, {})).modules;
+  const hk = mods.find((m) => m.id === 'homekare');
+  assert.equal(hk.label, 'Homekare');
+  assert.equal(hk.services.length, 38);
+  assert.equal(hk.services.find((s) => s.name === HK_CARE_MONTHLY).monthly, true);
+  assert.equal(hk.incentive, 'none');
+  assert.deepEqual(mods.find((m) => m.id === 'lab').testKinds.slice(), ['Lab', 'Radiology']);
+
+  const s = ok(call('createSale', arjun, { type: 'homekare', data: { ...lead(), amount: 99999, services: [
+    { service: HK_NURSE, price: 1800 }, { service: 'homekare travel charges', price: 200 },
+  ] } })).sale;
+  assert.equal(s.Amount, 2000, 'typed amount is ignored; lines are summed');
+  assert.equal(s.Services[1].service, HK_TRAVEL, 'names are stored as in the catalogue');
+  assert.match(s.Detail, /NURSING 12Hrs \(₹1800\)/);
+  assert.equal(s.MonthlyPackage, false);
+
+  const bad = (services) => call('createSale', arjun, { type: 'homekare', data: { ...lead({ contact: '9600000001' }), services } }).message;
+  assert.match(bad([{ service: 'HOMEKARE - MASSAGE', price: 100 }]), /not a Homekare service/);
+  assert.match(bad([{ service: HK_NURSE, price: -5 }]), /price between/);
+  assert.match(bad([{ service: HK_NURSE }]), /price between/);
+  const empty = ok(call('createSale', arjun, { type: 'homekare', data: { ...lead({ contact: '9600000002' }), services: [] } })).sale;
+  assert.match(call('updateSale', arjun, { type: 'homekare', id: empty.ID, data: { status: 'Completed', paymentMethod: 'Cash', billScreenshot: PNG, paymentScreenshot: PNG } }).message, /Add the services/);
+
+  // Completed sales count as revenue; no incentive yet.
+  ok(call('updateIncentives', manager, { id: findUser(call, admin, 'arjun@medunited.in').ID, data: { pharmacyIncentivePercent: 10 } }));
+  ok(call('updateSale', arjun, { type: 'homekare', id: s.ID, data: { status: 'Completed', paymentMethod: 'Cash', billScreenshot: PNG, paymentScreenshot: PNG } }));
+  const dash = ok(call('dashboardSummary', manager)).summary;
+  assert.equal(dash.totals.homekareAmount, 2000);
+  assert.equal(dash.agents.find((a) => a.agentEmail === 'arjun@medunited.in').incentive, 0);
+  // Agents can't change the services or prices of a completed record.
+  assert.equal(call('updateSale', arjun, { type: 'homekare', id: s.ID, data: { services: [{ service: HK_NURSE, price: 1 }] } }).forbidden, true);
+});
+
+test('homekare monthly packages get a renewal reminder that follows the patient', () => {
+  const { call, arjun, divya, manager, admin, sheets } = world();
+  const done = { status: 'Completed', paymentMethod: 'Cash', billScreenshot: PNG, paymentScreenshot: PNG };
+  // Not monthly → no reminder.
+  ok(call('createSale', arjun, { type: 'homekare', data: { ...lead({ contact: '9700000001' }), ...done, services: [{ service: HK_NURSE, price: 1800 }] } }));
+  assert.equal(ok(call('listReminders', arjun, {})).reminders.length, 0);
+
+  const first = ok(call('createSale', arjun, { type: 'homekare', data: { ...lead(), ...done, date: '2026-10-01', services: [
+    { service: HK_CARE_MONTHLY, price: 25000 }, { service: HK_TRAVEL, price: 500 },
+  ] } })).sale;
+  assert.equal(first.MonthlyPackage, true);
+  let rems = ok(call('listReminders', arjun, {})).reminders;
+  assert.equal(rems.length, 1);
+  assert.equal(rems[0].Kind, 'renewal');
+  assert.equal(rems[0].SaleType, 'homekare');
+  assert.equal(rems[0].SaleID, first.ID);
+  assert.equal(rems[0].EndDate, '2026-10-31');
+  assert.equal(rems[0].DueDate, '2026-10-26');
+  assert.equal(rems[0].Detail, HK_CARE_MONTHLY);
+  assert.equal(ok(call('listReminders', divya, {})).reminders.length, 0, 'agents only see their own');
+
+  // Reassigning the patient moves the reminder too.
+  ok(call('reassignPatient', manager, { contact: lead().contact, agentEmail: 'divya@medunited.in' }));
+  assert.equal(ok(call('listReminders', divya, {})).reminders.length, 1);
+  assert.equal(ok(call('listReminders', arjun, {})).reminders.length, 0);
+
+  // Next month's package renews it: the old reminder is resolved as Renewed.
+  const second = ok(call('createSale', manager, { type: 'homekare', data: { ...lead(), ...done, date: '2026-11-01', services: [{ service: HK_CARE_MONTHLY, price: 25000 }] } })).sale;
+  assert.equal(second.AgentEmail, 'divya@medunited.in');
+  rems = ok(call('listReminders', divya, { includeResolved: true })).reminders;
+  assert.equal(rems.find((r) => r.SaleID === first.ID).ResolutionReason, 'Renewed');
+  assert.equal(rems.find((r) => r.SaleID === second.ID).Status, 'Active');
+  assert.equal(rems.find((r) => r.SaleID === second.ID).EndDate, '2026-11-30');
+
+  // Undoing or deleting the sale removes its reminder.
+  ok(call('reopenSale', manager, { type: 'homekare', id: second.ID, reason: 'Payment bounced' }));
+  assert.equal(ok(call('listReminders', divya, {})).reminders.length, 0);
+  ok(call('deleteSale', admin, { type: 'homekare', id: first.ID, reason: 'Duplicate entry' }));
+  assert.equal(ok(call('listReminders', divya, { includeResolved: true })).reminders.filter((r) => r.SaleID === first.ID).length, 0);
+
+  // Month ends: 31 Jan runs to 28 Feb; 15 Oct to 14 Nov.
+  assert.equal(world().ctx.monthEnd('2027-01-31'), '2027-02-28');
+  assert.equal(world().ctx.monthEnd('2026-10-15'), '2026-11-14');
+  assert.equal(world().ctx.monthEnd('2026-12-01'), '2026-12-31');
+
+  // Old refill rows (before Kind/SaleID existed) still show as Pharmacy refills.
+  const sh = sheets.get('Reminders');
+  const headers = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0];
+  const row = { ID: 'old-rem', PharmacySaleID: 'old-sale', AgentEmail: 'arjun@medunited.in', AgentName: 'Arjun Agent', CustomerName: 'Old', Contact: '9800000000', Products: '[]', SaleDate: '2026-09-01', Status: 'Active', AttemptCount: 0 };
+  sh.appendRow(headers.map((h) => (row[h] === undefined ? '' : row[h])));
+  const old = ok(call('listReminders', arjun, {})).reminders.find((r) => r.ID === 'old-rem');
+  assert.equal(old.Kind, 'refill');
+  assert.equal(old.SaleID, 'old-sale');
+});
+
+test('lab & radiology: typed tests, report tracking that agents can update after the sale', () => {
+  const { call, arjun } = world();
+  const s = ok(call('createSale', arjun, { type: 'lab', data: { ...lead(), tests: [
+    { name: 'CBC', price: 350 }, { name: 'MRI Brain', kind: 'Radiology', price: 6500 },
+  ], homeCollection: true, collectionDate: '2026-10-17' } })).sale;
+  assert.equal(s.Amount, 6850);
+  assert.equal(s.Tests[0].kind, 'Lab', 'Lab by default');
+  assert.equal(s.HomeCollection, true);
+  assert.equal(s.CollectionDate, '2026-10-17');
+
+  const bad = (data) => call('createSale', arjun, { type: 'lab', data: { ...lead({ contact: '9610000001' }), ...data } }).message;
+  assert.match(bad({ tests: [{ name: '', price: 1 }] }), /needs a name/);
+  assert.match(bad({ tests: [{ name: 'X-ray', kind: 'Scan', price: 1 }] }), /Type of X-ray/);
+  assert.match(bad({ tests: [{ name: 'X-ray', price: 1 }], reportDeliveredVia: 'WhatsApp' }), /date the report was delivered/);
+  assert.match(bad({ tests: [{ name: 'X-ray', price: 1 }], reportDeliveredOn: '2026-10-18' }), /how the report was delivered/);
+  assert.match(bad({ tests: [{ name: 'X-ray', price: 1 }], reportDeliveredOn: '2026-10-18', reportDeliveredVia: 'Pigeon' }), /Report delivered by/);
+  const noHome = ok(call('createSale', arjun, { type: 'lab', data: { ...lead({ contact: '9610000002' }), tests: [{ name: 'X-ray', price: 400 }], collectionDate: '2026-10-17' } })).sale;
+  assert.equal(noHome.CollectionDate, '', 'no collection date without home collection');
+
+  const done = ok(call('updateSale', arjun, { type: 'lab', id: s.ID, data: { status: 'Completed', paymentMethod: 'UPI', utr: 'UTR9', billScreenshot: PNG, paymentScreenshot: PNG } })).sale;
+  assert.equal(done.Status, 'Completed');
+  // Reports go out later: agents can still record that, but not change tests.
+  const rep = ok(call('updateSale', arjun, { type: 'lab', id: s.ID, data: { reportDeliveredOn: '2026-10-19', reportDeliveredVia: 'WhatsApp', appointmentDate: '2026-10-18' } })).sale;
+  assert.equal(rep.ReportDeliveredVia, 'WhatsApp');
+  assert.equal(rep.AppointmentDate, '2026-10-18');
+  assert.equal(call('updateSale', arjun, { type: 'lab', id: s.ID, data: { tests: [{ name: 'CBC', price: 1 }] } }).forbidden, true);
+});
+
+test('homekare and lab: one open record per patient per module, import and patients work the same', () => {
+  const { call, arjun, divya, sheets } = world();
+  ok(call('createSale', arjun, { type: 'homekare', data: { ...lead(), services: [] } }));
+  assert.match(call('createSale', arjun, { type: 'homekare', data: { ...lead(), services: [] } }).message, /already has an open Homekare record/);
+  // Same patient in Lab, entered by Divya: goes to Arjun; shows "also in".
+  const lab = ok(call('createSale', divya, { type: 'lab', data: { ...lead(), tests: [] } }));
+  assert.equal(lab.sale.AgentEmail, 'arjun@medunited.in');
+  assert.deepEqual(lab.sale.AlsoIn.slice(), ['Homekare']);
+
+  const imp = ok(call('importSales', arjun, { type: 'lab', rows: [{ customerName: 'Imported Lab', contact: '9620000001', detail: 'Thyroid profile', amount: '900' }] }));
+  assert.equal(imp.imported, 1);
+  const row = ok(call('listSales', arjun, { type: 'lab' })).sales.find((s) => s.CustomerName === 'Imported Lab');
+  assert.equal(row.Amount, 0);
+  assert.match(row.Notes, /Mentioned: Thyroid profile/);
+  assert.ok(sheets.get('Homekare') && sheets.get('Lab & Radiology'), 'tabs created');
 });

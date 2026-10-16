@@ -1,12 +1,14 @@
 import React from 'react';
-import { User } from '../types';
+import { User, ModuleInfo, SaleType } from '../types';
+import { MODULE_ICONS } from '../modules';
 import { isTeamRole } from '../utils/roles';
 import { initials } from '../utils/date';
 
-export type ActivePage = 'dashboard' | 'medpass' | 'pharmacy' | 'reminders' | 'settings' | 'users';
+export type ActivePage = 'dashboard' | SaleType | 'reminders' | 'settings' | 'users';
 
 interface SidebarProps {
   user: User;
+  modules: ModuleInfo[];
   activePage: ActivePage;
   onNavigate: (page: ActivePage) => void;
   onLogout: () => void;
@@ -19,6 +21,7 @@ interface SidebarProps {
 
 export const Sidebar: React.FC<SidebarProps> = ({
   user,
+  modules,
   activePage,
   onNavigate,
   onLogout,
@@ -111,38 +114,22 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <span>Dashboard</span>
         </a>
 
-        <a
-          href="#medpass"
-          className={activePage === 'medpass' ? 'active' : ''}
-          data-tooltip="Medpass Sales"
-          onClick={(e) => {
-            e.preventDefault();
-            handleNav('medpass');
-          }}
-        >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
-          </svg>
-          <span>Medpass</span>
-        </a>
-
-        <a
-          href="#pharmacy"
-          className={activePage === 'pharmacy' ? 'active' : ''}
-          data-tooltip="Pharmacy Sales"
-          onClick={(e) => {
-            e.preventDefault();
-            handleNav('pharmacy');
-          }}
-        >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <rect x="1" y="7" width="15" height="11" rx="1.5"></rect>
-            <path d="M16 10h3.5L22 13.5V18h-6"></path>
-            <circle cx="6" cy="19.5" r="1.7"></circle>
-            <circle cx="17.5" cy="19.5" r="1.7"></circle>
-          </svg>
-          <span>Pharmacy</span>
-        </a>
+        {/* One link per sales module (the list comes from the server). */}
+        {modules.map((m) => (
+          <a
+            key={m.id}
+            href={`#${m.id}`}
+            className={activePage === m.id ? 'active' : ''}
+            data-tooltip={m.label}
+            onClick={(e) => {
+              e.preventDefault();
+              handleNav(m.id);
+            }}
+          >
+            {MODULE_ICONS[m.id] ?? MODULE_ICONS.medpass}
+            <span>{m.label}</span>
+          </a>
+        ))}
 
         <a
           href="#reminders"

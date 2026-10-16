@@ -95,13 +95,22 @@ function mapColumns(header: unknown[]): { map: Partial<Record<Field, number>>; i
   return { map, ignored };
 }
 
+const DETAIL_EXAMPLES: Record<SaleType, string> = {
+  medpass: 'Family plan',
+  pharmacy: 'Metformin 500, Amlodipine 5',
+  homekare: 'Nursing 12 hrs for 10 days',
+  lab: 'Thyroid profile, CBC',
+};
+
+const MODULE_LABELS: Record<SaleType, string> = { medpass: 'Medpass', pharmacy: 'Pharmacy', homekare: 'Homekare', lab: 'Lab & Radiology' };
+
 function templateCsv(type: SaleType): string {
   const cols: Field[] = ['customerName', 'contact', 'temperature', 'direction', 'channel', 'heardFrom', 'nextFollowUp', 'notes', 'detail',
     ...(type === 'medpass' ? (['priceType'] as Field[]) : []), 'agentEmail'];
   const example: Record<Field, string> = {
     customerName: 'Ravi Kumar', contact: '9848012345', temperature: 'Warm', direction: 'Inbound', channel: 'Health camp',
     heardFrom: 'Health camp', nextFollowUp: '20/10/2026', notes: 'Met at Kukatpally camp',
-    detail: type === 'medpass' ? 'Family plan' : 'Metformin 500, Amlodipine 5', priceType: 'Full Price', amount: '',
+    detail: DETAIL_EXAMPLES[type], priceType: 'Full Price', amount: '',
     agentEmail: '', date: '', consent: 'Yes', doNotCall: 'No',
   };
   const q = (s: string) => `"${s.replace(/"/g, '""')}"`;
@@ -119,7 +128,7 @@ interface RowResult {
 }
 
 export const ImportModal: React.FC<ImportModalProps> = ({ type, user, agents, onClose, onImported, onToast }) => {
-  const label = type === 'medpass' ? 'Medpass' : 'Pharmacy';
+  const label = MODULE_LABELS[type];
   const canAssign = isTeamRole(user.Role);
 
   const [fileName, setFileName] = useState('');

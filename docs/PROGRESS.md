@@ -18,7 +18,7 @@ Live state: the Sheet's Apps Script project has v2 code saved and
 |---|---|---|
 | 1. One agent per patient (people + households) + module engine | `phase1-patient-ownership` | **Done on branch, PR open — not deployed** |
 | 1b. Medpass rules + family members + senior role | `phase1b-medpass-rules` (stacked on phase 1) | **Done on branch, PR open (base: Phase 1 branch) — not deployed** |
-| 2. Lab & Radiology, HOMEKARE modules | — | Blocked on user input (service list, tests, incentive rules) |
+| 2. Lab & Radiology, HOMEKARE modules | `phase2-new-modules` (stacked on 1b) | **Done on branch, PR open — not deployed** |
 | 3. Bulk reassign | — | Not started (agent handover partly pulled into Phase 1) |
 | 4. Calmer module pages + widget dashboard | — | Not started (mockup first) |
 | 5. Settings page, Incentives page, per-agent targets | — | Blocked on user answers (revenue vs count, agent visibility, target→incentive) |
@@ -300,3 +300,77 @@ pass; single parent allowed on a family pass.
   **Still open:** renewal rules / early renewal / renewal reminders (user:
   "discuss later"); confirm the defaults single parent = yes, max 1 extra
   child; Phase 2 inputs (Homekare services, Lab/Radiology tests, incentives).
+- **2026-10-16** — Phase 2 inputs: user sent the 38 Homekare services (names
+  only). Saved as `docs/catalogues/homekare-services.csv` with a proposed charge
+  unit and recurring flag per service, for the user to add prices and
+  corrections. Names kept exactly as given (some look misspelt: MONTHY, MOTHLY,
+  CATHERIZATION, ELETROTHERAPY, CONSULTATAION, PRACTIONER, ELIVATION) — asked
+  whether they must match the billing system. Branch `phase2-new-modules`
+  created from `phase1b-medpass-rules`; no code yet.
+  **Asked the user:** prices (fixed or quoted?), units/recurring OK?, monthly
+  renewal reminders?, what to track per order (dates, visits, staff), one
+  order = one service or several?, Homekare incentive rule; and still the
+  Lab & Radiology list + home collection / appointment / report questions.
+- **2026-10-16** — User decision: **Lab & Radiology tests/packages are typed
+  by hand for now** (no catalogue). Plan: each record has lines of
+  { name, Lab or Radiology, price } typed by the agent; the amount is the sum
+  (server-side). A catalogue can be added later without changing records.
+  Still to ask for Lab: home sample collection / appointment date / report
+  delivery tracking, and the incentive rule.
+- **2026-10-16** — User decision: **Homekare prices vary per patient → typed
+  by hand.** Plan: agents pick the service from the 38-name list (consistent
+  names for reports) and type the price; units/recurring flags from the CSV
+  are kept as hints. Amount = sum of lines, computed on the server.
+- **2026-10-16** — User decision: **no incentives for Homekare or Lab &
+  Radiology yet — add later** (Phase 5). Build both modules with incentive
+  `{ kind: 'none' }` so they show revenue but pay 0 until a rule is set.
+  Proposed defaults sent to the user for the rest (several services per
+  Homekare order; keep service names exactly as given; Lab: optional home
+  collection date, appointment date, report delivered date + how; Homekare:
+  start/end date + staff name typed; renewal reminder for monthly packages
+  left for later).
+- **2026-10-16** — User decision: **renewal reminders for monthly Homekare
+  packages: yes.** Plan: a completed Homekare order with a monthly service
+  (Recurring = monthly in the catalogue) creates a reminder due 5 days before
+  the package end date (start + 1 month if no end date is typed); shown on
+  the Reminders page next to refill reminders, same "contacted / not
+  interested" flow, owned by the patient's agent and moving with them on
+  reassign. Days-before setting editable later.
+- **2026-10-16** — User: **Homekare tracking (visit dates, days/visits,
+  staff) → discuss later.** So Phase 2 Homekare has no extra tracking fields;
+  the monthly-package reminder uses the record Date as the start (end = Date
+  + 1 month, reminder 5 days before). Fields can be added later via the
+  module config (extraHeaders) without touching existing rows.
+- **2026-10-16** — **Phase 2 approved** with the defaults; user paused the
+  work until their credits reset. **Start here next session:**
+  1. `git checkout phase2-new-modules` (branched from `phase1b-medpass-rules`;
+     PRs #5 and #6 are still open — check if they were merged, and if so
+     rebase/retarget onto `v2-react-app`).
+  2. Backend: add `homekare` and `lab` modules in `Modules.gs` (incentive
+     `{ kind: 'none' }` → 0 in `incentiveForSale`), a lines JSON column
+     like Products: Homekare lines = { service (from the 38 in
+     docs/catalogues/homekare-services.csv), price }, Lab lines = { name,
+     kind Lab|Radiology, price }; amount = sum on the server via
+     prepareSave hooks. Lab extra columns: HomeCollection, CollectionDate,
+     AppointmentDate, ReportDeliveredOn, ReportDeliveredVia. Homekare
+     catalogue (names + unit + monthly flag) in a new `Homekare.gs`.
+  3. Reminders: generalise `Reminders.gs` (it is Pharmacy-only via
+     `PharmacySaleID`; add SaleType/SaleID columns, keep the old ones) and
+     create a Homekare renewal reminder for completed orders with a monthly
+     service: due Date + 1 month − 5 days.
+  4. Import/export for both modules; tests for every rule; then the
+     frontend (sidebar from `getModules`, which was deferred to now; line
+     editors), README, demo, PR.
+- **2026-10-16** — **Phase 2 built.** Backend: `Homekare.gs` (38-service
+  catalogue, typed prices, monthly renewal reminders), `Lab.gs` (typed tests,
+  collection/appointment/report fields), Reminders generalised (Kind,
+  SaleType, SaleID…; old rows still refills), Modules.gs hooks afterSave /
+  afterDelete / clientConfig, incentive kind none. Frontend: sidebar + pages
+  from getModules (deferred item done), line editors, renewal cards on the
+  Reminders page. 42 backend tests + build green; checked in the demo build
+  (form save → ₹2,050 total; lab report editable after completion; renewal
+  card). Pushed; PR opened with base `phase1b-medpass-rules`.
+  **Open for later:** Homekare tracking (visit dates, days, staff);
+  incentives for Homekare and Lab (Phase 5); Lab test catalogue; renewal
+  days-before (5) as a setting; dashboard per-module KPIs (Phase 4).
+  **Next phase:** 3 (bulk reassign).
