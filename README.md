@@ -48,8 +48,8 @@ Browser (static React app, any host)
 Google Apps Script Web App  (apps-script/*.gs)
    │
    ├── Google Sheet: Users, Medpass, Pharmacy, Homekare, Lab & Radiology, Patients,
-   │                 Reminders, SaleActivities, UserRequests, UserLayouts, Lists,
-   │                 Settings, AuditLog (protected)
+   │                 Reminders, SaleActivities, UserRequests, UserLayouts, Targets,
+   │                 Lists, Settings, AuditLog (protected)
    └── Google Drive: "MedUnited Sales CRM Attachments" (private screenshots)
 ```
 
@@ -67,8 +67,8 @@ Apps Script deployment without rebuilding.
 2. **Extensions → Apps Script.** Delete the default `Code.gs`, then create one
    file per `.gs` file in `apps-script/` and paste each in:
    `Activities, Attachments, Audit, Auth, BulkReassign, Code, DashboardLayouts,
-   Handover, Homekare, Import, Lab, Lists, Medpass, Modules, Patients, Reminders,
-   SalesService, Setup, SmokeTest, UserService, Utils`.
+   Handover, Homekare, Import, Incentives, Lab, Lists, Medpass, Modules, Patients,
+   Reminders, SalesService, Setup, SmokeTest, UserService, Utils`.
 3. **Project Settings (gear) → "Show appsscript.json manifest file"** → open
    `appsscript.json` and replace it with `apps-script/appsscript.json`.
    *(Or use [clasp](https://github.com/google/clasp): `clasp push` from the
@@ -152,6 +152,23 @@ and the monthly target.
   rows without an Agent Email; agents always import for themselves.
 - A row for a patient (or household) someone already handles goes to that
   agent; the preview shows "Already handled by …" on those rows.
+
+## Settings, incentives and targets
+
+- **Settings** (managers and above) has a menu on the left: incentive rates,
+  monthly targets, dropdown lists, service catalogues (Medpass prices, Homekare
+  services — add or hide, never delete), patient owners, users, and for admins
+  and senior managers the **audit log** (search, action, dates).
+- **Monthly targets** per agent and module. Each module is measured as
+  **revenue** (default) or **number of sales** (admins / senior managers
+  choose). **Copy last month** fills a new month without overwriting what is
+  already set. Agents see their own targets and progress on their dashboard.
+  Hitting a target does not change incentives (for later).
+- **Incentives** page (managers and above): pick a month; totals per module,
+  each agent's incentive with the sales behind it, and **Export payout sheet**
+  / **Export sales** (CSV). Incentives use each agent's *current* rates, so a
+  rate change also changes earlier months. **Agents never see incentive
+  amounts.** Homekare and Lab & Radiology have no incentive rule yet.
 
 ## Pages and dashboard
 
@@ -284,9 +301,9 @@ records for that number are saved as entered.
 
 1. **Back up**: File → Make a copy of the Sheet.
 2. Paste the new/changed `.gs` files (new: `BulkReassign`, `DashboardLayouts`,
-   `Handover`, `Homekare`, `Lab`, `Medpass`, `Modules`, `Patients`).
+   `Handover`, `Homekare`, `Incentives`, `Lab`, `Medpass`, `Modules`, `Patients`).
 3. Run **`setupSpreadsheet`** — adds the `Homekare`, `Lab & Radiology`, `Patients`,
-   `UserRequests` and `UserLayouts` tabs, the `PatientID` column, the Medpass columns (members,
+   `UserRequests`, `UserLayouts` and `Targets` tabs, the `PatientID` column, the Medpass columns (members,
    price, discount, validity) and the new Reminders columns. It never deletes or
    renames anything; existing refill reminders keep working.
 4. Run **`migratePatientsDryRun`** and read the log (patients to create,

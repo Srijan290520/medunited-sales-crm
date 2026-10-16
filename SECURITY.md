@@ -36,6 +36,12 @@ Report problems privately to the repository owner, not in public issues.
   record onto another agent's patient by editing its phone number, or reopen a
   record whose patient is now someone else's. The people sharing a phone
   number are shown only to that number's owner and to managers/admins.
+- Incentive amounts are for managers and above only: the incentive report,
+  the Incentives page and the incentive column of team figures are refused or
+  removed for agents on the server. Agents see their own targets, never
+  anyone else's.
+- The audit log viewer is for admins and senior managers (summaries name
+  patients and amounts).
 - Dashboard layouts only choose which widgets are drawn. Every widget's data
   comes from the same role-filtered summary; team-only widgets are refused for
   agents when a layout is saved, and their data is never sent to agents.
