@@ -27,7 +27,7 @@ function doPost(e) { return handleRequest(e); }
 var WRITE_ACTIONS = [
   'changePassword',
   'createSale', 'importSales', 'updateSale', 'deleteSale', 'reopenSale', 'reassignSale', 'logSaleActivity',
-  'reassignPatient', 'migratePatients', 'resolvePatientConflict',
+  'reassignPatient', 'migratePatients', 'resolvePatientConflict', 'decideMedpassDiscount', 'updateMedpassSettings',
   'createUser', 'updateUser', 'deleteUser', 'updateIncentives', 'requestDeactivation', 'decideUserRequest',
   'markContacted', 'reassignReminder',
   'updateLists', 'updateMonthlyTarget'
@@ -121,6 +121,16 @@ function dispatch(action, token, p) {
       return Object.assign({ error: false }, svc_reassignSale(session, p.type, p.id, p.agentEmail, p.scope, p.reason));
     case 'reassignPatient':
       return Object.assign({ error: false }, svc_reassignPatient(session, p));
+
+    // ----- Medpass (price, discounts) -----
+    case 'getMedpassSettings':
+      return { error: false, settings: svc_getMedpassSettings(session) };
+    case 'updateMedpassSettings':
+      return { error: false, settings: svc_updateMedpassSettings(session, p.data || {}) };
+    case 'listPendingDiscounts':
+      return { error: false, discounts: svc_listPendingDiscounts(session) };
+    case 'decideMedpassDiscount':
+      return { error: false, sale: svc_decideMedpassDiscount(session, p) };
 
     // ----- Patients (owners, migration, conflicts) -----
     case 'migratePatients':

@@ -56,6 +56,14 @@ function world() {
   return { ...env, admin, manager, arjun, divya };
 }
 
+// A family for Medpass tests: both parents and two children under 21.
+const FAMILY = [
+  { name: 'Ravi Kumar', relation: 'Father', dob: '1985-04-02' },
+  { name: 'Lakshmi Kumar', relation: 'Mother', dob: '1988-07-19' },
+  { name: 'Anil Kumar', relation: 'Child', dob: '2012-01-05' },
+  { name: 'Asha Kumar', relation: 'Child', dob: '2016-11-30' },
+];
+
 const lead = (over = {}) => ({
   customerName: 'Ravi Kumar', contact: '+91 98480 12345', priceType: 'Full Price', amount: '', status: 'Pending',
   temperature: 'Warm', direction: 'Inbound', channel: 'Phone call', heardFrom: 'Google search', consent: true,
@@ -137,9 +145,13 @@ test('completing a sale needs payment method, both proofs, UTR for UPI and an am
   assert.match(upd({ status: 'Completed', paymentMethod: 'UPI' }).message, /bill screenshot/);
   assert.match(upd({ status: 'Completed', paymentMethod: 'UPI', billScreenshot: PNG }).message, /payment screenshot/);
   assert.match(upd({ status: 'Completed', paymentMethod: 'UPI', billScreenshot: PNG, paymentScreenshot: PNG }).message, /UTR/);
-  assert.match(upd({ status: 'Completed', paymentMethod: 'UPI', utr: 'UTR123', billScreenshot: PNG, paymentScreenshot: PNG }).message, /amount/);
-  const done = ok(upd({ status: 'Completed', paymentMethod: 'UPI', utr: 'UTR123', amount: 4999, billScreenshot: PNG, paymentScreenshot: PNG })).sale;
+  assert.match(upd({ status: 'Completed', paymentMethod: 'UPI', utr: 'UTR123', billScreenshot: PNG, paymentScreenshot: PNG }).message, /family members/);
+  const done = ok(upd({ status: 'Completed', paymentMethod: 'UPI', utr: 'UTR123', amount: 4999, billScreenshot: PNG, paymentScreenshot: PNG, members: FAMILY })).sale;
   assert.equal(done.Status, 'Completed');
+  assert.equal(done.Amount, 1499, 'the server sets the Medpass price, not the browser');
+  // Pharmacy still needs an amount typed in.
+  const ph = ok(call('createSale', arjun, { type: 'pharmacy', data: { ...lead({ contact: '9000000077' }), products: [{ name: 'Metformin', quantity: 60, frequency: 'Twice a day' }] } })).sale;
+  assert.match(call('updateSale', arjun, { type: 'pharmacy', id: ph.ID, data: { status: 'Completed', paymentMethod: 'Cash', billScreenshot: PNG, paymentScreenshot: PNG } }).message, /amount/);
   assert.equal(done.BillScreenshotUrl, 'attached', 'Drive links must never reach the browser');
 });
 
@@ -207,7 +219,7 @@ test('cancel needs a lost reason from the list; reopen rules', () => {
   assert.equal(re.Temperature, 'Hot');
   assert.equal(re.LostReason, '');
 
-  ok(call('updateSale', manager, { type: 'medpass', id: s.ID, data: { status: 'Completed', paymentMethod: 'Cash', amount: 999, billScreenshot: PNG, paymentScreenshot: PNG } }));
+  ok(call('updateSale', manager, { type: 'medpass', id: s.ID, data: { status: 'Completed', paymentMethod: 'Cash', billScreenshot: PNG, paymentScreenshot: PNG, members: FAMILY } }));
   assert.equal(call('reopenSale', arjun, { type: 'medpass', id: s.ID, reason: 'oops' }).forbidden, true);
   assert.match(call('reopenSale', manager, { type: 'medpass', id: s.ID }).message, /reason/);
   ok(call('reopenSale', manager, { type: 'medpass', id: s.ID, reason: 'Payment bounced' }));
@@ -268,15 +280,17 @@ test('dashboard: incentives hidden from agents, monthly target uses this month o
   const today = new Date(Date.now() + 5.5 * 3600 * 1000).toISOString().slice(0, 10);
   ok(call('updateIncentives', manager, { id: findUser(call, admin, 'arjun@medunited.in').ID, data: { medpassFullRate: 500, medpassDiscountRate: 300, pharmacyIncentivePercent: 5 } }));
   const done = { status: 'Completed', paymentMethod: 'Cash', billScreenshot: PNG, paymentScreenshot: PNG };
-  ok(call('createSale', arjun, { type: 'medpass', data: lead({ ...done, amount: 10000, date: today }) }));
-  ok(call('createSale', arjun, { type: 'medpass', data: lead({ ...done, contact: '9000000002', amount: 7000, priceType: 'Discounted', date: '2020-01-15' }) }));
+  ok(call('createSale', arjun, { type: 'medpass', data: lead({ ...done, amount: 10000, date: today, members: FAMILY }) }));
+  // An admin's own discount is approved straight away.
+  ok(call('createSale', admin, { type: 'medpass', data: lead({ ...done, contact: '9000000002', priceType: 'Discounted', discountAmount: 200, discountReason: 'Camp offer', date: '2020-01-15', members: FAMILY, agentEmail: 'arjun@medunited.in' }) }));
   ok(call('createSale', arjun, { type: 'medpass', data: lead({ contact: '9000000003', nextFollowUp: today }) }));
-  ok(call('updateMonthlyTarget', manager, { amount: 20000 }));
+  ok(call('updateMonthlyTarget', manager, { amount: 2998 }));
   assert.equal(call('updateMonthlyTarget', arjun, { amount: 1 }).forbidden, true);
 
   const team = ok(call('dashboardSummary', manager)).summary;
   assert.equal(team.agents[0].incentive, 800);
-  assert.equal(team.monthlyTarget.currentAmount, 10000);
+  assert.equal(team.monthlyTarget.currentAmount, 1499);
+  assert.equal(team.totals.medpassAmount, 1499 + 1299);
   assert.equal(team.monthlyTarget.percentage, 50);
   assert.equal(team.pipeline.totalLeads, 3);
   assert.equal(team.urgentFollowUps.length, 1);
@@ -803,4 +817,140 @@ test('senior manager: admin powers except admin accounts and hard deletes', () =
   const sana = users.find((u) => u.Email === 'sana@medunited.in');
   const self = ok(call('requestDeactivation', admin, { userId: sana.ID, successorEmail: 'arjun@medunited.in', reason: 'Testing self' })).request;
   assert.equal(call('decideUserRequest', senior, { id: self.ID, approve: true }).forbidden, true);
+});
+
+// ----- Medpass rules -----
+const DONE = { status: 'Completed', paymentMethod: 'Cash', billScreenshot: PNG, paymentScreenshot: PNG };
+const kid = (name, dob) => ({ name, relation: 'Child', dob });
+
+test('medpass price: ₹1499 for the family, ₹375 for a third child, server-side', () => {
+  const { call, arjun } = world();
+  const mp = (contact, members, over = {}) => call('createSale', arjun, { type: 'medpass', data: lead({ contact, members, amount: 1, ...over }) });
+  const four = ok(mp('9100000001', FAMILY)).sale;
+  assert.equal(four.Amount, 1499);
+  assert.equal(four.ListPrice, 1499);
+  assert.equal(four.PayableNow, 1499);
+  assert.equal(four.Members.length, 4);
+  const five = ok(mp('9100000002', [...FAMILY, kid('Arun Kumar', '2019-06-01')])).sale;
+  assert.equal(five.ExtraChildFee, 375);
+  assert.equal(five.Amount, 1874);
+
+  assert.match(mp('9100000003', [...FAMILY, kid('Arun Kumar', '2019-06-01'), kid('Ajay Kumar', '2021-02-02')]).message, /up to 3 children/);
+  assert.match(mp('9100000004', [FAMILY[0], kid('Big Kid', '2004-01-01')], { date: '2026-10-16' }).message, /is 22\. Children must be under 21.*own Medpass/);
+  assert.match(mp('9100000005', [FAMILY[0], { name: 'No Dob', relation: 'Child' }]).message, /date of birth of No Dob/);
+  assert.match(mp('9100000006', [FAMILY[0], { name: 'Other Dad', relation: 'Father' }]).message, /one father and one mother/);
+  assert.match(mp('9100000007', [kid('Only Kid', '2015-01-01')]).message, /at least one parent/);
+  assert.match(mp('9100000008', [FAMILY[0], { name: 'Grandma', relation: 'Grandmother' }]).message, /Relation of Grandma/);
+  assert.match(mp('9100000009', [FAMILY[0], { ...FAMILY[0] }]).message, /listed twice/);
+  // A child turning 21 later in the year is fine: age counts on the sale date.
+  ok(mp('9100000010', [FAMILY[1], kid('Nearly 21', '2005-12-01')], { date: '2026-10-16' }));
+  // Single parent is allowed by default; a lead can start without members.
+  assert.equal(ok(mp('9100000011', [FAMILY[1], FAMILY[2]])).sale.Amount, 1499);
+  assert.equal(ok(mp('9100000012', [])).sale.Members.length, 0);
+});
+
+test('medpass discount: up to ₹200, needs a reason and approval by an admin or senior manager', () => {
+  const { call, admin, arjun, manager } = world();
+  ok(call('createUser', admin, { data: { name: 'Sana Senior', email: 'sana@medunited.in', role: 'senior_manager', password: 'Joining2Team9' } }));
+  const senior = loginFresh(call, 'sana@medunited.in', 'Joining2Team9', 'Senior-Pass-2026');
+  const base = lead({ priceType: 'Discounted', members: FAMILY });
+  assert.match(call('createSale', arjun, { type: 'medpass', data: { ...base, discountAmount: 250, discountReason: 'Camp' } }).message, /between ₹1 and ₹200/);
+  assert.match(call('createSale', arjun, { type: 'medpass', data: { ...base, discountAmount: 200 } }).message, /reason for the discount/);
+  const created = ok(call('createSale', arjun, { type: 'medpass', data: { ...base, discountAmount: 200, discountReason: 'Health camp offer' } }));
+  const s = created.sale;
+  assert.equal(s.Amount, 1299);
+  assert.equal(s.DiscountStatus, 'Requested');
+  assert.match(created.notice, /waiting for approval/);
+  assert.equal(ok(call('listPendingDiscounts', manager, {})).discounts.length, 1);
+
+  const complete = () => call('updateSale', arjun, { type: 'medpass', id: s.ID, data: DONE });
+  assert.match(complete().message, /waiting for approval/);
+  assert.equal(call('decideMedpassDiscount', arjun, { id: s.ID, approve: true }).forbidden, true);
+  assert.equal(call('decideMedpassDiscount', manager, { id: s.ID, approve: true }).forbidden, true);
+  assert.match(call('decideMedpassDiscount', senior, { id: s.ID, approve: false }).message, /why/);
+  ok(call('decideMedpassDiscount', senior, { id: s.ID, approve: false, note: 'Not a camp lead' }));
+  assert.match(complete().message, /rejected/);
+  // Asking for a different discount starts a new request.
+  const again = ok(call('updateSale', arjun, { type: 'medpass', id: s.ID, data: { discountAmount: 100, discountReason: 'Senior citizen' } })).sale;
+  assert.equal(again.DiscountStatus, 'Requested');
+  assert.equal(again.Amount, 1399);
+  const approved = ok(call('decideMedpassDiscount', senior, { id: s.ID, approve: true })).sale;
+  assert.equal(approved.DiscountStatus, 'Approved');
+  assert.equal(approved.DiscountDecidedBy, 'Sana Senior');
+  const done = ok(complete()).sale;
+  assert.equal(done.Status, 'Completed');
+  assert.equal(done.Amount, 1399);
+  assert.match(call('decideMedpassDiscount', senior, { id: s.ID, approve: true }).message, /no discount waiting/);
+  assert.equal(ok(call('listPendingDiscounts', manager, {})).discounts.length, 0);
+});
+
+test('medpass converted from OP: full price counts, the OP fee is credited, no discount', () => {
+  const { call, arjun, manager, admin } = world();
+  ok(call('updateIncentives', manager, { id: findUser(call, admin, 'arjun@medunited.in').ID, data: { medpassFullRate: 500, medpassDiscountRate: 300 } }));
+  const s = ok(call('createSale', arjun, { type: 'medpass', data: lead({ priceType: 'Converted From OP', members: FAMILY, discountAmount: 200 }) })).sale;
+  assert.equal(s.Amount, 1499);
+  assert.equal(s.DiscountAmount, 0, 'OP conversions get no discount');
+  assert.match(call('updateSale', arjun, { type: 'medpass', id: s.ID, data: DONE }).message, /OP consultation fee/);
+  assert.match(call('updateSale', arjun, { type: 'medpass', id: s.ID, data: { opCredit: 2000 } }).message, /between ₹0 and ₹1499/);
+  const done = ok(call('updateSale', arjun, { type: 'medpass', id: s.ID, data: { ...DONE, opCredit: 500 } })).sale;
+  assert.equal(done.Amount, 1499);
+  assert.equal(done.OPCredit, 500);
+  assert.equal(done.PayableNow, 999);
+  const dash = ok(call('dashboardSummary', manager)).summary;
+  assert.equal(dash.totals.medpassAmount, 1499, 'revenue is the full price');
+  assert.equal(dash.agents[0].incentive, 500, 'full-price incentive');
+});
+
+test('medpass validity: one year from the sale date; covered members get a warning', () => {
+  const { call, arjun, manager } = world();
+  const s = ok(call('createSale', arjun, { type: 'medpass', data: lead({ ...DONE, members: FAMILY, date: '2026-03-10' }) })).sale;
+  assert.equal(s.ValidFrom, '2026-03-10');
+  assert.equal(s.ValidUntil, '2027-03-09');
+  assert.equal(s.PassStatus, 'active');
+  const leap = ok(call('createSale', arjun, { type: 'medpass', data: lead({ ...DONE, contact: '9200000001', members: FAMILY, date: '2024-02-29' }) })).sale;
+  assert.equal(leap.ValidUntil, '2025-02-28');
+  assert.equal(leap.PassStatus, 'expired');
+
+  // Grandma on the same number takes her own pass; the covered parent gets a warning, not a block.
+  const g = ok(call('createSale', arjun, { type: 'medpass', data: lead({ customerName: 'Kamala Kumar', members: [{ name: 'Kamala Kumar', relation: 'Mother' }, FAMILY[0]] }) }));
+  assert.match(g.notice, /Ravi Kumar is already covered by a Medpass valid until 2027-03-09/);
+  // Reopening (undoing) the sale clears its validity.
+  const re = ok(call('reopenSale', manager, { type: 'medpass', id: s.ID, reason: 'Payment bounced' })).sale;
+  assert.equal(re.Status, 'Pending');
+  assert.equal(re.ValidUntil, '');
+  assert.equal(re.PassStatus, '');
+});
+
+test('medpass settings, completed passes keep their price, older rows and import', () => {
+  const { call, admin, arjun, manager, sheets } = world();
+  assert.equal(ok(call('getMedpassSettings', arjun, {})).settings.price, 1499);
+  const done = ok(call('createSale', arjun, { type: 'medpass', data: lead({ ...DONE, members: FAMILY }) })).sale;
+
+  assert.equal(call('updateMedpassSettings', manager, { data: { price: 1599 } }).forbidden, true);
+  assert.match(call('updateMedpassSettings', admin, { data: { maxDiscount: 1600, price: 1599 } }).message, /less than the price/);
+  const st = ok(call('updateMedpassSettings', admin, { data: { price: 1599, singleParent: false } })).settings;
+  assert.equal(st.price, 1599);
+  assert.equal(ok(call('createSale', arjun, { type: 'medpass', data: lead({ contact: '9300000001', members: FAMILY }) })).sale.Amount, 1599);
+  assert.match(call('createSale', arjun, { type: 'medpass', data: lead({ contact: '9300000002', members: [FAMILY[0]] }) }).message, /both parents/);
+
+  // A completed pass keeps its price when someone edits its notes.
+  const after = ok(call('updateSale', manager, { type: 'medpass', id: done.ID, data: { notes: 'Called to welcome them' } })).sale;
+  assert.equal(after.Amount, 1499);
+  // Agents can't change who a completed pass covers.
+  assert.equal(call('updateSale', arjun, { type: 'medpass', id: done.ID, data: { members: FAMILY.slice(0, 2) } }).forbidden, true);
+
+  // Rows from before these rules: completed ones keep their amount; open ones follow the rules.
+  const oldDone = legacyRow(sheets, 'Medpass', { CustomerName: 'Old Sale', Contact: '9400000001', AgentEmail: 'arjun@medunited.in', AgentName: 'Arjun Agent', Status: 'Completed', Amount: 8999, PriceType: 'Full Price', PaymentMethod: 'Cash', BillScreenshotUrl: 'drive-file-1', PaymentScreenshotUrl: 'drive-file-2' });
+  assert.equal(ok(call('updateSale', manager, { type: 'medpass', id: oldDone.ID, data: { notes: 'Old customer' } })).sale.Amount, 8999);
+  const oldOpen = legacyRow(sheets, 'Medpass', { CustomerName: 'Old Lead', Contact: '9400000002', AgentEmail: 'arjun@medunited.in', AgentName: 'Arjun Agent', Amount: 5000, PriceType: 'Full Price' });
+  assert.equal(ok(call('updateSale', arjun, { type: 'medpass', id: oldOpen.ID, data: { notes: 'Called' } })).sale.Amount, 1599);
+
+  // Import: standard price; discounts must be added in the app.
+  const imp = ok(call('importSales', arjun, { type: 'medpass', rows: [
+    { customerName: 'Imported One', contact: '9500000001', amount: '9999' },
+    { customerName: 'Imported Two', contact: '9500000002', priceType: 'Discounted' },
+  ] }));
+  assert.equal(imp.imported, 1);
+  assert.match(imp.results[1].errors.join(' '), /Discounts can't be imported/);
+  assert.equal(ok(call('listSales', arjun, { type: 'medpass' })).sales.find((s) => s.CustomerName === 'Imported One').Amount, 1599);
 });

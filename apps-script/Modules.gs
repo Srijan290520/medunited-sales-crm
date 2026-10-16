@@ -13,12 +13,30 @@
 //   reminders     true → completed sales get refill reminders
 //   incentive     { kind: 'perSale' } flat ₹ per sale by price type, or
 //                 { kind: 'percent' } % of the amount — rates live on the Users tab
+//   extraHeaders  columns only this module's tab has (added after SALE_HEADERS)
+//   hooks         optional module rules, called by the engine:
+//     prepareSave(session, ctx)   → { fields, warnings } computed fields for a
+//                                   create/update (ctx: isCreate, data, existing, next)
+//     validateCompletion(next)    throws if the record can't be Completed yet
+//     clientFields(row)           extra fields the browser gets
+//     prepareImport(r, errors)    computed fields for an imported lead
+// Hooks are written as function(…) { return name(…); } so they can live in
+// another file (Apps Script doesn't guarantee the order files load in).
 
 var MODULES = {
   medpass: {
     id: 'medpass', label: 'Medpass',
     priceTypes: true, products: false, needsProducts: false, reminders: false,
-    incentive: { kind: 'perSale', fullRateField: 'MedpassFullRate', discountRateField: 'MedpassDiscountRate' }
+    incentive: { kind: 'perSale', fullRateField: 'MedpassFullRate', discountRateField: 'MedpassDiscountRate' },
+    // See Medpass.gs.
+    extraHeaders: ['Members', 'ListPrice', 'ExtraChildFee', 'DiscountAmount', 'DiscountReason', 'DiscountStatus',
+      'DiscountRequestedBy', 'DiscountDecidedBy', 'OPCredit', 'PayableNow', 'ValidFrom', 'ValidUntil'],
+    hooks: {
+      prepareSave: function (session, ctx) { return medpassPrepareSave(session, ctx); },
+      validateCompletion: function (next) { return medpassValidateCompletion(next); },
+      clientFields: function (row) { return medpassClientFields(row); },
+      prepareImport: function (r, errors) { return medpassPrepareImport(r, errors); }
+    }
   },
   pharmacy: {
     id: 'pharmacy', label: 'Pharmacy',
@@ -32,6 +50,14 @@ var SALE_TYPES = {};
 Object.keys(MODULES).forEach(function (id) { SALE_TYPES[id] = MODULES[id].label; });
 
 function moduleIds() { return Object.keys(MODULES); }
+
+// Every column of a module's tab: the shared ones, then its own.
+function moduleHeaders(type) { return SALE_HEADERS.concat(getModule(type).extraHeaders || []); }
+
+function moduleHook(type, name) {
+  var hooks = getModule(type).hooks || {};
+  return typeof hooks[name] === 'function' ? hooks[name] : null;
+}
 
 function getModule(type) {
   var mod = MODULES.hasOwnProperty(type) ? MODULES[type] : null;
