@@ -442,3 +442,49 @@ README "Going live with Patients" covers every new file and tab); Medpass
 renewal rules; Homekare tracking (visits, staff); incentives for Homekare and
 Lab; target-based incentive bonuses; a Lab test catalogue. Known limitation:
 incentive report uses current rates (no per-sale snapshot).
+
+---
+
+## 2026-10-16 — WENT LIVE. Resume here.
+
+### Where things stand
+- **Code:** everything (Phases 1–5 + Performance) is on `master` via PR #12
+  (phase5b-performance → master). PRs #5–#11 are still open but their code is
+  already in master — they can be closed.
+- **Live Apps Script** (project `1Lt-SEfpiNC8n5BCDQMXZ-ePiC3f4ZC9AKEHDzuz4JbY8oshDvr5GwB7Y`,
+  signed in as appsupport@medunited.in): all new/changed `.gs` files pasted
+  from commit 2ab6106 (Leads.gs stub and the live SmokeTest.gs left as they
+  were; the file named `Utlis.gs` holds Utils — the name doesn't matter).
+  `setupSpreadsheet` run; `migratePatients` run (17 patients, 19 records
+  linked, **1 owner conflict: 7569199231 / Amarjeet Dubey — Amar vs HARI,
+  still to decide on Settings → Patient owners**); `smokeTestV2` 21/21 PASS.
+  The user published the new version on the **Lead module sync** deployment
+  (the `/exec` URL in `public/config.js`); `ping` and the new actions answer.
+- **Backup:** Google Sheet copy "Copy of MedUnited CRM"
+  (`10Dz8O1GhJyRFIvyBa3JfOV_DIIyAh279VBOoQ9pcX4A`), made before any change.
+- **Website:** GitHub Pages now serves the **`gh-pages` branch** (built
+  `dist/` + `.nojekyll`), not master. Actions are still billing-locked, so
+  every frontend release = `npm run build`, then push `dist/` to `gh-pages`
+  (orphan commit), then if Pages doesn't rebuild:
+  `gh api -X POST repos/Srijan290520/medunited-sales-crm/pages/builds`.
+  Checked live as Admin: dashboard, menus and data load, no console errors.
+
+### In progress: pages load too slowly (user: "the loading time is too much")
+Measured on the live backend: `ping` 3.6 s (Google's fixed cost per request),
+`me` / `getModules` ~4.5 s, **`listSales` 13–15 s** for ~20 records.
+Cause: each request re-read every tab many times (~7 Sheets calls per tab,
+~50 per list). **Fix committed on master, NOT yet live:** a per-request read
+cache in `Utils.gs` (`withReadCache`, used by `Code.gs` for read-only actions;
+write actions are unchanged and every write helper clears it). New test
+checks each tab is read once per list request. 53/53 tests pass.
+
+**Next steps:**
+1. Paste the new `Utils.gs` (into the live file named `Utlis.gs`) and
+   `Code.gs` into the live project, save, run `smokeTestV2`, then publish a
+   new version on **Lead module sync** (the user does the publish).
+2. Re-time from the live site (same read-only calls as above) and compare.
+3. If still slow: on the frontend, run the start-up calls (me, getModules,
+   layout, dashboard summary) in parallel and keep the module list in
+   sessionStorage; consider caching the dashboard summary longer.
+4. Rebuild the site and push to `gh-pages` if the frontend changes.
+5. Close PRs #5–#11; decide the 7569199231 owner conflict.
