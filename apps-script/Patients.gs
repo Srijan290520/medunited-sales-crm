@@ -396,3 +396,175 @@ function svc_reassignPatient(session, data) {
   savePatientChanges(world);
   return { moved: result.records, reminders: result.reminders, patients: group.length, agentName: target.name };
 }
+
+// ===== Migration: build Patients from existing records =====
+// Safe to run any number of times. It only ADDS Patients rows and fills the
+// empty PatientID cell of records; it never changes who a record belongs to.
+// A number whose records were handled by more than one agent becomes a
+// Conflict for an admin to resolve (listPatientConflicts / resolvePatientConflict).
+function migratePatientsCore(session, dryRun) {
+  var world = loadPatientWorld();
+  var keys = {};
+  world.records.forEach(function (x) { var k = recordContactKey(x.row); if (k) keys[k] = true; });
+  Object.keys(keys).forEach(function (k) { ensureHousehold(world, k); });
+
+  var links = {};
+  var linked = 0;
+  world.records.forEach(function (x) {
+    if (x.row.PatientID) return;
+    var p = recordPatient(world, x.row);
+    if (!p) return;
+    (links[x.type] = links[x.type] || {})[String(x.row.ID)] = String(p.ID);
+    linked++;
+  });
+  var created = world.added.length;
+  var conflictKeys = {};
+  world.added.forEach(function (p) { if (p.OwnerStatus === PATIENT_CONFLICT) conflictKeys[String(p.ContactKey)] = true; });
+  var summary = {
+    dryRun: !!dryRun,
+    households: Object.keys(keys).length,
+    patientsCreated: created,
+    recordsLinked: linked,
+    newConflicts: Object.keys(conflictKeys).length,
+    conflicts: conflictList(world, Object.keys(conflictKeys)).slice(0, 50)
+  };
+  if (dryRun) return summary;
+
+  savePatientChanges(world);
+  Object.keys(links).forEach(function (type) {
+    var sheet = getSaleSheet(type);
+    var headers = sheetHeaders(sheet);
+    var idCol = headers.indexOf('ID');
+    var pidCol = headers.indexOf('PatientID');
+    var last = sheet.getLastRow();
+    if (idCol === -1 || pidCol === -1 || last < 2) return;
+    var ids = sheet.getRange(2, idCol + 1, last - 1, 1).getValues();
+    var pids = sheet.getRange(2, pidCol + 1, last - 1, 1).getValues();
+    var changed = false;
+    for (var i = 0; i < ids.length; i++) {
+      var want = links[type][String(ids[i][0])];
+      if (want && !pids[i][0]) { pids[i][0] = safeCellValue(want); changed = true; }
+    }
+    if (changed) sheet.getRange(2, pidCol + 1, last - 1, 1).setValues(pids);
+  });
+  audit(session, 'migrate', 'Patients', '', {
+    PatientsCreated: { from: '', to: created }, RecordsLinked: { from: '', to: linked }, Conflicts: { from: '', to: summary.newConflicts }
+  }, 'Patients migration: ' + created + ' patients created, ' + linked + ' records linked, ' +
+    summary.newConflicts + ' households need an owner decision.');
+  return summary;
+}
+
+// Admin, from the app: a dry run unless dryRun is explicitly false.
+function svc_migratePatients(session, dryRun) {
+  requireRole(session, ['admin']);
+  return migratePatientsCore(session, dryRun !== false);
+}
+
+// From the Apps Script editor: back up the Sheet (File → Make a copy), run
+// migratePatientsDryRun and read the log, then run migratePatients.
+var MIGRATION_SESSION = { id: 'migration', email: 'migration', name: 'Migration script', role: 'system' };
+
+function migratePatientsDryRun() {
+  var s = migratePatientsCore(MIGRATION_SESSION, true);
+  Logger.log(JSON.stringify(s, null, 2));
+  return s;
+}
+
+function migratePatients() {
+  var s = withScriptLock(function () { return migratePatientsCore(MIGRATION_SESSION, false); });
+  bumpDataVersion();
+  Logger.log(JSON.stringify(s, null, 2));
+  return s;
+}
+
+// ===== Conflicts =====
+// Households where an admin has to decide who handles whom.
+function conflictList(world, keys) {
+  return keys.map(function (key) {
+    var people = householdOf(world, key);
+    var agents = {};
+    people.forEach(function (p) {
+      if (p.OwnerStatus !== PATIENT_CONFLICT) return;
+      var list = [];
+      try { list = JSON.parse(p.ConflictAgents || '[]'); } catch (e) { list = []; }
+      list.forEach(function (a) { agents[lowerEmail(a.email)] = a; });
+    });
+    return {
+      contactKey: String(key),
+      contact: String((people[0] && people[0].Contact) || key),
+      agents: Object.keys(agents).map(function (k) { return agents[k]; }),
+      people: people.map(function (p) {
+        var o = ownerOfPatient(world, p);
+        return {
+          ID: world.added.indexOf(p) === -1 ? String(p.ID) : '',
+          Name: String(p.Name),
+          Conflict: p.OwnerStatus === PATIENT_CONFLICT,
+          OwnerName: o ? o.name : '',
+          records: patientRecords(world, p).map(function (x) {
+            return { module: SALE_TYPES[x.type], status: String(x.row.Status), agentName: String(x.row.AgentName), date: dateKey(x.row.Date) };
+          })
+        };
+      })
+    };
+  });
+}
+
+function svc_listPatientConflicts(session) {
+  requireRole(session, ['admin', 'manager']);
+  var world = loadPatientWorld();
+  var keys = {};
+  world.records.forEach(function (x) { var k = recordContactKey(x.row); if (k) keys[k] = true; });
+  // In memory only, so numbers not migrated yet show up too.
+  Object.keys(keys).forEach(function (k) { ensureHousehold(world, k); });
+  var conflictKeys = {};
+  world.patients.forEach(function (p) { if (p.OwnerStatus === PATIENT_CONFLICT) conflictKeys[String(p.ContactKey)] = true; });
+  return conflictList(world, Object.keys(conflictKeys));
+}
+
+// Admin decides. Either the whole household to one agent:
+//   { contact, agentEmail }
+// or person by person (a split):
+//   { contact, assignments: [{ patientId | name, agentEmail }] }
+// Open records move to the chosen agent; closed ones keep theirs.
+function svc_resolvePatientConflict(session, data) {
+  requireRole(session, ['admin']);
+  data = data || {};
+  var key = phoneKey(data.contact);
+  if (!key) throw new Error('A valid phone number is required.');
+  var world = loadPatientWorld();
+  ensureHousehold(world, key);
+  var household = householdOf(world, key);
+  if (!household.some(function (p) { return p.OwnerStatus === PATIENT_CONFLICT; })) {
+    throw new Error('This number has no owner conflict. Use Reassign to move patients.');
+  }
+  var groups = [];
+  if (data.agentEmail) {
+    groups.push({ target: requireOwnerCandidate(world, data.agentEmail), people: household.slice() });
+  } else if (Array.isArray(data.assignments) && data.assignments.length) {
+    var byTarget = {};
+    data.assignments.forEach(function (a) {
+      a = a && typeof a === 'object' ? a : {};
+      var p = a.patientId ? world.byId[String(a.patientId)] : findPerson(world, key, a.name);
+      if (!p || String(p.ContactKey) !== key) throw new Error('A person in the list is not on this phone number.');
+      var t = requireOwnerCandidate(world, a.agentEmail);
+      var k = lowerEmail(t.email);
+      if (!byTarget[k]) { byTarget[k] = { target: t, people: [] }; groups.push(byTarget[k]); }
+      if (byTarget[k].people.indexOf(p) === -1) byTarget[k].people.push(p);
+    });
+  } else {
+    throw new Error('Choose an agent for the household, or one for each person.');
+  }
+  var moved = [];
+  var reminders = 0;
+  groups.forEach(function (g) {
+    var r = movePatients(session, world, g.people, g.target, 'Owner conflict resolved by admin.');
+    moved = moved.concat(r.records);
+    reminders += r.reminders;
+  });
+  savePatientChanges(world);
+  return {
+    moved: moved,
+    reminders: reminders,
+    remainingConflicts: householdOf(world, key).filter(function (p) { return p.OwnerStatus === PATIENT_CONFLICT; }).length
+  };
+}

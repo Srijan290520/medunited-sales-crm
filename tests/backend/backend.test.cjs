@@ -637,3 +637,81 @@ test('splitting one person out of a household, and reopening follows the owner',
   assert.equal(ok(call('checkContact', manager, { contact: '9848012345' })).owner.email, 'arjun@medunited.in');
   assert.match(call('reassignPatient', manager, { contact: '9848012345', agentEmail: 'boss@medunited.in' }).message, /not found or inactive/, 'admins are not patient owners');
 });
+
+test('migration builds Patients from existing rows: dry run first, never guesses, safe to rerun', () => {
+  const { call, ctx, arjun, manager, admin, sheets } = world();
+  const fresh = ok(call('createSale', arjun, { type: 'medpass', data: lead() })).sale; // already has a PatientID
+  legacyRow(sheets, 'Medpass', { CustomerName: 'Old A', Contact: '9222222222', AgentEmail: 'divya@medunited.in', AgentName: 'Divya Agent', Status: 'Completed', Amount: 1499 });
+  legacyRow(sheets, 'Pharmacy', { CustomerName: 'old a', Contact: '+91 92222 22222', AgentEmail: 'divya@medunited.in', AgentName: 'Divya Agent', Products: '[]' });
+  legacyRow(sheets, 'Medpass', { CustomerName: 'Father', Contact: '9333333333', AgentEmail: 'arjun@medunited.in', AgentName: 'Arjun Agent' });
+  legacyRow(sheets, 'Pharmacy', { CustomerName: 'Mother', Contact: '9333333333', AgentEmail: 'divya@medunited.in', AgentName: 'Divya Agent', Products: '[]' });
+  const patientRows = () => sheets.get('Patients').getLastRow() - 1;
+  const pidCol = (tab) => sheets.get(tab).getRange(1, 1, 1, sheets.get(tab).getLastColumn()).getValues()[0].indexOf('PatientID');
+  assert.equal(patientRows(), 1);
+
+  assert.equal(call('migratePatients', manager, { dryRun: true }).forbidden, true);
+  const dry = ok(call('migratePatients', admin, { dryRun: true })).migration;
+  assert.equal(dry.dryRun, true);
+  assert.equal(dry.patientsCreated, 3);
+  assert.equal(dry.recordsLinked, 4);
+  assert.equal(dry.newConflicts, 1);
+  assert.equal(dry.conflicts[0].contactKey, '9333333333');
+  assert.equal(dry.conflicts[0].agents.length, 2);
+  assert.equal(patientRows(), 1, 'a dry run writes nothing');
+  const omitted = ok(call('migratePatients', admin, {})).migration;
+  assert.equal(omitted.dryRun, true, 'dry run unless dryRun is explicitly false');
+
+  const real = ok(call('migratePatients', admin, { dryRun: false })).migration;
+  assert.equal(real.patientsCreated, 3);
+  assert.equal(patientRows(), 4);
+  for (const tab of ['Medpass', 'Pharmacy']) {
+    const col = pidCol(tab);
+    assert.ok(sheets.get(tab).rows.slice(1).every((r) => r[col]), tab + ' rows all linked');
+  }
+  assert.equal(sheets.get('Medpass').rows.find((r) => r[0] === fresh.ID)[pidCol('Medpass')], fresh.PatientID, 'existing links untouched');
+  assert.ok(sheets.get('AuditLog').rows.some((r) => r.some((c) => String(c).includes('Patients migration: 3 patients created'))));
+  // Owners: never changed on records.
+  assert.equal(ok(call('listSales', manager, { type: 'pharmacy' })).sales.find((s) => s.CustomerName === 'Mother').AgentEmail, 'divya@medunited.in');
+
+  const again = ok(call('migratePatients', admin, { dryRun: false })).migration;
+  assert.equal(again.patientsCreated, 0);
+  assert.equal(again.recordsLinked, 0);
+  assert.equal(ctx.migratePatientsDryRun().patientsCreated, 0, 'editor dry run works too');
+});
+
+test('admins resolve owner conflicts: whole household or person by person', () => {
+  const { call, arjun, divya, manager, admin, sheets } = world();
+  legacyRow(sheets, 'Medpass', { CustomerName: 'Father', Contact: '9333333333', AgentEmail: 'arjun@medunited.in', AgentName: 'Arjun Agent' });
+  legacyRow(sheets, 'Pharmacy', { CustomerName: 'Mother', Contact: '9333333333', AgentEmail: 'divya@medunited.in', AgentName: 'Divya Agent', Products: '[]' });
+  legacyRow(sheets, 'Medpass', { CustomerName: 'Gopal', Contact: '9444444444', AgentEmail: 'arjun@medunited.in', AgentName: 'Arjun Agent' });
+  legacyRow(sheets, 'Medpass', { CustomerName: 'Gopal', Contact: '9444444444', AgentEmail: 'divya@medunited.in', AgentName: 'Divya Agent', Status: 'Cancelled', LostReason: 'Other' });
+
+  // Visible before the migration has run.
+  let list = ok(call('listPatientConflicts', manager, {})).conflicts;
+  assert.equal(list.length, 2);
+  assert.equal(call('listPatientConflicts', arjun, {}).forbidden, true);
+  ok(call('migratePatients', admin, { dryRun: false }));
+  list = ok(call('listPatientConflicts', manager, {})).conflicts;
+  const fam = list.find((c) => c.contactKey === '9333333333');
+  assert.equal(fam.people.length, 2);
+  assert.equal(fam.people.find((p) => p.Name === 'Mother').records[0].module, 'Pharmacy');
+
+  assert.equal(call('resolvePatientConflict', manager, { contact: '9333333333', agentEmail: 'arjun@medunited.in' }).forbidden, true);
+  // Split: each parent keeps their agent.
+  const split = ok(call('resolvePatientConflict', admin, { contact: '9333333333', assignments: [
+    { name: 'father', agentEmail: 'arjun@medunited.in' }, { name: 'Mother', agentEmail: 'divya@medunited.in' },
+  ] }));
+  assert.equal(split.remainingConflicts, 0);
+  assert.equal(split.moved.length, 0, 'nobody changed hands');
+  assert.equal(ok(call('checkContact', manager, { contact: '9333333333' })).owners.length, 2);
+
+  // Whole household to Divya: Gopal's open record moves, the closed one stays.
+  const whole = ok(call('resolvePatientConflict', admin, { contact: '9444444444', agentEmail: 'divya@medunited.in' }));
+  assert.equal(whole.moved.length, 1);
+  assert.equal(ok(call('listSales', divya, { type: 'medpass' })).sales.length, 2);
+  assert.equal(ok(call('listSales', arjun, { type: 'medpass' })).sales.filter((s) => s.CustomerName === 'Gopal').length, 0);
+
+  assert.equal(ok(call('listPatientConflicts', manager, {})).conflicts.length, 0);
+  assert.match(call('resolvePatientConflict', admin, { contact: '9444444444', agentEmail: 'arjun@medunited.in' }).message, /no owner conflict/);
+  assert.match(call('resolvePatientConflict', admin, { contact: '9555555555', assignments: [{ name: 'x', agentEmail: 'arjun@medunited.in' }] }).message, /no owner conflict/);
+});
