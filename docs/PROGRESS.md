@@ -17,6 +17,7 @@ Live state: the Sheet's Apps Script project has v2 code saved and
 | Phase | Branch | Status |
 |---|---|---|
 | 1. One agent per patient + module engine | `phase1-patient-ownership` | **Plan written, waiting for OK** |
+| 1b. Medpass pricing, discount approval, 1-year validity | `phase1b-medpass-rules` | Rules given 2026-10-16; open questions below |
 | 2. Lab & Radiology, HOMEKARE modules | — | Blocked on user input (service list, tests, incentive rules) |
 | 3. Bulk reassign | — | Not started |
 | 4. Calmer module pages + widget dashboard | — | Not started (mockup first) |
@@ -115,6 +116,11 @@ All new writes go into `WRITE_ACTIONS`, run under the lock, call `audit(...)`.
 - Reassign dialog text: "moves all of this patient's open records".
 - Admin "Patient conflicts" list (small panel in Settings) with Resolve.
 - Sidebar/modules read from `getModules` (fallback to the built-in two).
+- **Assign-to picker in the New record form for managers/admins** (user
+  request 2026-10-16). Today the create form always sends the logged-in user's
+  email; only the edit panel has a reassign dropdown. Agents don't see the
+  picker (server already forces their own email). If `checkContact` finds an
+  owner, the picker is locked to that owner with "Already handled by X".
 
 ### Also in this phase
 
@@ -134,9 +140,60 @@ All new writes go into `WRITE_ACTIONS`, run under the lock, call `audit(...)`.
 7. Frontend: also-in, notices, conflicts panel
 8. README + demo rebuild
 
+### Open questions for Phase 1
+
+1. Owner deactivated → new records go to the entering/chosen agent and
+   ownership moves to them? (proposed: yes)
+2. Active refill reminders move with the patient on reassign? (proposed: yes)
+3. `SmokeTest.gs`: copy from the live editor via Claude in Chrome, or user pastes it?
+
+---
+
+## Phase 1b: Medpass business rules (from user, 2026-10-16)
+
+- Medpass is a **1-year family pass**: mother, father, 2 children. A **3rd
+  child** can be added for an extra charge.
+- **Fixed price ₹1499.**
+- **Discount up to ₹200**, only with approval.
+- **Converted from OP**: the doctor-consultation (OP) fee already paid is
+  credited against the pass, but the total stays ₹1499. OP conversions are
+  **not eligible** for the ₹200 discount.
+- A patient with an active Medpass doesn't need another for a year.
+
+Proposed implementation (separate PR after Phase 1, built on the module config):
+
+- New columns on Medpass (appended via `ensureHeaders`): `ListPrice`,
+  `DiscountAmount`, `DiscountStatus` (Requested/Approved/Rejected),
+  `DiscountApprovedBy`, `OPCredit`, `ExtraChild`, `ExtraChildFee`,
+  `ValidFrom`, `ValidUntil`.
+- Server computes the amounts; the browser can't set them freely:
+  - Full Price → 1499 (+ 3rd-child fee)
+  - Discounted → 1499 − discount (1–200), completion blocked until a
+    manager/admin approves the discount
+  - Converted From OP → total 1499, collected now = 1499 − OP fee, no discount
+- Price, max discount and 3rd-child fee kept in `Settings` (editable later in Phase 5).
+- Validity: completing a Medpass sets ValidFrom = sale date, ValidUntil = +1 year.
+  New Medpass records for a patient with an active pass are blocked (message
+  shows the expiry date).
+- Existing rows are not rewritten; the rules apply to new completions.
+
+Open questions for 1b:
+
+1. 3rd-child extra charge amount? Any other add-ons?
+2. Who approves the discount (manager, admin, both)? Approve in the app
+   before completion, or can a manager just enter it?
+3. OP fee: fixed or varies? Max? Record OP bill/visit date? Revenue counts
+   1499 or only the cash collected now?
+4. Validity from the sale date (365 days)? Renewal reminder before expiry
+   (e.g. 30 days, like refill reminders)? Allow early renewal?
+5. Record family member names/relations/ages on the pass?
+
 ---
 
 ## Session log
 
 - **2026-10-16** — Cloned repo, read README/SECURITY/backend, created branch
   `phase1-patient-ownership`, wrote this plan. Waiting for user OK.
+- **2026-10-16** — User added Medpass business rules (→ Phase 1b) and asked
+  for an assign-to picker for managers/admins in the form (→ Phase 1).
+  Still waiting for OK + answers to the open questions.
