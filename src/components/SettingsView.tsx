@@ -4,6 +4,7 @@ import { isTeamRole, isSeniorRole } from '../utils/roles';
 import { api } from '../services/api';
 import { initials } from '../utils/date';
 import { PatientOwnersCard } from './PatientOwnersCard';
+import { MedpassSettingsCard } from './MedpassSettingsCard';
 
 interface SettingsViewProps {
   user: User;
@@ -207,6 +208,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ user, onToast }) => 
       </div>
 
       <main>
+        <MedpassSettingsCard user={user} onToast={onToast} />
+
         <PatientOwnersCard user={user} onToast={onToast} />
 
         {/* Bulk Apply Card */}

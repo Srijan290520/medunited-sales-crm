@@ -649,6 +649,12 @@ function requireSession(token) {
   return session;
 }
 
+// Role groups. A senior manager can do everything an admin can except
+// manage admin accounts and hard deletes (records and user accounts).
+var TEAM_ROLES = ['admin', 'senior_manager', 'manager']; // see the whole team, reassign, incentives
+var SENIOR_ROLES = ['admin', 'senior_manager'];          // approvals, users, lists, owner decisions
+var ADMIN_ROLES = ['admin'];                             // admin accounts, hard deletes
+
 function requireRole(session, allowedRoles) {
   if (allowedRoles.indexOf(session.role) === -1) {
     throw new ForbiddenError('You do not have permission to perform this action.');
@@ -686,7 +692,7 @@ function doPost(e) { return handleRequest(e); }
 var WRITE_ACTIONS = [
   'changePassword',
   'createSale', 'importSales', 'updateSale', 'deleteSale', 'reopenSale', 'reassignSale', 'logSaleActivity',
-  'reassignPatient', 'migratePatients', 'resolvePatientConflict',
+  'reassignPatient', 'migratePatients', 'resolvePatientConflict', 'decideMedpassDiscount', 'updateMedpassSettings',
   'createUser', 'updateUser', 'deleteUser', 'updateIncentives', 'requestDeactivation', 'decideUserRequest',
   'markContacted', 'reassignReminder',
   'updateLists', 'updateMonthlyTarget'
@@ -781,6 +787,16 @@ function dispatch(action, token, p) {
     case 'reassignPatient':
       return Object.assign({ error: false }, svc_reassignPatient(session, p));
 
+    // ----- Medpass (price, discounts) -----
+    case 'getMedpassSettings':
+      return { error: false, settings: svc_getMedpassSettings(session) };
+    case 'updateMedpassSettings':
+      return { error: false, settings: svc_updateMedpassSettings(session, p.data || {}) };
+    case 'listPendingDiscounts':
+      return { error: false, discounts: svc_listPendingDiscounts(session) };
+    case 'decideMedpassDiscount':
+      return { error: false, sale: svc_decideMedpassDiscount(session, p) };
+
     // ----- Patients (owners, migration, conflicts) -----
     case 'migratePatients':
       return { error: false, migration: svc_migratePatients(session, p.dryRun) };
@@ -847,7 +863,7 @@ function dispatch(action, token, p) {
 // Handover.gs — deactivating an agent without leaving patients behind.
 //
 // A manager asks for an agent to be deactivated and says who takes over
-// their patients (the successor). An admin approves or rejects. Approving
+// their patients (the successor). An admin or senior manager approves or rejects. Approving
 // moves everything the agent still handles to the successor in one locked,
 // audited step, then deactivates the account:
 //   - every patient they own (with all of those patients' open records in
@@ -926,7 +942,7 @@ function findUserById(id) {
 
 // Manager (or admin): ask for an agent to be deactivated, naming who takes over.
 function svc_requestDeactivation(session, data) {
-  requireRole(session, ['admin', 'manager']);
+  requireRole(session, TEAM_ROLES);
   data = data || {};
   var user = findUserById(data.userId);
   if (!user || !isActive(user.Active)) throw new Error('User not found or already inactive.');
@@ -959,21 +975,22 @@ function svc_requestDeactivation(session, data) {
 }
 
 function svc_listUserRequests(session, includeDecided) {
-  requireRole(session, ['admin', 'manager']);
+  requireRole(session, TEAM_ROLES);
   return sheetToObjects(getUserRequestsSheet())
     .filter(function (r) { return r.ID && (includeDecided || r.Status === 'Pending'); })
     .map(userRequestForClient)
     .sort(function (a, b) { return new Date(b.CreatedAt) - new Date(a.CreatedAt); });
 }
 
-// Admin: approve (hand over, then deactivate) or reject.
+// Admin or senior manager: approve (hand over, then deactivate) or reject.
 function svc_decideUserRequest(session, data) {
-  requireRole(session, ['admin']);
+  requireRole(session, SENIOR_ROLES);
   data = data || {};
   var sheet = getUserRequestsSheet();
   var req = sheetToObjects(sheet).find(function (r) { return String(r.ID) === String(data.id); });
   if (!req) throw new Error('Request not found.');
   if (req.Status !== 'Pending') throw new Error('This request was already decided.');
+  if (lowerEmail(req.UserEmail) === lowerEmail(session.email)) throw new ForbiddenError('You cannot decide a request about your own account.');
   var note = cleanText(data.note, 300);
   var approve = data.approve === true;
   var handover = null;
@@ -1130,6 +1147,10 @@ function svc_importSales(session, type, rows, options) {
       if (isNaN(n) || n < 0 || n > 1e8) errors.push('Amount is not a valid number.');
       else amount = Math.round(n * 100) / 100;
     }
+    // Module rules for imported leads (e.g. Medpass sets its own price).
+    var importHook = moduleHook(type, 'prepareImport');
+    var importFields = importHook ? (importHook({ priceType: priceType, amount: amount }, errors) || {}) : {};
+    if (importFields.Amount !== undefined) amount = importFields.Amount;
 
     var owner = defaultOwner;
     if (cleanText(r.agentEmail)) {
@@ -1164,7 +1185,7 @@ function svc_importSales(session, type, rows, options) {
     if (errors.length) return;
 
     var now = nowIso();
-    toSave.push({
+    toSave.push(Object.assign({
       ID: newId(),
       Date: date || todayKey(),
       AgentEmail: owner.email,
@@ -1193,7 +1214,7 @@ function svc_importSales(session, type, rows, options) {
       CreatedAt: now,
       UpdatedAt: now,
       PatientID: link.patient.ID
-    });
+    }, importFields));
   });
 
   var summary = {
@@ -1277,7 +1298,7 @@ function svc_getLists(session) {
 }
 
 function svc_updateLists(session, data) {
-  requireRole(session, ['admin']);
+  requireRole(session, SENIOR_ROLES);
   var sheet = getListsSheet();
   var before = getLists();
   Object.keys(DEFAULT_LISTS).forEach(function (key) {
@@ -1334,13 +1355,358 @@ function svc_getMonthlyTarget(session) {
 }
 
 function svc_updateMonthlyTarget(session, amount) {
-  requireRole(session, ['admin', 'manager']);
+  requireRole(session, TEAM_ROLES);
   var value = Math.round(Number(amount));
   if (!isFinite(value) || value <= 0 || value > 1e10) throw new Error('Target must be a number greater than 0.');
   var before = getMonthlyTarget();
   setSetting(session, 'monthlyTarget', value);
   audit(session, 'update_target', 'Settings', 'monthlyTarget', { MonthlyTarget: { from: before, to: value } });
   return value;
+}
+
+
+// ---- Medpass.gs ----
+// Medpass.gs — the Medpass family pass: price, members, discounts, validity.
+//
+// A Medpass is a one-year pass for a family: father, mother and their
+// children under 21 (on the sale date). Two children are included; a third
+// can be added for an extra fee. Older children and other relatives (e.g.
+// grandparents on the same phone number) take their own pass.
+//
+// Prices and limits live in the Settings tab (admins / senior managers):
+//   medpassPrice 1499 · medpassMaxDiscount 200 · medpassExtraChildFee 375 ·
+//   medpassIncludedChildren 2 · medpassMaxExtraChildren 1 ·
+//   medpassChildMaxAge 21 · medpassSingleParent TRUE
+//
+// The server works out the amount; the browser can't type one in:
+//   Full Price         price (+ extra-child fees)
+//   Discounted         price − discount (₹1…max) (+ fees). Needs approval by
+//                      an admin or senior manager before it can be Completed.
+//   Converted From OP  the total stays the full price — that is the revenue,
+//                      and what incentives use. The OP consultation fee the
+//                      patient already paid is credited (shown on the bill as
+//                      a discount), so they pay the rest now. No discount.
+// PayableNow is what the customer pays today.
+//
+// Completing a pass sets ValidFrom (sale date) and ValidUntil (one year,
+// inclusive). Someone already covered by an active pass gets a warning, not a
+// block — renewal rules are still to be decided.
+//
+// Rows saved before these rules (no ListPrice) keep the amount they had once
+// Completed; open ones follow the rules on their next save.
+
+var MEDPASS_RELATIONS = ['Father', 'Mother', 'Child'];
+var DISCOUNT_STATUSES = ['Requested', 'Approved', 'Rejected'];
+var MEDPASS_SETTING_KEYS = {
+  price: { key: 'medpassPrice', def: 1499, min: 1, max: 1000000, label: 'Medpass price' },
+  maxDiscount: { key: 'medpassMaxDiscount', def: 200, min: 0, max: 1000000, label: 'Maximum discount' },
+  extraChildFee: { key: 'medpassExtraChildFee', def: 375, min: 0, max: 1000000, label: 'Extra child fee' },
+  includedChildren: { key: 'medpassIncludedChildren', def: 2, min: 0, max: 10, label: 'Children included' },
+  maxExtraChildren: { key: 'medpassMaxExtraChildren', def: 1, min: 0, max: 10, label: 'Extra children allowed' },
+  childMaxAge: { key: 'medpassChildMaxAge', def: 21, min: 1, max: 100, label: 'Children must be younger than' }
+};
+
+function getMedpassSettings() {
+  var stored = {};
+  sheetToObjects(getSettingsSheet()).forEach(function (r) { stored[String(r.Key)] = r.Value; });
+  var out = {};
+  Object.keys(MEDPASS_SETTING_KEYS).forEach(function (k) {
+    var d = MEDPASS_SETTING_KEYS[k];
+    var v = stored[d.key];
+    var n = v === undefined || v === '' ? d.def : Number(v);
+    out[k] = isFinite(n) && n >= d.min && n <= d.max ? n : d.def;
+  });
+  var sp = stored.medpassSingleParent;
+  out.singleParent = sp === undefined || sp === '' ? true : asBool(sp);
+  return out;
+}
+
+function svc_getMedpassSettings(session) { return getMedpassSettings(); }
+
+function svc_updateMedpassSettings(session, data) {
+  requireRole(session, SENIOR_ROLES);
+  data = data || {};
+  var before = getMedpassSettings();
+  var next = JSON.parse(JSON.stringify(before));
+  Object.keys(MEDPASS_SETTING_KEYS).forEach(function (k) {
+    if (data[k] === undefined || data[k] === '') return;
+    var d = MEDPASS_SETTING_KEYS[k];
+    var n = Number(data[k]);
+    if (!isFinite(n) || n < d.min || n > d.max || Math.round(n * 100) / 100 !== n) {
+      throw new Error(d.label + ' must be a number between ' + d.min + ' and ' + d.max + '.');
+    }
+    next[k] = n;
+  });
+  if (data.singleParent !== undefined) next.singleParent = data.singleParent === true || data.singleParent === 'true';
+  if (next.maxDiscount >= next.price) throw new Error('The maximum discount must be less than the price.');
+  ['includedChildren', 'maxExtraChildren', 'childMaxAge'].forEach(function (k) {
+    if (Math.round(next[k]) !== next[k]) throw new Error(MEDPASS_SETTING_KEYS[k].label + ' must be a whole number.');
+  });
+
+  var changes = {};
+  Object.keys(MEDPASS_SETTING_KEYS).forEach(function (k) {
+    if (next[k] !== before[k]) { setSetting(session, MEDPASS_SETTING_KEYS[k].key, next[k]); changes[MEDPASS_SETTING_KEYS[k].label] = { from: before[k], to: next[k] }; }
+  });
+  if (next.singleParent !== before.singleParent) {
+    setSetting(session, 'medpassSingleParent', next.singleParent);
+    changes['Single parent allowed'] = { from: before.singleParent, to: next.singleParent };
+  }
+  if (Object.keys(changes).length) audit(session, 'update_settings', 'Settings', 'medpass', changes, 'Updated Medpass prices and family rules');
+  return next;
+}
+
+// ===== Members =====
+// Whole years between two 'yyyy-MM-dd' days.
+function ageOn(dobKey, onKey) {
+  var b = String(dobKey).split('-').map(Number);
+  var o = String(onKey).split('-').map(Number);
+  var age = o[0] - b[0];
+  if (o[1] < b[1] || (o[1] === b[1] && o[2] < b[2])) age--;
+  return age;
+}
+
+function parseMembers(value) {
+  if (Array.isArray(value)) return value;
+  if (value === undefined || value === null || value === '') return [];
+  try { var v = JSON.parse(value); return Array.isArray(v) ? v : []; } catch (e) { return []; }
+}
+
+// The people a pass covers, checked against the family rules for the sale date.
+function validateMembers(raw, saleDate, settings) {
+  if (typeof raw === 'string') {
+    try { raw = JSON.parse(raw || '[]'); } catch (e) { throw new Error('The family members list is not valid.'); }
+  }
+  if (raw === undefined || raw === null) raw = [];
+  if (!Array.isArray(raw)) throw new Error('The family members list is not valid.');
+  if (raw.length > 10) throw new Error('A Medpass covers at most 10 people.');
+  var on = isDateKey(saleDate) ? saleDate : todayKey();
+  var seen = {};
+  var members = raw.map(function (m) {
+    m = m && typeof m === 'object' ? m : {};
+    var name = cleanText(m.name, 120);
+    if (!name) throw new Error('Every family member needs a name.');
+    if (seen[nameKey(name)]) throw new Error(name + ' is listed twice.');
+    seen[nameKey(name)] = true;
+    var relation = cleanText(m.relation, 20);
+    requireOneOf(relation, MEDPASS_RELATIONS, 'Relation of ' + name);
+    var dob = optionalDateKey(m.dob, 'Date of birth of ' + name);
+    if (dob && dob > on) throw new Error('The date of birth of ' + name + ' is after the sale date.');
+    if (relation === 'Child') {
+      if (!dob) throw new Error('Enter the date of birth of ' + name + ' (children must be under ' + settings.childMaxAge + ').');
+      var age = ageOn(dob, on);
+      if (age >= settings.childMaxAge) {
+        throw new Error(name + ' is ' + age + '. Children must be under ' + settings.childMaxAge + ' to be on the family pass; they need their own Medpass.');
+      }
+    }
+    return { name: name, relation: relation, dob: dob };
+  });
+  var count = function (r) { return members.filter(function (m) { return m.relation === r; }).length; };
+  if (count('Father') > 1 || count('Mother') > 1) throw new Error('A family pass covers one father and one mother. Other relatives need their own Medpass.');
+  var maxChildren = settings.includedChildren + settings.maxExtraChildren;
+  if (count('Child') > maxChildren) {
+    throw new Error('A family pass covers up to ' + maxChildren + ' children (' + settings.includedChildren + ' included' +
+      (settings.maxExtraChildren ? ', ' + settings.maxExtraChildren + ' extra for a fee' : '') + ').');
+  }
+  var parents = count('Father') + count('Mother');
+  if (members.length && parents === 0) throw new Error('Add at least one parent to the family pass.');
+  if (members.length && !settings.singleParent && parents < 2) throw new Error('A family pass needs both parents.');
+  return members;
+}
+
+// ===== Price =====
+function round2(n) { return Math.round(n * 100) / 100; }
+
+// The price fields for a pass. Pending records may leave the discount reason
+// and the OP fee for later; completing needs them (medpassValidateCompletion).
+function medpassPricing(priceType, members, discountAmount, opCredit, settings) {
+  var children = members.filter(function (m) { return m.relation === 'Child'; }).length;
+  var extraFee = Math.max(0, children - settings.includedChildren) * settings.extraChildFee;
+  var total = settings.price + extraFee;
+  var out = { ListPrice: settings.price, ExtraChildFee: extraFee, DiscountAmount: 0, OPCredit: 0, Amount: total, PayableNow: total };
+  if (priceType === 'Discounted') {
+    var d = Number(discountAmount);
+    if (discountAmount === '' || discountAmount === undefined || discountAmount === null || !(d > 0) || d > settings.maxDiscount || round2(d) !== d) {
+      throw new Error('Enter a discount between ₹1 and ₹' + settings.maxDiscount + '.');
+    }
+    out.DiscountAmount = d;
+    out.Amount = round2(total - d);
+    out.PayableNow = out.Amount;
+  } else if (priceType === 'Converted From OP') {
+    var op = opCredit === '' || opCredit === undefined || opCredit === null ? 0 : Number(opCredit);
+    if (!isFinite(op) || op < 0 || op > total || round2(op) !== op) throw new Error('The OP consultation fee must be between ₹0 and ₹' + total + '.');
+    out.OPCredit = op;
+    out.PayableNow = round2(total - op);
+  }
+  return out;
+}
+
+function addOneYear(key) {
+  var p = String(key).split('-').map(Number);
+  var next = Date.UTC(p[0] + 1, p[1] - 1, p[2]) / DAY_MS; // 29 Feb → 1 Mar
+  return dayNumberToKey(next - 1);
+}
+
+function isApprover(session) { return SENIOR_ROLES.indexOf(session.role) !== -1; }
+
+// Members of this pass already covered by another active pass on this number.
+function coverageWarnings(contactKey, members, exceptId) {
+  if (!members.length) return [];
+  var today = todayKey();
+  var covered = {};
+  sheetToObjects(getSaleSheet('medpass')).forEach(function (r) {
+    if (r.Status !== 'Completed' || String(r.ID) === String(exceptId || '')) return;
+    if (recordContactKey(r) !== String(contactKey)) return;
+    var until = dateKey(r.ValidUntil);
+    if (!until || until < today) return;
+    parseMembers(r.Members).forEach(function (m) { covered[nameKey(m.name)] = until; });
+  });
+  return members.filter(function (m) { return covered[nameKey(m.name)]; }).map(function (m) {
+    return m.name + ' is already covered by a Medpass valid until ' + covered[nameKey(m.name)] + '.';
+  });
+}
+
+// ===== Hooks (see Modules.gs) =====
+function medpassPrepareSave(session, ctx) {
+  var data = ctx.data || {};
+  var existing = ctx.existing;
+  var next = ctx.next;
+  var settings = getMedpassSettings();
+
+  var membersIn = data.members !== undefined ? data.members : (existing ? existing.Members : []);
+  var discountIn = data.discountAmount !== undefined ? data.discountAmount : (existing ? existing.DiscountAmount : '');
+  var opIn = data.opCredit !== undefined ? data.opCredit : (existing ? existing.OPCredit : '');
+  var reasonIn = data.discountReason !== undefined ? cleanText(data.discountReason, 300) : String((existing && existing.DiscountReason) || '');
+
+  // A Completed pass keeps its price unless what it is priced on changes
+  // (and passes from before these rules keep theirs entirely).
+  if (existing && existing.Status === 'Completed') {
+    if (existing.ListPrice === '' || existing.ListPrice === undefined) return { fields: {}, warnings: [] };
+    var membersNow = JSON.stringify(validateMembers(membersIn, dateKey(next.Date), settings));
+    var unchanged = membersNow === JSON.stringify(parseMembers(existing.Members)) &&
+      String(next.PriceType) === String(existing.PriceType) &&
+      Number(discountIn || 0) === Number(existing.DiscountAmount || 0) &&
+      Number(opIn || 0) === Number(existing.OPCredit || 0) &&
+      dateKey(next.Date) === dateKey(existing.Date);
+    if (unchanged) return { fields: {}, warnings: [] };
+  }
+
+  var members = validateMembers(membersIn, dateKey(next.Date), settings);
+  var priceType = String(next.PriceType || 'Full Price');
+  var fields = medpassPricing(priceType, members, discountIn, opIn, settings);
+  fields.Members = JSON.stringify(members);
+
+  if (priceType === 'Discounted') {
+    var changed = !existing || existing.PriceType !== 'Discounted' || Number(existing.DiscountAmount || 0) !== fields.DiscountAmount;
+    fields.DiscountReason = reasonIn;
+    if (changed) {
+      if (reasonIn.length < 3) throw new Error('Give a reason for the discount (at least 3 characters).');
+      // An approver's own discount needs no second approval.
+      fields.DiscountStatus = isApprover(session) ? 'Approved' : 'Requested';
+      fields.DiscountRequestedBy = session.name;
+      fields.DiscountDecidedBy = isApprover(session) ? session.name : '';
+    } else {
+      fields.DiscountStatus = String(existing.DiscountStatus || 'Requested');
+      fields.DiscountRequestedBy = String(existing.DiscountRequestedBy || '');
+      fields.DiscountDecidedBy = String(existing.DiscountDecidedBy || '');
+    }
+  } else {
+    fields.DiscountReason = '';
+    fields.DiscountStatus = '';
+    fields.DiscountRequestedBy = '';
+    fields.DiscountDecidedBy = '';
+  }
+
+  if (next.Status === 'Completed') {
+    fields.ValidFrom = dateKey(next.Date);
+    fields.ValidUntil = addOneYear(fields.ValidFrom);
+  } else {
+    fields.ValidFrom = '';
+    fields.ValidUntil = '';
+  }
+
+  var warnings = coverageWarnings(next.ContactKey || (existing && recordContactKey(existing)), members, existing && existing.ID);
+  if (fields.DiscountStatus === 'Requested' && (!existing || existing.DiscountStatus !== 'Requested' || data.discountAmount !== undefined && Number(existing.DiscountAmount || 0) !== fields.DiscountAmount)) {
+    warnings.push('The ₹' + fields.DiscountAmount + ' discount is waiting for approval by an admin or senior manager.');
+  }
+  return { fields: fields, warnings: warnings };
+}
+
+function medpassValidateCompletion(next) {
+  if (next.ListPrice === '' || next.ListPrice === undefined) return; // from before these rules
+  var members = parseMembers(next.Members);
+  if (!members.length) throw new Error('Add the family members this Medpass covers before marking it Completed.');
+  if (next.PriceType === 'Discounted' && next.DiscountStatus !== 'Approved') {
+    throw new Error(next.DiscountStatus === 'Rejected'
+      ? 'The discount was rejected. Change the price type or ask for a different discount.'
+      : 'The discount is waiting for approval by an admin or senior manager.');
+  }
+  if (next.PriceType === 'Converted From OP' && !(Number(next.OPCredit) > 0)) {
+    throw new Error('Enter the OP consultation fee the patient already paid.');
+  }
+}
+
+function medpassClientFields(row) {
+  var until = dateKey(row.ValidUntil);
+  return {
+    Members: parseMembers(row.Members),
+    ListPrice: row.ListPrice === '' || row.ListPrice === undefined ? null : Number(row.ListPrice),
+    ExtraChildFee: Number(row.ExtraChildFee) || 0,
+    DiscountAmount: Number(row.DiscountAmount) || 0,
+    DiscountReason: String(row.DiscountReason || ''),
+    DiscountStatus: DISCOUNT_STATUSES.indexOf(row.DiscountStatus) !== -1 ? row.DiscountStatus : '',
+    DiscountRequestedBy: String(row.DiscountRequestedBy || ''),
+    DiscountDecidedBy: String(row.DiscountDecidedBy || ''),
+    OPCredit: Number(row.OPCredit) || 0,
+    PayableNow: row.PayableNow === '' || row.PayableNow === undefined ? Number(row.Amount) || 0 : Number(row.PayableNow),
+    ValidFrom: dateKey(row.ValidFrom),
+    ValidUntil: until,
+    PassStatus: row.Status !== 'Completed' || !until ? '' : until >= todayKey() ? 'active' : 'expired'
+  };
+}
+
+// Imported leads get the standard price. Discounts need a reason and an
+// approval, so they're set in the app, not from a spreadsheet.
+function medpassPrepareImport(r, errors) {
+  if (r.priceType === 'Discounted') {
+    errors.push('Discounts can\'t be imported — import as Full Price and add the discount in the app.');
+    return {};
+  }
+  var s = getMedpassSettings();
+  return { Amount: s.price, ListPrice: s.price, ExtraChildFee: 0, DiscountAmount: 0, OPCredit: 0, PayableNow: s.price, Members: '[]' };
+}
+
+// ===== Discount approval =====
+function svc_listPendingDiscounts(session) {
+  requireRole(session, TEAM_ROLES);
+  return sheetToObjects(getSaleSheet('medpass'))
+    .filter(function (r) { return r.ID && r.Status === 'Pending' && r.PriceType === 'Discounted' && r.DiscountStatus === 'Requested'; })
+    .map(function (r) {
+      return {
+        ID: String(r.ID), CustomerName: String(r.CustomerName), AgentName: String(r.AgentName),
+        DiscountAmount: Number(r.DiscountAmount) || 0, DiscountReason: String(r.DiscountReason || ''),
+        DiscountRequestedBy: String(r.DiscountRequestedBy || ''), Amount: Number(r.Amount) || 0, UpdatedAt: isoString(r.UpdatedAt)
+      };
+    });
+}
+
+// Admin or senior manager approves or rejects a requested discount.
+function svc_decideMedpassDiscount(session, data) {
+  requireRole(session, SENIOR_ROLES);
+  data = data || {};
+  var sheet = getSaleSheet('medpass');
+  var existing = findSaleRow('medpass', data.id);
+  if (!existing) throw new Error('Record not found.');
+  if (existing.PriceType !== 'Discounted' || existing.DiscountStatus !== 'Requested') throw new Error('This record has no discount waiting for approval.');
+  var approve = data.approve === true;
+  var note = cleanText(data.note, 300);
+  if (!approve && note.length < 3) throw new Error('Say why the discount is rejected (at least 3 characters).');
+  var patch = { DiscountStatus: approve ? 'Approved' : 'Rejected', DiscountDecidedBy: session.name, UpdatedAt: nowIso() };
+  var updated = updateObjectById(sheet, existing.ID, patch);
+  var summary = (approve ? 'Approved' : 'Rejected') + ' the ₹' + existing.DiscountAmount + ' discount' + (note ? '. Note: ' + note : '');
+  addActivity(session, 'medpass', existing.ID, { Type: 'Note', Notes: summary });
+  audit(session, approve ? 'approve_discount' : 'reject_discount', saleEntity('medpass'), existing.ID,
+    { DiscountStatus: { from: 'Requested', to: patch.DiscountStatus } }, summary + ' for ' + existing.CustomerName);
+  return fullSaleForClient('medpass', updated);
 }
 
 
@@ -1360,12 +1726,30 @@ function svc_updateMonthlyTarget(session, amount) {
 //   reminders     true → completed sales get refill reminders
 //   incentive     { kind: 'perSale' } flat ₹ per sale by price type, or
 //                 { kind: 'percent' } % of the amount — rates live on the Users tab
+//   extraHeaders  columns only this module's tab has (added after SALE_HEADERS)
+//   hooks         optional module rules, called by the engine:
+//     prepareSave(session, ctx)   → { fields, warnings } computed fields for a
+//                                   create/update (ctx: isCreate, data, existing, next)
+//     validateCompletion(next)    throws if the record can't be Completed yet
+//     clientFields(row)           extra fields the browser gets
+//     prepareImport(r, errors)    computed fields for an imported lead
+// Hooks are written as function(…) { return name(…); } so they can live in
+// another file (Apps Script doesn't guarantee the order files load in).
 
 var MODULES = {
   medpass: {
     id: 'medpass', label: 'Medpass',
     priceTypes: true, products: false, needsProducts: false, reminders: false,
-    incentive: { kind: 'perSale', fullRateField: 'MedpassFullRate', discountRateField: 'MedpassDiscountRate' }
+    incentive: { kind: 'perSale', fullRateField: 'MedpassFullRate', discountRateField: 'MedpassDiscountRate' },
+    // See Medpass.gs.
+    extraHeaders: ['Members', 'ListPrice', 'ExtraChildFee', 'DiscountAmount', 'DiscountReason', 'DiscountStatus',
+      'DiscountRequestedBy', 'DiscountDecidedBy', 'OPCredit', 'PayableNow', 'ValidFrom', 'ValidUntil'],
+    hooks: {
+      prepareSave: function (session, ctx) { return medpassPrepareSave(session, ctx); },
+      validateCompletion: function (next) { return medpassValidateCompletion(next); },
+      clientFields: function (row) { return medpassClientFields(row); },
+      prepareImport: function (r, errors) { return medpassPrepareImport(r, errors); }
+    }
   },
   pharmacy: {
     id: 'pharmacy', label: 'Pharmacy',
@@ -1379,6 +1763,14 @@ var SALE_TYPES = {};
 Object.keys(MODULES).forEach(function (id) { SALE_TYPES[id] = MODULES[id].label; });
 
 function moduleIds() { return Object.keys(MODULES); }
+
+// Every column of a module's tab: the shared ones, then its own.
+function moduleHeaders(type) { return SALE_HEADERS.concat(getModule(type).extraHeaders || []); }
+
+function moduleHook(type, name) {
+  var hooks = getModule(type).hooks || {};
+  return typeof hooks[name] === 'function' ? hooks[name] : null;
+}
 
 function getModule(type) {
   var mod = MODULES.hasOwnProperty(type) ? MODULES[type] : null;
@@ -1792,7 +2184,7 @@ function movePatients(session, world, patients, target, why) {
 // another agent. Identify the patient by a record (type + id), a PatientID,
 // or a phone number (always the whole household).
 function svc_reassignPatient(session, data) {
-  requireRole(session, ['admin', 'manager']);
+  requireRole(session, TEAM_ROLES);
   data = data || {};
   var world = loadPatientWorld();
   var target = requireOwnerCandidate(world, data.agentEmail);
@@ -1877,7 +2269,7 @@ function migratePatientsCore(session, dryRun) {
 
 // Admin, from the app: a dry run unless dryRun is explicitly false.
 function svc_migratePatients(session, dryRun) {
-  requireRole(session, ['admin']);
+  requireRole(session, SENIOR_ROLES);
   return migratePatientsCore(session, dryRun !== false);
 }
 
@@ -1931,7 +2323,7 @@ function conflictList(world, keys) {
 }
 
 function svc_listPatientConflicts(session) {
-  requireRole(session, ['admin', 'manager']);
+  requireRole(session, TEAM_ROLES);
   var world = loadPatientWorld();
   var keys = {};
   world.records.forEach(function (x) { var k = recordContactKey(x.row); if (k) keys[k] = true; });
@@ -1948,7 +2340,7 @@ function svc_listPatientConflicts(session) {
 //   { contact, assignments: [{ patientId | name, agentEmail }] }
 // Open records move to the chosen agent; closed ones keep theirs.
 function svc_resolvePatientConflict(session, data) {
-  requireRole(session, ['admin']);
+  requireRole(session, SENIOR_ROLES);
   data = data || {};
   var key = phoneKey(data.contact);
   if (!key) throw new Error('A valid phone number is required.');
@@ -2288,7 +2680,7 @@ function svc_markContacted(session, id, outcome) {
 }
 
 function svc_reassignReminder(session, id, agentEmail) {
-  requireRole(session, ['admin', 'manager']);
+  requireRole(session, TEAM_ROLES);
   var sheet = getSheetByName('Reminders');
 
   var agent = sheetToObjects(getSheetByName('Users')).find(function (u) {
@@ -2344,7 +2736,7 @@ function saleSheetName(type) {
 }
 
 function getSaleSheet(type) {
-  return getOrCreateSheet(saleSheetName(type), SALE_HEADERS);
+  return getOrCreateSheet(saleSheetName(type), moduleHeaders(type));
 }
 
 function saleEntity(type) { return getModule(type).label + 'Sale'; }
@@ -2366,11 +2758,12 @@ function followUpStatusOf(row) {
 // A sale row as the browser should see it. Drive links never leave the
 // server — the browser gets "attached" and fetches images via getAttachment.
 // `extras` (from recordExtras in Patients.gs) adds the patient fields.
-function saleForClient(row, activities, extras) {
+function saleForClient(row, activities, extras, type) {
   if (!row) return row;
   var acts = activities || [];
   var ex = extras || { PatientID: String(row.PatientID || ''), AlsoIn: [], HouseholdSize: 1 };
-  return {
+  var own = type && moduleHook(type, 'clientFields');
+  return Object.assign({
     PatientID: ex.PatientID,
     AlsoIn: ex.AlsoIn,
     HouseholdSize: ex.HouseholdSize,
@@ -2402,7 +2795,7 @@ function saleForClient(row, activities, extras) {
     NextFollowUp: dateKey(row.NextFollowUp),
     FollowUpStatus: followUpStatusOf(row),
     AttemptCount: acts.filter(function (a) { return a.Direction === 'Outgoing'; }).length
-  };
+  }, own ? own(row) : {});
 }
 
 function findSaleRow(type, id) {
@@ -2418,7 +2811,7 @@ function requireSale(session, type, id) {
 // ===== Reads =====
 // A record with fresh activities and patient fields (used after every write).
 function fullSaleForClient(type, row) {
-  return saleForClient(row, activitiesForSale(row.ID), recordExtras(loadPatientWorld())(type, row));
+  return saleForClient(row, activitiesForSale(row.ID), recordExtras(loadPatientWorld())(type, row), type);
 }
 
 function svc_listSales(session, type) {
@@ -2427,7 +2820,7 @@ function svc_listSales(session, type) {
   var extras = recordExtras(world);
   var rows = world.records.filter(function (x) { return x.type === type && canAccessSale(session, x.row); });
   var acts = activitiesBySale();
-  var list = rows.map(function (x) { return saleForClient(x.row, acts[String(x.row.ID)], extras(type, x.row)); });
+  var list = rows.map(function (x) { return saleForClient(x.row, acts[String(x.row.ID)], extras(type, x.row), type); });
   var rank = { overdue: 0, today: 1, upcoming: 2, '': 3 };
   list.sort(function (a, b) {
     if (a.Status === 'Pending' && b.Status === 'Pending' && rank[a.FollowUpStatus] !== rank[b.FollowUpStatus]) {
@@ -2441,7 +2834,7 @@ function svc_listSales(session, type) {
 function saleDetail(session, type, row) {
   var acts = activitiesForSale(row.ID);
   return {
-    sale: saleForClient(row, acts, recordExtras(loadPatientWorld())(type, row)),
+    sale: saleForClient(row, acts, recordExtras(loadPatientWorld())(type, row), type),
     activities: acts.map(activityForClient),
     auditHistory: auditHistoryFor([row.ID])
   };
@@ -2534,6 +2927,17 @@ function validateCompletion(next, type) {
   if (!next.hasPayment) throw new Error('A payment screenshot is required to mark this sale as Completed.');
   if (next.PaymentMethod === 'UPI' && !next.UTR) throw new Error('UTR number is required for UPI payments.');
   if (!(Number(next.Amount) > 0)) throw new Error('Enter the sale amount before marking it Completed.');
+  var hook = moduleHook(type, 'validateCompletion');
+  if (hook) hook(next);
+}
+
+// Is a stored cell the same as a newly computed value? (Numbers come back
+// from the sheet as numbers, blanks as '', booleans as booleans.)
+function sameCellValue(before, after) {
+  if (typeof after === 'number') return before !== '' && before !== null && before !== undefined && Number(before) === after;
+  if (typeof after === 'boolean') return asBool(before) === after;
+  if (Object.prototype.toString.call(before) === '[object Date]') return dateKey(before) === String(after);
+  return String(before === undefined || before === null ? '' : before) === String(after);
 }
 
 function cleanAmount(value) {
@@ -2684,8 +3088,14 @@ function svc_createSale(session, type, data) {
 
   var bill = attachmentIntent(data.billScreenshot, '');
   var pay = attachmentIntent(data.paymentScreenshot, '');
-  validateCompletion({ Status: status, PaymentMethod: paymentMethod, UTR: utr, Amount: amount, hasBill: bill.present, hasPayment: pay.present,
-    Products: JSON.stringify(products) }, type);
+  // Module rules, e.g. Medpass works out its own price from the members.
+  var prep = moduleHook(type, 'prepareSave');
+  var computed = prep ? prep(session, { isCreate: true, data: data, existing: null,
+    next: { ID: '', Status: status, PriceType: priceType, Date: date, ContactKey: contactKey, CustomerName: customerName } }) : null;
+  var computedFields = (computed && computed.fields) || {};
+  if (computedFields.Amount !== undefined) amount = computedFields.Amount;
+  validateCompletion(Object.assign({ Status: status, PaymentMethod: paymentMethod, UTR: utr, Amount: amount, hasBill: bill.present, hasPayment: pay.present,
+    Products: JSON.stringify(products), PriceType: priceType }, computedFields), type);
 
   var owner = link.owner;
   var id = newId();
@@ -2720,13 +3130,15 @@ function svc_createSale(session, type, data) {
     UpdatedAt: now,
     PatientID: link.patient.ID
   };
+  Object.keys(computedFields).forEach(function (k) { sale[k] = computedFields[k]; });
   savePatientChanges(world);
   appendObject(sheet, sale);
   afterSaleSaved(type, sale);
   audit(session, status === 'Completed' ? 'complete' : 'create', saleEntity(type), id, saleChanges(null, sale),
     'Created ' + SALE_TYPES[type] + ' record for ' + customerName + ' (' + status + ')' +
     (link.notice && !link.conflict ? '; assigned to ' + owner.name + ', who handles this patient' : ''));
-  return { sale: fullSaleForClient(type, sale), notice: link.notice };
+  var notice = [link.notice].concat((computed && computed.warnings) || []).filter(Boolean).join(' ');
+  return { sale: fullSaleForClient(type, sale), notice: notice };
 }
 
 // ===== Update =====
@@ -2786,6 +3198,21 @@ function svc_updateSale(session, type, id, data) {
     if (same) delete patch[k];
   });
 
+  // Module rules, e.g. Medpass recomputes its price from members/discount.
+  // Computed fields that end up the same as before are not changes.
+  var warnings = [];
+  var prep = moduleHook(type, 'prepareSave');
+  if (prep) {
+    var draft = {};
+    moduleHeaders(type).forEach(function (h) { draft[h] = patch[h] !== undefined ? patch[h] : existing[h]; });
+    var computed = prep(session, { isCreate: false, data: data, existing: existing, next: draft }) || {};
+    Object.keys(computed.fields || {}).forEach(function (k) {
+      if (sameCellValue(existing[k], computed.fields[k])) delete patch[k];
+      else patch[k] = computed.fields[k];
+    });
+    warnings = computed.warnings || [];
+  }
+
   var bill = attachmentIntent(data.billScreenshot, existing.BillScreenshotUrl);
   var pay = attachmentIntent(data.paymentScreenshot, existing.PaymentScreenshotUrl);
 
@@ -2797,7 +3224,7 @@ function svc_updateSale(session, type, id, data) {
   }
 
   var next = {};
-  SALE_HEADERS.forEach(function (h) { next[h] = patch[h] !== undefined ? patch[h] : existing[h]; });
+  moduleHeaders(type).forEach(function (h) { next[h] = patch[h] !== undefined ? patch[h] : existing[h]; });
   if (next.Direction === 'Outbound' && next.HeardFrom) { patch.HeardFrom = ''; next.HeardFrom = ''; }
 
   // Status transitions.
@@ -2887,7 +3314,8 @@ function svc_updateSale(session, type, id, data) {
   if (pay.kind === 'upload') patch.PaymentScreenshotUrl = saveAttachmentFromDataUrl(data.paymentScreenshot, type + '_' + existing.ID + '_payment');
   if (pay.kind === 'clear') patch.PaymentScreenshotUrl = '';
 
-  if (Object.keys(patch).length === 0) return { sale: fullSaleForClient(type, existing), notice: '' };
+  notice = [notice].concat(warnings).filter(Boolean).join(' ');
+  if (Object.keys(patch).length === 0) return { sale: fullSaleForClient(type, existing), notice: notice };
 
   if (world) savePatientChanges(world);
   patch.UpdatedAt = nowIso();
@@ -2910,7 +3338,7 @@ function svc_reopenSale(session, type, id, reason) {
   var why = cleanText(reason, 300);
   if (existing.Status === 'Pending') throw new Error('This record is already open.');
   if (existing.Status === 'Completed') {
-    requireRole(session, ['admin', 'manager']);
+    requireRole(session, TEAM_ROLES);
     if (why.length < 3) throw new Error('Give a reason for reopening a completed sale.');
   }
   var world = loadPatientWorld();
@@ -2918,6 +3346,8 @@ function svc_reopenSale(session, type, id, reason) {
 
   var patch = { Status: 'Pending', LostReason: '', Temperature: 'Hot', NextFollowUp: todayKey(), UpdatedAt: nowIso() };
   Object.keys(own).forEach(function (k) { patch[k] = own[k]; });
+  // A reopened pass is no longer valid (Medpass).
+  if (moduleHeaders(type).indexOf('ValidUntil') !== -1) { patch.ValidFrom = ''; patch.ValidUntil = ''; }
   savePatientChanges(world);
   var updated = updateObjectById(sheet, existing.ID, patch);
   var summary = why || 'Customer came back and is interested. Reopened as a Hot lead.';
@@ -2938,7 +3368,7 @@ function svc_reassignSale(session, type, id, agentEmail, scope, reason) {
 }
 
 function svc_deleteSale(session, type, id, reason) {
-  requireRole(session, ['admin']);
+  requireRole(session, ADMIN_ROLES); // hard delete: admins only
   var why = cleanText(reason, 300);
   if (why.length < 3) throw new Error('A reason (at least 3 characters) is required to delete a record.');
   var sheet = getSaleSheet(type);
@@ -3258,10 +3688,11 @@ function smokeTestV2() {
   check('bad token rejected', r.authError === true, r.message);
   r = JSON.parse(doGet().getContent());
   check('GET refused', r.error === true);
-  ['Medpass', 'Pharmacy'].forEach(function (n) {
+  moduleIds().forEach(function (t) {
+    var n = SALE_TYPES[t];
     var h = sheetHeaders(getSheetByName(n));
-    var miss = SALE_HEADERS.filter(function (x) { return h.indexOf(x) === -1; });
-    check(n + ' has all v2 columns', miss.length === 0, miss.join(','));
+    var miss = moduleHeaders(t).filter(function (x) { return h.indexOf(x) === -1; });
+    check(n + ' has all its columns', miss.length === 0, miss.join(','));
   });
   ['SaleActivities', 'Settings', 'Lists', 'AuditLog', 'Reminders', 'Users', 'Patients', 'UserRequests'].forEach(function (n) {
     check('tab ' + n + ' exists', !!getSpreadsheet().getSheetByName(n));
@@ -3295,11 +3726,11 @@ function smokeTestV2() {
 
 
 // ---- UserService.gs ----
-// UserService.gs — user management (admin) and incentive rates (manager+)
+// UserService.gs — user accounts (admins; senior managers for non-admin accounts) and incentive rates (managers+)
 
 var USER_HEADERS = ['ID', 'Name', 'Email', 'PasswordHash', 'Salt', 'Role', 'MedpassFullRate', 'MedpassDiscountRate',
   'PharmacyIncentivePercent', 'Active', 'CreatedAt', 'MustChangePassword'];
-var ROLES = ['admin', 'manager', 'agent'];
+var ROLES = ['admin', 'senior_manager', 'manager', 'agent'];
 
 function getUsersSheet() { return getOrCreateSheet('Users', USER_HEADERS); }
 
@@ -3320,12 +3751,12 @@ function sanitizeUser(u) {
 }
 
 function svc_listUsers(session) {
-  requireRole(session, ['admin', 'manager']);
+  requireRole(session, TEAM_ROLES);
   return sheetToObjects(getUsersSheet()).filter(function (u) { return u.ID; }).map(sanitizeUser);
 }
 
 function svc_createUser(session, data) {
-  requireRole(session, ['admin']);
+  requireRole(session, SENIOR_ROLES);
 
   var email = cleanEmail(data.email);
   var name = cleanText(data.name, 80);
@@ -3335,6 +3766,7 @@ function svc_createUser(session, data) {
   if (!email || !name || !password) throw new Error('Name, email and password are required.');
   if (!isValidEmail(email)) throw new Error('Enter a valid email address.');
   requireOneOf(role, ROLES, 'Role');
+  if (role === 'admin') requireRole(session, ADMIN_ROLES); // only admins create admins
   validatePasswordStrength(password, email);
 
   var sheet = getUsersSheet();
@@ -3369,11 +3801,13 @@ function otherActiveAdmins(users, id) {
 }
 
 function svc_updateUser(session, id, data) {
-  requireRole(session, ['admin']);
+  requireRole(session, SENIOR_ROLES);
   var sheet = getUsersSheet();
   var users = sheetToObjects(sheet);
   var existing = users.find(function (u) { return String(u.ID) === String(id); });
   if (!existing) throw new Error('User not found.');
+  // Admin accounts — and making someone an admin — are for admins only.
+  if (existing.Role === 'admin' || data.role === 'admin') requireRole(session, ADMIN_ROLES);
   var patch = {};
 
   if (data.name !== undefined) {
@@ -3429,7 +3863,7 @@ function svc_updateUser(session, id, data) {
 // otherwise their sales would lose their owner and incentive rates. Those
 // accounts should be deactivated instead (they keep their history).
 function svc_deleteUser(session, id, reason) {
-  requireRole(session, ['admin']);
+  requireRole(session, ADMIN_ROLES); // hard delete: admins only
   var why = cleanText(reason, 300);
   if (why.length < 3) throw new Error('A reason is required to delete a user account.');
   if (String(id) === String(session.id)) throw new Error('You cannot delete your own account.');
@@ -3453,11 +3887,11 @@ function svc_deleteUser(session, id, reason) {
   return { deleted: true };
 }
 
-// Incentive rates are the one thing a manager (not just admin) may edit.
+// Incentive rates are the one thing a manager (not just admin / senior manager) may edit.
 // Medpass pays a flat ₹ rate per sale (Full Price vs Discounted); Pharmacy
 // pays a percentage of the sale amount.
 function svc_updateIncentives(session, id, data) {
-  requireRole(session, ['admin', 'manager']);
+  requireRole(session, TEAM_ROLES);
   var sheet = getUsersSheet();
   var patch = {};
 

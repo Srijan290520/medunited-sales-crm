@@ -15,9 +15,13 @@ import {
   OptionLists,
   AuditEntry,
   ContactCheck,
+  MedpassMember,
+  MedpassSettings,
 } from '../types';
 import { api } from '../services/api';
-import { isTeamRole } from '../utils/roles';
+import { isTeamRole, isSeniorRole } from '../utils/roles';
+import { MedpassMembersEditor, MedpassQuoteBox, medpassQuote } from './MedpassFields';
+import { PendingDiscountsPanel } from './PendingDiscountsPanel';
 import { formatMoney, formatDate, formatDateTime, formatTimeAgo, initials, todayKey } from '../utils/date';
 import { exportToCsv, CsvColumn } from '../utils/exportCsv';
 import { readScreenshot } from '../utils/image';
@@ -96,6 +100,13 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, user, onToast }) => 
   const [formAmount, setFormAmount] = useState<string>('');
   const [formStatus, setFormStatus] = useState<SaleStatus>('Pending');
   const [formPriceType, setFormPriceType] = useState<PriceType>('Full Price');
+  // Medpass: who the pass covers, discount and OP fee (the server sets the price).
+  const [formMembers, setFormMembers] = useState<MedpassMember[]>([]);
+  const [formDiscount, setFormDiscount] = useState<string>('');
+  const [formDiscountReason, setFormDiscountReason] = useState<string>('');
+  const [formOpCredit, setFormOpCredit] = useState<string>('');
+  const [medpassSettings, setMedpassSettings] = useState<MedpassSettings | null>(null);
+  const [discountsKey, setDiscountsKey] = useState<number>(0);
   const [formPaymentMethod, setFormPaymentMethod] = useState<string>('');
   const [formUtr, setFormUtr] = useState<string>('');
   const [formBillScreenshot, setFormBillScreenshot] = useState<string>('');
@@ -227,6 +238,11 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, user, onToast }) => 
 
       const optRes = await api.getOptionLists();
       if (!optRes.error && optRes.lists) setOptions(optRes.lists);
+      if (isMedpass) {
+        const mpRes = await api.getMedpassSettings();
+        if (!mpRes.error) setMedpassSettings(mpRes.settings);
+        setDiscountsKey((k) => k + 1);
+      }
 
       if (canManageAll) {
         const uRes = await api.listUsers();
@@ -304,6 +320,10 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, user, onToast }) => 
     setFormContact('');
     setFormDate(todayKey());
     setFormDetail('');
+    setFormMembers([]);
+    setFormDiscount('');
+    setFormDiscountReason('');
+    setFormOpCredit('');
     setFormAmount('');
     setFormStatus('Pending');
     setFormPriceType('Full Price');
@@ -340,6 +360,10 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, user, onToast }) => 
     setFormContact(sale.Contact);
     setFormDate(sale.Date || todayKey());
     setFormDetail(sale.Detail || '');
+    setFormMembers((sale.Members || []).map((m) => ({ ...m })));
+    setFormDiscount(sale.DiscountAmount ? String(sale.DiscountAmount) : '');
+    setFormDiscountReason(sale.DiscountReason || '');
+    setFormOpCredit(sale.OPCredit ? String(sale.OPCredit) : '');
     setFormAmount(String(sale.Amount || ''));
     setFormStatus(sale.Status);
     setFormPriceType((sale.PriceType as PriceType) || 'Full Price');
@@ -500,6 +524,12 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, user, onToast }) => 
     if (isMedpass) {
       payload.detail = formDetail.trim();
       payload.priceType = formPriceType;
+      payload.members = formMembers.map((m) => ({ name: m.name.trim(), relation: m.relation, dob: m.dob }));
+      if (formPriceType === 'Discounted') {
+        payload.discountAmount = formDiscount === '' ? '' : Number(formDiscount);
+        payload.discountReason = formDiscountReason.trim();
+      }
+      if (formPriceType === 'Converted From OP') payload.opCredit = formOpCredit === '' ? '' : Number(formOpCredit);
     } else {
       payload.products = namedProducts;
     }
@@ -812,6 +842,24 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, user, onToast }) => 
   // Prescribed medications and dosing are NEVER locked - agents and managers can always adjust dosages & refills
   const isLocked = false;
 
+  // Medpass price preview; records from before the price rules keep their amount once completed.
+  const medpassLegacyAmount = editingSale && editingSale.Status === 'Completed' && (editingSale.ListPrice === null || editingSale.ListPrice === undefined) ? editingSale.Amount : null;
+  const quote = isMedpass && medpassSettings ? medpassQuote(medpassSettings, formMembers, formPriceType, formDiscount, formOpCredit) : null;
+
+  const decideDiscount = async (approve: boolean) => {
+    if (!editingSale) return;
+    let note = '';
+    if (!approve) {
+      note = (window.prompt('Why is this discount rejected?') || '').trim();
+      if (note.length < 3) return;
+    }
+    const res = await api.decideMedpassDiscount(editingSale.ID, approve, note);
+    if (res.error) return onToast(res.message || 'Could not save the decision.', 'error');
+    onToast(approve ? 'Discount approved.' : 'Discount rejected.', 'success');
+    setEditingSale(res.sale);
+    loadData();
+  };
+
   // Tab filtering
   const inTab = (s: Sale, tab: string) => {
     if (tab === 'due') {
@@ -981,6 +1029,16 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, user, onToast }) => 
       </div>
 
       <main>
+        {isMedpass && canManageAll && (
+          <PendingDiscountsPanel
+            user={user}
+            refreshKey={discountsKey}
+            onToast={onToast}
+            onChanged={loadData}
+            onOpen={(id) => { const s = sales.find((x) => x.ID === id); if (s) openEditModal(s); }}
+          />
+        )}
+
         {/* Pipeline Tabs */}
         <div className="lead-tabs view-toggle" style={{ maxWidth: '780px', marginBottom: '16px' }}>
           {(['due', 'pending', 'completed', 'cancelled', 'all'] as const).map((t) => (
@@ -1566,6 +1624,22 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, user, onToast }) => 
                       {editingSale.AlsoIn && editingSale.AlsoIn.length > 0 && (
                         <span className="also-in-chip">Also in: {editingSale.AlsoIn.join(', ')}</span>
                       )}
+                      {isMedpass && editingSale.PassStatus && (
+                        <span className={`also-in-chip ${editingSale.PassStatus === 'expired' ? 'muted' : ''}`}>
+                          {editingSale.PassStatus === 'active' ? 'Valid until' : 'Expired'} {formatDate(editingSale.ValidUntil || '')}
+                        </span>
+                      )}
+                      {isMedpass && editingSale.DiscountStatus === 'Requested' && (
+                        <>
+                          <span className="also-in-chip" style={{ background: '#fef3c7', color: '#92400e' }}>Discount ₹{editingSale.DiscountAmount} waiting for approval</span>
+                          {isSeniorRole(user.Role) && (
+                            <>
+                              <button type="button" style={{ padding: '4px 10px', fontSize: '0.78rem' }} onClick={() => decideDiscount(true)}>Approve</button>
+                              <button type="button" className="secondary" style={{ padding: '4px 10px', fontSize: '0.78rem' }} onClick={() => decideDiscount(false)}>Reject</button>
+                            </>
+                          )}
+                        </>
+                      )}
                     </>
                   )}
                   <button type="button" className="popup-close" onClick={() => setModalOpen(false)} title="Close">
@@ -1636,13 +1710,13 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, user, onToast }) => 
 
                     <button
                       type="button"
-                      className={`stepper-step ${activeStep === 2 ? 'active' : ''} ${(isMedpass ? !!formAmount : formProducts.some((p) => p.name.trim())) ? 'completed' : ''}`}
+                      className={`stepper-step ${activeStep === 2 ? 'active' : ''} ${(isMedpass ? formMembers.length > 0 : formProducts.some((p) => p.name.trim())) ? 'completed' : ''}`}
                       onClick={() => {
                         if (formCustomerName.trim() || editingSale) setActiveStep(2);
                       }}
                     >
                       <div className="step-num">
-                        {(isMedpass ? !!formAmount : formProducts.some((p) => p.name.trim())) && activeStep > 2 ? '✓' : '2'}
+                        {(isMedpass ? formMembers.length > 0 : formProducts.some((p) => p.name.trim())) && activeStep > 2 ? '✓' : '2'}
                       </div>
                       <div className="step-meta">
                         <span className="step-name">{isMedpass ? '2. Medpass Plan' : '2. Medicines &amp; Dosing'}</span>
@@ -1656,7 +1730,7 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, user, onToast }) => 
                       onClick={() => {
                         if (
                           (formCustomerName.trim() &&
-                            (isMedpass ? !!formAmount : formProducts.some((p) => p.name.trim()))) ||
+                            (isMedpass ? formMembers.length > 0 : formProducts.some((p) => p.name.trim()))) ||
                           editingSale
                         ) {
                           setActiveStep(3);
@@ -2004,6 +2078,13 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, user, onToast }) => 
                               />
                             </div>
 
+                            {isMedpass ? (
+                              <div>
+                                <label>Price</label>
+                                {quote ? <MedpassQuoteBox quote={quote} priceType={formPriceType} legacyAmount={medpassLegacyAmount}
+                                  discountStatus={editingSale && Number(formDiscount) === editingSale.DiscountAmount ? editingSale.DiscountStatus : ''} /> : <div className="muted small-text">Loading prices…</div>}
+                              </div>
+                            ) : (
                             <div>
                               <label>Total Amount (₹) *</label>
                               <div style={{ position: 'relative' }}>
@@ -2033,6 +2114,7 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, user, onToast }) => 
                                 />
                               </div>
                             </div>
+                            )}
                           </div>
                         </div>
 
@@ -2753,6 +2835,34 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, user, onToast }) => 
                                   placeholder="e.g. Medpass Senior Annual"
                                 />
                               </div>
+                            </div>
+
+                            {formPriceType === 'Discounted' && (
+                              <div className="form-row" style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '16px', marginTop: '12px' }}>
+                                <div>
+                                  <label htmlFor="mp-discount">Discount (₹, up to {medpassSettings?.maxDiscount ?? 200}) *</label>
+                                  <input id="mp-discount" type="number" min="1" max={medpassSettings?.maxDiscount ?? 200} disabled={isFinancialLocked} value={formDiscount} onChange={(e) => setFormDiscount(e.target.value)} />
+                                </div>
+                                <div>
+                                  <label htmlFor="mp-discount-reason">Reason for the discount *</label>
+                                  <input id="mp-discount-reason" type="text" disabled={isFinancialLocked} value={formDiscountReason} onChange={(e) => setFormDiscountReason(e.target.value)} placeholder="e.g. Health camp offer" />
+                                </div>
+                                <div className="muted small-text" style={{ gridColumn: '1 / -1' }}>
+                                  {editingSale?.DiscountStatus === 'Approved' ? `Approved by ${editingSale.DiscountDecidedBy}.` : editingSale?.DiscountStatus === 'Rejected' ? `Rejected by ${editingSale.DiscountDecidedBy}. Change the amount to ask again, or use Full Price.` : 'An admin or senior manager approves discounts before the sale can be completed.'}
+                                </div>
+                              </div>
+                            )}
+
+                            {formPriceType === 'Converted From OP' && (
+                              <div style={{ marginTop: '12px', maxWidth: '320px' }}>
+                                <label htmlFor="mp-op">OP consultation fee already paid (₹)</label>
+                                <input id="mp-op" type="number" min="0" disabled={isFinancialLocked} value={formOpCredit} onChange={(e) => setFormOpCredit(e.target.value)} />
+                                <div className="muted small-text">Credited against the pass (shown as a discount on the bill). The full price still counts as the sale. No other discount applies.</div>
+                              </div>
+                            )}
+
+                            <div style={{ marginTop: '16px' }}>
+                              <MedpassMembersEditor members={formMembers} onChange={setFormMembers} settings={medpassSettings} saleDate={formDate || todayKey()} disabled={isFinancialLocked} />
                             </div>
                           </div>
                         )}

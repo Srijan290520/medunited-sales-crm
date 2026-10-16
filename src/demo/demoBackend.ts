@@ -9,6 +9,7 @@ import { createGasBackend } from './gasBackend.generated.js';
 export const DEMO_PASSWORD = 'Preview-2026';
 export const DEMO_ACCOUNTS = [
   { label: 'Admin', email: 'admin@medunited.demo', note: 'everything, incl. users & settings' },
+  { label: 'Senior manager', email: 'meena@medunited.demo', note: 'approves discounts & deactivations' },
   { label: 'Manager', email: 'pooja@medunited.demo', note: 'whole team, incentives, reassign' },
   { label: 'Agent', email: 'rahul@medunited.demo', note: 'own records only' },
   { label: 'New agent', email: 'kiran@medunited.demo', note: 'first login: must set a password', password: 'Start-Now-2026' },
@@ -85,6 +86,7 @@ function seed() {
   const admin = login('admin@medunited.demo', 'Setup-Temp-2026', DEMO_PASSWORD);
 
   const people = [
+    ['Meena Iyer', 'meena@medunited.demo', 'senior_manager'],
     ['Pooja Varma', 'pooja@medunited.demo', 'manager'],
     ['Rahul Sharma', 'rahul@medunited.demo', 'agent'],
     ['Priya Reddy', 'priya@medunited.demo', 'agent'],
@@ -95,6 +97,7 @@ function seed() {
     const pw = email.startsWith('kiran') ? 'Start-Now-2026' : 'Temp-Start-2026';
     ids[email] = raw('createUser', admin, { data: { name, email, role, password: pw } }).user.ID;
   }
+  const senior = login('meena@medunited.demo', 'Temp-Start-2026', DEMO_PASSWORD);
   const manager = login('pooja@medunited.demo', 'Temp-Start-2026', DEMO_PASSWORD);
   const rahul = login('rahul@medunited.demo', 'Temp-Start-2026', DEMO_PASSWORD);
   const priya = login('priya@medunited.demo', 'Temp-Start-2026', DEMO_PASSWORD);
@@ -105,14 +108,19 @@ function seed() {
 
   const proof = (amt: string) => ({ billScreenshot: receiptImage('MedUnited bill', amt), paymentScreenshot: receiptImage('UPI payment', amt) });
   const base = { direction: 'Inbound', consent: true, doNotCall: false };
+  const fam = (father: string, mother: string, ...kids: [string, string][]) => [
+    ...(father ? [{ name: father, relation: 'Father', dob: '1982-05-14' }] : []),
+    ...(mother ? [{ name: mother, relation: 'Mother', dob: '1985-09-02' }] : []),
+    ...kids.map(([name, dob]) => ({ name, relation: 'Child', dob })),
+  ];
 
   const medpass: [string, any][] = [
-    [rahul, { customerName: 'Ramesh Kumar', contact: '9848012345', priceType: 'Full Price', detail: 'Family Annual plan (4 members)', temperature: 'Hot', channel: 'Phone call', heardFrom: 'Doctor referral', nextFollowUp: istDate(0), notes: 'Wants to start before his mother\'s surgery next week.' }],
-    [rahul, { customerName: 'Sunita Devi', contact: '9701122334', priceType: 'Discounted', detail: 'Senior Citizen plan', temperature: 'Warm', channel: 'Health camp', heardFrom: 'Health camp', nextFollowUp: istDate(-2), notes: 'Met at Kukatpally camp. Asked for brochure on WhatsApp.' }],
+    [rahul, { customerName: 'Ramesh Kumar', contact: '9848012345', priceType: 'Full Price', members: fam('Ramesh Kumar', 'Usha Kumar', ['Arjun', '2011-04-04'], ['Divya', '2015-08-15']), detail: 'Family Annual plan (4 members)', temperature: 'Hot', channel: 'Phone call', heardFrom: 'Doctor referral', nextFollowUp: istDate(0), notes: 'Wants to start before his mother\'s surgery next week.' }],
+    [rahul, { customerName: 'Sunita Devi', contact: '9701122334', priceType: 'Discounted', discountAmount: 200, discountReason: 'Health camp offer', members: fam('', 'Sunita Devi', ['Kavya', '2010-03-12']), detail: 'Single parent with daughter', temperature: 'Warm', channel: 'Health camp', heardFrom: 'Health camp', nextFollowUp: istDate(-2), notes: 'Met at Kukatpally camp. Asked for brochure on WhatsApp.' }],
     [rahul, { customerName: 'Abdul Rahman', contact: '9866554433', priceType: 'Full Price', detail: 'Individual Annual', temperature: 'Cold', channel: 'Website form', heardFrom: 'Google search', nextFollowUp: istDate(4) }],
-    [rahul, { customerName: 'Lakshmi Narayana', contact: '9912345678', priceType: 'Full Price', detail: 'Family Annual plan', status: 'Completed', amount: 8999, paymentMethod: 'UPI', utr: '428812345671', date: istDate(-6), channel: 'Walk-in', heardFrom: 'Existing patient', ...proof('₹8,999') }],
-    [rahul, { customerName: 'Venkat Rao', contact: '9440011223', priceType: 'Converted From OP', detail: 'Individual Annual', status: 'Completed', amount: 4999, paymentMethod: 'Card', date: istDate(-12), channel: 'OPD/IPD referral', ...proof('₹4,999') }],
-    [priya, { customerName: 'Fatima Begum', contact: '9393939393', priceType: 'Discounted', detail: 'Senior Citizen plan', status: 'Completed', amount: 3499, paymentMethod: 'Cash', date: istDate(-3), channel: 'Phone call', heardFrom: 'Friend or family', ...proof('₹3,499') }],
+    [rahul, { customerName: 'Lakshmi Narayana', contact: '9912345678', priceType: 'Full Price', detail: 'Family with three children', members: fam('Lakshmi Narayana', 'Padma', ['Ravi', '2009-01-20'], ['Rani', '2012-07-08'], ['Raju', '2016-11-30']), status: 'Completed', paymentMethod: 'UPI', utr: '428812345671', date: istDate(-6), channel: 'Walk-in', heardFrom: 'Existing patient', ...proof('₹1,874') }],
+    [rahul, { customerName: 'Venkat Rao', contact: '9440011223', priceType: 'Converted From OP', opCredit: 500, detail: 'Came in for an OP visit', members: fam('Venkat Rao', 'Saroja'), status: 'Completed', paymentMethod: 'Card', date: istDate(-12), channel: 'OPD/IPD referral', ...proof('₹999') }],
+    [senior, { agentEmail: 'priya@medunited.demo', customerName: 'Fatima Begum', contact: '9393939393', priceType: 'Discounted', discountAmount: 100, discountReason: 'Returning customer', members: fam('Imran', 'Fatima Begum', ['Sana', '2014-02-02']), detail: 'Family plan', status: 'Completed', paymentMethod: 'Cash', date: istDate(-3), channel: 'Phone call', heardFrom: 'Friend or family', ...proof('₹1,399') }],
     [priya, { customerName: 'Mohan Krishna', contact: '9000123456', priceType: 'Full Price', detail: 'Family Annual plan', temperature: 'Hot', channel: 'WhatsApp', heardFrom: 'Facebook / Instagram', nextFollowUp: istDate(1) }],
     [priya, { customerName: 'Gita Sharma', contact: '9123456780', priceType: 'Full Price', detail: 'Individual Annual', status: 'Cancelled', lostReason: 'Price too high', channel: 'Phone call', heardFrom: 'Newspaper' }],
   ];
@@ -162,7 +170,7 @@ function seed() {
   const rem = raw('listReminders', rahul, { includeResolved: false }).reminders || [];
   if (rem[0]) raw('markContacted', rahul, { id: rem[0].ID, outcome: 'could_not_connect' });
   // Sign the seeding sessions out so they can't be reused.
-  [admin, manager, rahul, priya].forEach((t) => raw('logout', t));
+  [admin, senior, manager, rahul, priya].forEach((t) => raw('logout', t));
   seeding = false;
 }
 
