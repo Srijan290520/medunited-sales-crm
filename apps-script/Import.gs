@@ -7,9 +7,11 @@
 //                  and save only the rows that pass, in one batch
 //
 // Imported rows are always new Pending leads. The same rules as one-by-one
-// entry apply: a valid phone number, one open record per phone number
-// (checked against the sheet AND within the file), values from the admin's
-// dropdown lists, and agents can only import leads for themselves.
+// entry apply: a valid phone number, one open record per patient (phone +
+// name) per module (checked against the sheet AND within the file), values
+// from the admin's dropdown lists, agents can only import leads for
+// themselves, and a row for a patient someone already handles goes to them
+// (shown as a warning in the preview).
 
 var IMPORT_MAX_ROWS = 500;
 
@@ -52,17 +54,9 @@ function svc_importSales(session, type, rows, options) {
   var activeByEmail = {};
   users.forEach(function (u) { if (isActive(u.Active)) activeByEmail[String(u.Email).toLowerCase()] = u; });
 
-  // Phone numbers that already have an open record, in either module.
-  var openKeys = {};
-  Object.keys(SALE_TYPES).forEach(function (t) {
-    sheetToObjects(getSaleSheet(t)).forEach(function (s) {
-      if (s.Status === 'Pending') {
-        var k = String(s.ContactKey || phoneKey(s.Contact));
-        if (k) openKeys[k] = { module: SALE_TYPES[t], agent: String(s.AgentName), mine: canAccessSale(session, s) };
-      }
-    });
-  });
-
+  // Patients and their owners, so each row goes to the agent who already
+  // handles that person (or that household).
+  var world = loadPatientWorld();
   var seenInFile = {};
   var results = [];
   var toSave = [];
@@ -78,10 +72,15 @@ function svc_importSales(session, type, rows, options) {
     if (!name) errors.push('Customer name is missing.');
     var contact = cleanText(r.contact, 30);
     var key = phoneKey(contact);
+    var person = key + '|' + nameKey(name);
     if (!key) errors.push('Phone number is missing or invalid.');
-    else if (seenInFile[key]) errors.push('Same phone number as row ' + seenInFile[key] + ' in this file.');
-    else if (openKeys[key]) errors.push('Already has an open ' + openKeys[key].module + ' record' + ' (managed by ' + openKeys[key].agent + ').');
-    if (key && !seenInFile[key]) seenInFile[key] = rowNo;
+    else if (name && seenInFile[person]) errors.push('Same person (phone number and name) as row ' + seenInFile[person] + ' in this file.');
+    else if (name) {
+      ensureHousehold(world, key);
+      var dup = findOpenRecordForPatient(world, type, findPerson(world, key, name));
+      if (dup) errors.push('Already has an open ' + SALE_TYPES[type] + ' record (managed by ' + dup.row.AgentName + ').');
+    }
+    if (key && name && !seenInFile[person]) seenInFile[person] = rowNo;
 
     var temperature = 'Warm';
     if (cleanText(r.temperature)) {
@@ -147,6 +146,14 @@ function svc_importSales(session, type, rows, options) {
       detail = '';
     }
 
+    // Only rows that pass get a patient, so a bad row never adds anyone.
+    var link = null;
+    if (!errors.length) {
+      link = resolvePatientOwner(world, { contactKey: key, contact: contact, name: name, requested: owner });
+      if (link.notice) warnings.push(link.notice);
+      owner = link.owner;
+    }
+
     results.push({
       row: rowNo, customerName: name, contact: contact, ok: errors.length === 0,
       errors: errors, warnings: warnings, agentName: owner.name
@@ -181,7 +188,8 @@ function svc_importSales(session, type, rows, options) {
       LostReason: '',
       NextFollowUp: nextFollowUp,
       CreatedAt: now,
-      UpdatedAt: now
+      UpdatedAt: now,
+      PatientID: link.patient.ID
     });
   });
 
@@ -195,6 +203,7 @@ function svc_importSales(session, type, rows, options) {
   };
   if (options.dryRun || toSave.length === 0) return summary;
 
+  savePatientChanges(world);
   // One write for all rows instead of hundreds of appendRow calls.
   var sheet = getSaleSheet(type);
   var headers = sheetHeaders(sheet);

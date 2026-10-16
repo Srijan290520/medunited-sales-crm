@@ -107,11 +107,11 @@ function dispatch(action, token, p) {
     case 'getSale':
       return Object.assign({ error: false }, svc_getSale(session, p.type, p.id));
     case 'createSale':
-      return { error: false, sale: svc_createSale(session, p.type, p.data || {}) };
+      return Object.assign({ error: false }, svc_createSale(session, p.type, p.data || {}));
     case 'importSales':
       return Object.assign({ error: false }, svc_importSales(session, p.type, p.rows, { dryRun: p.dryRun === true, agentEmail: p.agentEmail, fileName: p.fileName }));
     case 'updateSale':
-      return { error: false, sale: svc_updateSale(session, p.type, p.id, p.data || {}) };
+      return Object.assign({ error: false }, svc_updateSale(session, p.type, p.id, p.data || {}));
     case 'deleteSale':
       return Object.assign({ error: false }, svc_deleteSale(session, p.type, p.id, p.reason));
     case 'reopenSale':

@@ -89,7 +89,7 @@ test('login: wrong password, lockout after 5 failures, no user enumeration', () 
   assert.match(locked.message, /Too many failed attempts/);
 });
 
-test('agents see only their own records; duplicates are blocked across modules', () => {
+test('agents see only their own records; every record of a patient goes to their owner', () => {
   const { call, arjun, divya, manager } = world();
   const created = ok(call('createSale', arjun, { type: 'medpass', data: lead() })).sale;
   assert.equal(created.AgentName, 'Arjun Agent');
@@ -100,15 +100,25 @@ test('agents see only their own records; duplicates are blocked across modules',
   assert.equal(ok(call('listSales', manager, { type: 'medpass' })).sales.length, 1);
   assert.equal(call('getSale', divya, { type: 'medpass', id: created.ID }).error, true);
 
-  const dup = call('createSale', divya, { type: 'pharmacy', data: { ...lead({ contact: '098480-12345' }), products: [{ name: 'Metformin', quantity: 60, frequency: 'Twice a day' }] } });
+  // Same patient in another module: allowed, but it goes to Arjun, who handles them.
+  const other = ok(call('createSale', divya, { type: 'pharmacy', data: { ...lead({ contact: '098480-12345' }), products: [{ name: 'Metformin', quantity: 60, frequency: 'Twice a day' }] } }));
+  assert.equal(other.sale.AgentEmail, 'arjun@medunited.in');
+  assert.match(other.notice, /Already handled by Arjun Agent/);
+  assert.equal(ok(call('listSales', divya, { type: 'pharmacy' })).sales.length, 0);
+
+  // Same patient, same module: blocked.
+  const dup = call('createSale', divya, { type: 'medpass', data: lead({ contact: '098480-12345' }) });
   assert.equal(dup.error, true);
   assert.match(dup.message, /already has an open Medpass record/);
   assert.doesNotMatch(dup.message, /Ravi/, 'another agent must not learn the customer name');
 
   const check = ok(call('checkContact', divya, { contact: '9848012345' }));
-  assert.equal(check.activeSales.length, 1);
-  assert.equal(check.activeSales[0].ID, '');
-  assert.equal(check.activeSales[0].Mine, false);
+  assert.equal(check.activeSales.length, 2);
+  assert.ok(check.activeSales.every((a) => a.ID === '' && a.Mine === false));
+  assert.equal(check.people.length, 0, 'a non-owner agent sees no names');
+  assert.equal(check.othersCount, 1);
+  assert.equal(check.owner.name, 'Arjun Agent');
+  assert.equal(check.owner.email, '');
 });
 
 test('agents cannot assign records to someone else', () => {
@@ -357,8 +367,8 @@ test('bulk import: preview flags bad rows, commit saves only valid ones', () => 
     { _row: 2, customerName: 'Asha', contact: '9876500001', temperature: 'hot', channel: 'whatsapp', nextFollowUp: '20/10/2026' },
     { _row: 3, customerName: '', contact: '9876500002' },
     { _row: 4, customerName: 'Bala', contact: '12' },
-    { _row: 5, customerName: 'Chitra', contact: '+91 98765 00001' },
-    { _row: 6, customerName: 'Dev', contact: '9000000099' },
+    { _row: 5, customerName: 'asha ', contact: '+91 98765 00001' },
+    { _row: 6, customerName: 'Ravi Kumar', contact: '9000000099' },
     { _row: 7, customerName: 'Esha', contact: '9876500007', channel: 'Pigeon', temperature: 'lukewarm' },
     { _row: 8, customerName: '=HYPERLINK("http://x")', contact: '9876500008', agentEmail: 'divya@medunited.in', priceType: 'discounted', nextFollowUp: '31/02/2026' },
     { _row: 9, customerName: 'Farah', contact: '9876500009', channel: 'Unknown thing', notes: 'Met at camp' },
@@ -468,4 +478,101 @@ test('modules come from one config; unknown module ids are rejected', () => {
     assert.equal(r.error, true, 'type ' + type);
     assert.match(r.message, /Invalid sale type/);
   }
+});
+
+// ===== Patients: one agent per patient =====
+
+// A row as saved before the Patients tab existed (no PatientID).
+function legacyRow(sheets, tab, fields) {
+  const sh = sheets.get(tab);
+  const headers = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0];
+  const row = { ID: 'legacy-' + Math.random().toString(36).slice(2), Date: '2026-09-01', Status: 'Pending', Temperature: 'Warm',
+    Direction: 'Inbound', Channel: 'Phone call', CreatedAt: '2026-09-01T05:00:00.000Z', ...fields };
+  row.ContactKey = row.ContactKey || String(row.Contact).replace(/\D/g, '').slice(-10);
+  sh.appendRow(headers.map((h) => (row[h] === undefined ? '' : row[h])));
+  return row;
+}
+
+test('households: relatives on one number each get records, all with the household owner', () => {
+  const { call, arjun, divya, manager, sheets } = world();
+  const ravi = ok(call('createSale', arjun, { type: 'medpass', data: lead() })).sale;
+  assert.ok(ravi.PatientID);
+  assert.equal(ravi.HouseholdSize, 1);
+
+  // His mother on the same number, entered by a manager for Divya → goes to Arjun.
+  const mom = ok(call('createSale', manager, { type: 'medpass', data: lead({ customerName: 'Lakshmi Kumar', agentEmail: 'divya@medunited.in' }) }));
+  assert.equal(mom.sale.AgentEmail, 'arjun@medunited.in');
+  assert.match(mom.notice, /Already handled by Arjun Agent/);
+  assert.notEqual(mom.sale.PatientID, ravi.PatientID);
+  assert.equal(mom.sale.HouseholdSize, 2);
+
+  // Lakshmi in Pharmacy, entered by Divya → Arjun too; "also in" shows up.
+  ok(call('createSale', divya, { type: 'pharmacy', data: { ...lead({ customerName: 'lakshmi  kumar' }), products: [] } }));
+  const mine = ok(call('listSales', arjun, { type: 'medpass' })).sales;
+  assert.deepEqual(mine.find((s) => s.CustomerName === 'Lakshmi Kumar').AlsoIn.slice(), ['Pharmacy']);
+  assert.deepEqual(mine.find((s) => s.CustomerName === 'Ravi Kumar').AlsoIn.slice(), []);
+
+  // The owner and managers see the people on the number; Divya doesn't.
+  const own = ok(call('checkContact', arjun, { contact: '9848012345' }));
+  assert.equal(own.people.map((p) => p.Name).sort().join(','), 'Lakshmi Kumar,Ravi Kumar');
+  assert.equal(own.owner.isMe, true);
+  const mgr = ok(call('checkContact', manager, { contact: '9848012345' }));
+  assert.equal(mgr.owner.email, 'arjun@medunited.in');
+  assert.equal(mgr.people.find((p) => p.Name === 'Lakshmi Kumar').OpenModules.join(','), 'Medpass,Pharmacy');
+  assert.equal(ok(call('checkContact', divya, { contact: '9848012345' })).people.length, 0);
+
+  // Picking an existing person by ID links to them even if the name is typed differently.
+  const viaId = ok(call('createSale', arjun, { type: 'pharmacy', data: { ...lead({ customerName: 'Ravi K' }), patientId: ravi.PatientID, products: [] } })).sale;
+  assert.equal(viaId.PatientID, ravi.PatientID);
+  assert.match(call('createSale', arjun, { type: 'pharmacy', data: { ...lead(), products: [] } }).message, /already has an open Pharmacy record/);
+  assert.match(call('createSale', arjun, { type: 'pharmacy', data: { ...lead({ contact: '9000000001' }), patientId: ravi.PatientID, products: [] } }).message, /not on this phone number/);
+
+  // One Patients row per person, owned by Arjun.
+  const pts = sheets.get('Patients');
+  assert.equal(pts.getLastRow(), 3);
+});
+
+test('editing the phone number or name keeps records with the right owner', () => {
+  const { call, arjun, divya, manager, sheets } = world();
+  ok(call('createSale', arjun, { type: 'medpass', data: lead() }));
+  const sita = ok(call('createSale', divya, { type: 'medpass', data: lead({ customerName: 'Sita', contact: '9111111111' }) })).sale;
+
+  // An agent can't move their record onto another agent's household.
+  const blocked = call('updateSale', divya, { type: 'medpass', id: sita.ID, data: { contact: '9848012345' } });
+  assert.equal(blocked.forbidden, true);
+  assert.match(blocked.message, /handled by Arjun Agent/);
+
+  // A spelling fix on a patient's only record renames the patient.
+  const renamed = ok(call('updateSale', divya, { type: 'medpass', id: sita.ID, data: { customerName: 'Seetha' } })).sale;
+  assert.equal(renamed.PatientID, sita.PatientID);
+  const pts = sheets.get('Patients');
+  const nameCol = pts.getRange(1, 1, 1, pts.getLastColumn()).getValues()[0].indexOf('Name');
+  assert.ok(pts.rows.some((r) => r[nameCol] === 'Seetha'));
+
+  // A manager correcting the number: the open record moves to the household owner.
+  const moved = ok(call('updateSale', manager, { type: 'medpass', id: sita.ID, data: { contact: '+91 98480 12345' } }));
+  assert.equal(moved.sale.AgentEmail, 'arjun@medunited.in');
+  assert.match(moved.notice, /Moved to Arjun Agent/);
+  assert.equal(ok(call('listSales', divya, { type: 'medpass' })).sales.length, 0);
+});
+
+test('records saved before Patients existed: one agent is followed, several are a conflict', () => {
+  const { call, arjun, divya, manager, sheets } = world();
+  // Number A: only Divya ever handled it.
+  legacyRow(sheets, 'Medpass', { CustomerName: 'Old Customer', Contact: '9222222222', AgentEmail: 'divya@medunited.in', AgentName: 'Divya Agent', Status: 'Completed', Amount: 1499 });
+  const a = ok(call('createSale', arjun, { type: 'pharmacy', data: { ...lead({ customerName: 'Old Customer', contact: '9222222222' }), products: [] } }));
+  assert.equal(a.sale.AgentEmail, 'divya@medunited.in');
+  assert.match(a.notice, /Already handled by Divya Agent/);
+
+  // Number B: two agents had records → nobody is guessed.
+  legacyRow(sheets, 'Medpass', { CustomerName: 'Father', Contact: '9333333333', AgentEmail: 'arjun@medunited.in', AgentName: 'Arjun Agent' });
+  legacyRow(sheets, 'Pharmacy', { CustomerName: 'Mother', Contact: '9333333333', AgentEmail: 'divya@medunited.in', AgentName: 'Divya Agent', Products: '[]' });
+  const check = ok(call('checkContact', manager, { contact: '9333333333' }));
+  assert.equal(check.conflict, true);
+  assert.equal(check.owner, null);
+  const b = ok(call('createSale', manager, { type: 'pharmacy', data: { ...lead({ customerName: 'Father', contact: '9333333333', agentEmail: 'divya@medunited.in' }), products: [] } }));
+  assert.equal(b.sale.AgentEmail, 'divya@medunited.in', 'saved as entered while in conflict');
+  assert.match(b.notice, /waiting for an admin/);
+  // Father still has his open Medpass record from before.
+  assert.match(call('createSale', manager, { type: 'medpass', data: lead({ customerName: 'Father', contact: '9333333333' }) }).message, /already has an open Medpass record/);
 });
