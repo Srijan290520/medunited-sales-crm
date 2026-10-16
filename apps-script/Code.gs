@@ -27,6 +27,7 @@ function doPost(e) { return handleRequest(e); }
 var WRITE_ACTIONS = [
   'changePassword',
   'createSale', 'importSales', 'updateSale', 'deleteSale', 'reopenSale', 'reassignSale', 'logSaleActivity',
+  'saveDashboardLayout', 'resetDashboardLayout', 'saveRoleDefaultLayout',
   'reassignPatient', 'bulkReassign', 'importReassignments', 'handoverAgent', 'migratePatients', 'resolvePatientConflict', 'decideMedpassDiscount', 'updateMedpassSettings',
   'createUser', 'updateUser', 'deleteUser', 'updateIncentives', 'requestDeactivation', 'decideUserRequest',
   'markContacted', 'reassignReminder',
@@ -155,6 +156,14 @@ function dispatch(action, token, p) {
       return { error: false, attachment: svc_getAttachment(session, p.type, p.id, p.kind) };
 
     // ----- Dashboard -----
+    case 'getDashboardLayout':
+      return Object.assign({ error: false }, svc_getDashboardLayout(session));
+    case 'saveDashboardLayout':
+      return Object.assign({ error: false }, svc_saveDashboardLayout(session, p.layout));
+    case 'resetDashboardLayout':
+      return Object.assign({ error: false }, svc_resetDashboardLayout(session));
+    case 'saveRoleDefaultLayout':
+      return { error: false, layout: svc_saveRoleDefaultLayout(session, p.group, p.layout) };
     case 'dashboardSummary':
       return { error: false, summary: svc_dashboardSummary(session) };
 
