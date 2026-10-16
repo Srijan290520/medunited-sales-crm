@@ -4,6 +4,6 @@
 // apiUrl: the Apps Script Web App URL (Deploy → Manage deployments → Web app
 //         URL, ends in /exec).
 window.__CRM_CONFIG__ = {
-  apiUrl: 'https://script.google.com/macros/s/AKfycbx2U7lLWTH0DuEc9WN6-hhcKONkAyCMHWAnaaW654tI9nIecOTCIVVvdA0KVRfmBEaYEQ/exec',
+  apiUrl: 'https://script.google.com/macros/s/AKfycbxmtyQf3CHmZajoONjlVgjlhowKHUeiNgLBTEFtbMrFf-NzSnuEZNfQoemW4KRGnUI-qw/exec',
   appName: 'MedUnited CRM'
 };

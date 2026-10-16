@@ -515,3 +515,9 @@ checks each tab is read once per list request. 53/53 tests pass.
    the background; fetch users / lists / Medpass settings once per login.
 4. Close PRs #5–#11; decide the 7569199231 owner conflict (duplicate from
    repeated saves, per the user).
+
+- **Patients page deployed** as a *new* Apps Script deployment
+  (`.../AKfycbxmtyQf3CHmZajoONjlVgjlhowKHUeiNgLBTEFtbMrFf-NzSnuEZNfQoemW4KRGnUI-qw/exec`);
+  `public/config.js` now points there. The old Lead module sync URL still runs
+  the previous code: future releases should update *this* deployment
+  (Manage deployments → pencil → New version) so the URL stays the same.
