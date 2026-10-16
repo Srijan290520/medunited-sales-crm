@@ -28,7 +28,7 @@ var WRITE_ACTIONS = [
   'changePassword',
   'createSale', 'importSales', 'updateSale', 'deleteSale', 'reopenSale', 'reassignSale', 'logSaleActivity',
   'reassignPatient', 'migratePatients', 'resolvePatientConflict',
-  'createUser', 'updateUser', 'deleteUser', 'updateIncentives',
+  'createUser', 'updateUser', 'deleteUser', 'updateIncentives', 'requestDeactivation', 'decideUserRequest',
   'markContacted', 'reassignReminder',
   'updateLists', 'updateMonthlyTarget'
 ];
@@ -151,6 +151,12 @@ function dispatch(action, token, p) {
       return { error: false, user: svc_updateUser(session, p.id, p.data || {}) };
     case 'deleteUser':
       return Object.assign({ error: false }, svc_deleteUser(session, p.id, p.reason));
+    case 'requestDeactivation':
+      return { error: false, request: svc_requestDeactivation(session, p) };
+    case 'listUserRequests':
+      return { error: false, requests: svc_listUserRequests(session, p.includeDecided === true) };
+    case 'decideUserRequest':
+      return Object.assign({ error: false }, svc_decideUserRequest(session, p));
     case 'updateIncentives':
       return { error: false, user: svc_updateIncentives(session, p.id, p.data || {}) };
 

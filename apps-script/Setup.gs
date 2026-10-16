@@ -8,6 +8,7 @@ function setupSpreadsheet() {
   getUsersSheet();
   moduleIds().forEach(function (type) { getSaleSheet(type); });
   getPatientsSheet();
+  getUserRequestsSheet();
   getOrCreateSheet('Reminders', ['ID', 'PharmacySaleID', 'AgentEmail', 'AgentName', 'Reassigned', 'CustomerName', 'Contact',
     'Products', 'SaleDate', 'Status', 'ResolutionReason', 'AttemptCount', 'LastAttemptDate', 'CreatedAt', 'UpdatedAt']);
   getActivitiesSheet();

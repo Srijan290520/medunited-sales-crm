@@ -103,6 +103,22 @@ function svc_updateUser(session, id, data) {
     throw new Error('This is the only active admin. Make someone else an admin first.');
   }
 
+  // Someone who still handles patients can't simply be switched off: their
+  // work goes to a successor first (see Handover.gs).
+  if (patch.Active === false && isActive(existing.Active)) {
+    var world = loadPatientWorld();
+    var work = openWorkOf(world, existing.Email);
+    if (hasOpenWork(work)) {
+      if (!data.successorEmail) {
+        throw new Error(existing.Name + ' still handles ' + work.patients.length + ' patient(s), ' + work.records.length +
+          ' open record(s) and ' + work.reminders.length + ' reminder(s). Choose who takes over before deactivating.');
+      }
+      var successor = requireOwnerCandidate(world, data.successorEmail);
+      if (lowerEmail(successor.email) === lowerEmail(existing.Email)) throw new Error('Choose someone else to take over.');
+      handOverWork(session, world, existing, successor, 'Account of ' + existing.Name + ' deactivated by an admin.');
+    }
+  }
+
   var updated = updateObjectById(sheet, id, patch);
   if (!updated) throw new Error('User not found.');
   var changes = auditDiff(existing, patch);
