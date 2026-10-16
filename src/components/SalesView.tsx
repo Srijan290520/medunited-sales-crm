@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, Suspense, lazy } from 'react';
+import React, { useState, useEffect, useMemo, useRef, Suspense, lazy } from 'react';
 import {
   User,
   Sale,
@@ -38,6 +38,15 @@ interface SalesViewProps {
   moduleInfo?: ModuleInfo; // from getModules: label, Homekare catalogue, Lab options
   user: User;
   onToast: (msg: string, type?: 'error' | 'success') => void;
+  // Opened from the Patients page: only the form is shown, for a new record
+  // for `patient`, or to edit `record`. onClose(changed) when it closes.
+  embed?: SalesEmbed;
+}
+
+export interface SalesEmbed {
+  patient?: { id: string; name: string; contact: string };
+  record?: Sale;
+  onClose: (changed: boolean) => void;
 }
 
 // Same comparison as the server's nameKey(): case, dots and extra spaces don't matter.
@@ -53,7 +62,7 @@ const STATUS_LABELS: Record<string, string> = { Pending: 'Open', Completed: 'Com
 
 const EMPTY_LAB: LabTracking = { homeCollection: false, collectionDate: '', appointmentDate: '', reportDeliveredOn: '', reportDeliveredVia: '' };
 
-export const SalesView: React.FC<SalesViewProps> = ({ type, moduleInfo, user, onToast }) => {
+export const SalesView: React.FC<SalesViewProps> = ({ type, moduleInfo, user, onToast, embed }) => {
   const isMedpass = type === 'medpass';
   const isPharmacy = type === 'pharmacy';
   const isHomekare = type === 'homekare';
@@ -257,26 +266,26 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, moduleInfo, user, on
   const loadData = async () => {
     setLoading(true);
     try {
-      const res = await api.listSales(type);
-      if (res.error) {
-        onToast(res.message || 'Could not load sales', 'error');
-      } else {
-        setSales(res.sales || []);
+      // Sent together: each request costs ~3 s of Apps Script overhead.
+      // Opened from the Patients page, the list itself isn't needed.
+      const none = Promise.resolve(null);
+      const [res, optRes, mpRes, uRes] = await Promise.all([
+        embed ? none : api.listSales(type),
+        api.getOptionLists(),
+        isMedpass ? api.getMedpassSettings() : none,
+        canManageAll ? api.listUsers() : none,
+      ]);
+      if (res) {
+        if (res.error) onToast(res.message || 'Could not load sales', 'error');
+        else setSales(res.sales || []);
       }
-
-      const optRes = await api.getOptionLists();
       if (!optRes.error && optRes.lists) setOptions(optRes.lists);
-      if (isMedpass) {
-        const mpRes = await api.getMedpassSettings();
+      if (mpRes) {
         if (!mpRes.error) setMedpassSettings(mpRes.settings);
         setDiscountsKey((k) => k + 1);
       }
-
-      if (canManageAll) {
-        const uRes = await api.listUsers();
-        if (!uRes.error && uRes.users) {
-          setAgentRoster(uRes.users.filter((u: User) => (u.Role === 'agent' || u.Role === 'manager') && u.Active));
-        }
+      if (uRes && !uRes.error && uRes.users) {
+        setAgentRoster(uRes.users.filter((u: User) => (u.Role === 'agent' || u.Role === 'manager') && u.Active));
       }
     } finally {
       setLoading(false);
@@ -287,11 +296,37 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, moduleInfo, user, on
     loadData();
   }, [type, user]);
 
+  const busyRef = useRef(false); // set while a save is on its way
+  // Patients page: the form opens straight away, and the page hears when it
+  // closes and whether anything was saved.
+  const changedRef = useRef(false);
+  const embedOpened = useRef(false);
+  useEffect(() => {
+    if (!embed || loading || embedOpened.current) return;
+    embedOpened.current = true;
+    if (embed.record) {
+      openEditModal(embed.record);
+    } else {
+      openNewModal();
+      if (embed.patient) {
+        setFormCustomerName(embed.patient.name);
+        setFormContact(embed.patient.contact);
+      }
+    }
+  }, [embed, loading]);
+  useEffect(() => {
+    if (embed && embedOpened.current && !modalOpen) embed.onClose(changedRef.current);
+  }, [modalOpen]);
+
   // Who handles this number, and who is already on it (checked as the phone
   // number is typed). The server makes the final decision on save.
   useEffect(() => {
-    setPersonChoice('');
-    setFormPatientId('');
+    // From the Patients page the person is already known: keep them picked
+    // while the number is theirs.
+    const pre = embed?.patient;
+    const samePhone = !!pre && pre.contact.replace(/\D/g, '').slice(-10) === formContact.replace(/\D/g, '').slice(-10);
+    setPersonChoice(samePhone ? pre!.name : '');
+    setFormPatientId(samePhone ? pre!.id : '');
     const digits = formContact.replace(/\D/g, '');
     if (digits.length < 6) {
       setContactInfo(null);
@@ -582,6 +617,8 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, moduleInfo, user, on
       payload.products = namedProducts;
     }
 
+    if (busyRef.current) return; // a double click saves once
+    busyRef.current = true;
     setSaving(true);
     try {
       let res;
@@ -596,12 +633,14 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, moduleInfo, user, on
       } else {
         // e.g. "Already handled by Arjun — assigned to them."
         onToast(res.notice || (editingSale ? 'Saved successfully' : 'Created successfully'), 'success');
+        changedRef.current = true;
         setModalOpen(false);
         loadData();
       }
     } catch (err: any) {
       setFormError(err.message || 'Error occurred saving');
     } finally {
+      busyRef.current = false;
       setSaving(false);
     }
   };
@@ -616,6 +655,8 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, moduleInfo, user, on
       return;
     }
 
+    if (busyRef.current) return;
+    busyRef.current = true;
     setSaving(true);
     try {
       const res = await api.updateSale(type, editingSale.ID, {
@@ -627,12 +668,14 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, moduleInfo, user, on
         setFormError(res.message || 'Could not update prescribed medications.');
       } else {
         onToast('Prescribed medications updated successfully!', 'success');
+        changedRef.current = true;
         setModalOpen(false);
         loadData();
       }
     } catch (err: any) {
       setFormError(err.message || 'Error updating medications');
     } finally {
+      busyRef.current = false;
       setSaving(false);
     }
   };
@@ -653,6 +696,8 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, moduleInfo, user, on
         ? 'complete_sale'
         : undefined;
 
+    if (busyRef.current) return;
+    busyRef.current = true;
     try {
       const res = await api.logSaleActivity(type, editingSale.ID, {
         type: actType,
@@ -686,10 +731,13 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, moduleInfo, user, on
           onToast('Customer wants to buy! Please fill in payment details & receipt to finalize.', 'success');
         }
 
+        changedRef.current = true;
         loadData();
       }
     } catch (err: any) {
       onToast(err.message || 'Error logging activity', 'error');
+    } finally {
+      busyRef.current = false;
     }
   };
 
@@ -1025,6 +1073,7 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, moduleInfo, user, on
   return (
     <div>
       {/* Header: one search box, Filters, ⋯ More and the one main action. */}
+      {!embed && (
       <div className="mp-header">
         <div className="mp-title">
           <h1>{moduleLabel}</h1>
@@ -1069,8 +1118,11 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, moduleInfo, user, on
           <button type="button" className="mp-btn-primary" onClick={openNewModal}>New record</button>
         </div>
       </div>
+      )}
 
       <main>
+        {!embed && (
+        <>
         {isMedpass && canManageAll && (
           <PendingDiscountsPanel
             user={user}
@@ -1461,6 +1513,8 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, moduleInfo, user, on
               />
             )}
           </div>
+        )}
+        </>
         )}
 
         {/* Modal / Detail Drawer */}

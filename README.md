@@ -67,7 +67,7 @@ Apps Script deployment without rebuilding.
 2. **Extensions → Apps Script.** Delete the default `Code.gs`, then create one
    file per `.gs` file in `apps-script/` and paste each in:
    `Activities, Attachments, Audit, Auth, BulkReassign, Code, DashboardLayouts,
-   Handover, Homekare, Import, Incentives, Lab, Lists, Medpass, Modules, Patients,
+   Handover, Homekare, Import, Incentives, Lab, Lists, Medpass, Modules, PatientProfiles, Patients,
    Performance, Reminders, SalesService, Setup, SmokeTest, UserService, Utils`.
 3. **Project Settings (gear) → "Show appsscript.json manifest file"** → open
    `appsscript.json` and replace it with `apps-script/appsscript.json`.
@@ -255,6 +255,38 @@ children **under 21** on the sale date. Older children and other relatives
   later. Passes completed before these rules keep their recorded amount; open
   leads follow the rules on their next save.
 - Imported leads get the standard price; discounts must be added in the app.
+
+## Patients page (menu → Patients, under Dashboard)
+
+One page for the whole call. Type the caller's number (or name) in the search
+box — it searches **every** patient, whoever handles them.
+
+- **No match** for a full number → **Register this caller**: name, phone,
+  alternate phone, date of birth, address, area, pincode and notes / medical
+  conditions. A relative on a known number joins that household's owner.
+- **Profile** beside the list: details, everyone else on the number, **every
+  record in every module** (Medpass, Pharmacy, Homekare, Lab), active refill
+  and renewal reminders, and one contact history across all of them.
+- **Start a service**: **+ Medpass / + Pharmacy / + Homekare / + Lab** opens
+  that module's usual form on top of the page with the patient filled in.
+  If they already have an open record in that module, the button opens it
+  instead. After saving you're back on the profile, already refreshed.
+- **Log a call** on the patient itself, for an enquiry that isn't about one
+  service yet, with a call-back date. Logging again replaces the call-back
+  date (leave it empty to clear it). Do Not Call on any of their records
+  blocks outgoing contact.
+- **Who can do what:** anyone can look a patient up (another agent's patient
+  shows **View only**). Only the patient's agent, managers and admins edit the
+  patient or log calls on them; module records keep their own rules. New
+  services still go to the patient's agent, whoever starts them. The phone
+  number can't be changed on the profile, because it links the patient to
+  their household and records.
+- Tabs: **My patients** (agents), **Follow-ups due** (overdue or today, from
+  the patient's own call-back or any open record), **All patients**.
+
+New `Patients` columns (`AltContact`, `Address`, `Area`, `Pincode`, `Notes`,
+`NextFollowUp`) are added automatically on first use. Backend:
+`apps-script/PatientProfiles.gs`.
 
 ## Patients and owners
 

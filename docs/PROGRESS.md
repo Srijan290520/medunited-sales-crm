@@ -488,3 +488,30 @@ checks each tab is read once per list request. 53/53 tests pass.
    sessionStorage; consider caching the dashboard summary longer.
 4. Rebuild the site and push to `gh-pages` if the frontend changes.
 5. Close PRs #5–#11; decide the 7569199231 owner conflict.
+
+## 2026-10-16 (later): speed fix live, Patients page
+
+- **Speed fix is live.** Utils.gs (into the live `Utlis.gs`) and Code.gs pasted
+  from eee6797, smokeTestV2 21/21 PASS, the user published a new version on
+  **Lead module sync**. Timed on the live site: `listSales` 13–15 s → 5.8–9.5 s;
+  small reads 2.4–4.5 s (≈ the 2.3–3.6 s `ping` floor).
+- **Patients page** (menu, under Dashboard): search every patient by phone or
+  name, register a caller (address, area, pincode, alternate phone, notes),
+  profile with every record in every module, reminders and one contact
+  history, **+ Medpass / Pharmacy / Homekare / Lab** opening the module form
+  on top of the page, and calls logged on the patient itself. Decisions by the
+  user: any agent may view any profile (read-only unless theirs); calls can be
+  logged on the patient. Backend: new `PatientProfiles.gs`; `Patients.gs`
+  (new columns) and `Code.gs` (routes) changed. 55/55 tests pass.
+- Also: a double click on Save no longer saves twice (guard in SalesView), and
+  a module page sends its start-up requests together instead of one by one.
+- Work now goes straight to `master` (user, 2026-10-16): no branches or PRs.
+
+**Next steps:**
+1. Live Apps Script: add a new file `PatientProfiles.gs`, replace `Patients.gs`
+   and `Code.gs`, run smokeTestV2, publish a new version on Lead module sync.
+2. Push the built site to `gh-pages` (done in the same session if possible).
+3. Then the remaining speed work: show cached lists instantly and refresh in
+   the background; fetch users / lists / Medpass settings once per login.
+4. Close PRs #5–#11; decide the 7569199231 owner conflict (duplicate from
+   repeated saves, per the user).

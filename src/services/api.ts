@@ -192,6 +192,13 @@ export const api = {
   listPendingDiscounts: () => call('listPendingDiscounts'),
   decideMedpassDiscount: (id: string, approve: boolean, note?: string) => call('decideMedpassDiscount', { id, approve, note }),
 
+  // ----- Patients page -----
+  listPatients: () => call('listPatients'), // → { patients: PatientSummary[] }
+  getPatient: (id: string) => call('getPatient', { id }), // → PatientDetail
+  createPatient: (data: Record<string, unknown>) => call('createPatient', { data }),
+  updatePatient: (id: string, data: Record<string, unknown>) => call('updatePatient', { id, data }),
+  logPatientActivity: (id: string, data: Record<string, unknown>) => call('logPatientActivity', { id, data }),
+
   // ----- Patients (owners, migration, conflicts) -----
   reassignPatient: (data: { contact?: string; patientId?: string; agentEmail: string; scope?: 'household' | 'person'; reason?: string }) =>
     call('reassignPatient', data),

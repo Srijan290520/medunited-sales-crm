@@ -1442,3 +1442,83 @@ test('read-only requests read each tab once; writes are seen by the next request
   const after = ok(call('listSales', manager, { type: 'medpass' })).sales;
   assert.ok(after.some((s) => s.Contact === '9870000103'));
 });
+
+test('patients page: register a patient, then services from their profile go to their owner', () => {
+  const { call, arjun, divya, manager } = world();
+  const created = ok(call('createPatient', arjun, { data: {
+    name: 'Kavya Rao', contact: '+91 90000 11111', dob: '1990-02-14', altContact: '9000022222',
+    address: '12 MG Road', area: 'Indiranagar', pincode: '560038', notes: 'Diabetic',
+  } }));
+  const p = created.patient;
+  assert.equal(p.Name, 'Kavya Rao');
+  assert.equal(p.OwnerEmail, 'arjun@medunited.in');
+  assert.equal(p.Pincode, '560038');
+  assert.equal(p.CanEdit, true);
+  assert.deepEqual(created.records, []);
+
+  // Same person again is refused; bad pincode is refused.
+  assert.match(call('createPatient', divya, { data: { name: 'kavya  rao', contact: '9000011111' } }).message, /already registered/);
+  assert.match(call('createPatient', arjun, { data: { name: 'Someone', contact: '9000033333', pincode: '123' } }).message, /6 digits/);
+
+  // A relative registered by another agent joins the household owner.
+  const rel = ok(call('createPatient', divya, { data: { name: 'Mohan Rao', contact: '9000011111' } }));
+  assert.equal(rel.patient.OwnerEmail, 'arjun@medunited.in');
+  assert.match(rel.notice, /Arjun/);
+
+  // A service created from the profile (with patientId) is linked and owned by Arjun.
+  ok(call('createSale', divya, { type: 'pharmacy', data: lead({ customerName: 'Kavya Rao', contact: '9000011111', patientId: p.ID }) }));
+  ok(call('createSale', arjun, { type: 'medpass', data: lead({ customerName: 'Kavya Rao', contact: '9000011111', patientId: p.ID }) }));
+
+  // Every agent can look the patient up (read-only for non-owners).
+  const seenByDivya = ok(call('getPatient', divya, { id: p.ID }));
+  assert.equal(seenByDivya.patient.CanEdit, false);
+  assert.equal(seenByDivya.records.length, 2);
+  assert.ok(seenByDivya.records.every((r) => r.CanOpen === false && r.AgentEmail === 'arjun@medunited.in'));
+  assert.deepEqual(seenByDivya.household.map((h) => h.Name), ['Mohan Rao']);
+  assert.equal(ok(call('getPatient', arjun, { id: p.ID })).records.every((r) => r.CanOpen), true);
+
+  const list = ok(call('listPatients', divya)).patients;
+  const row = list.find((x) => x.ID === p.ID);
+  assert.deepEqual(row.Modules.map((m) => [m.type, m.open]), [['medpass', 1], ['pharmacy', 1]]);
+  assert.equal(row.OpenCount, 2);
+
+  // Only the owner and the team edit; the phone number can't be changed here.
+  assert.equal(call('updatePatient', divya, { id: p.ID, data: { notes: 'x' } }).forbidden, true);
+  const upd = ok(call('updatePatient', arjun, { id: p.ID, data: { address: '14 MG Road', contact: '9999999999' } }));
+  assert.equal(upd.patient.Address, '14 MG Road');
+  assert.equal(upd.patient.ContactKey, '9000011111');
+  assert.match(call('updatePatient', manager, { id: p.ID, data: { name: 'Mohan Rao' } }).message, /already registered/);
+  ok(call('updatePatient', manager, { id: p.ID, data: { name: 'Kavya R Rao' } }));
+});
+
+test('patients page: calls on the patient itself, with a follow-up, on the timeline', () => {
+  const { call, arjun, divya } = world();
+  const p = ok(call('createPatient', arjun, { data: { name: 'Sanjay Das', contact: '9000044444' } })).patient;
+  assert.equal(call('logPatientActivity', divya, { id: p.ID, data: { type: 'Call', notes: 'hi' } }).forbidden, true);
+  assert.match(call('logPatientActivity', arjun, { id: p.ID, data: { type: 'Note' } }).message, /needs some text/);
+
+  const tomorrow = new Date(Date.now() + 5.5 * 3600 * 1000 + 86400000).toISOString().slice(0, 10);
+  const r = ok(call('logPatientActivity', arjun, { id: p.ID, data: {
+    type: 'Call', direction: 'Incoming', outcome: 'Interested', notes: 'Asked about lab prices', nextFollowUp: tomorrow,
+  } }));
+  assert.equal(r.activities.length, 1);
+  assert.equal(r.activities[0].About, 'General');
+  assert.equal(r.patient.NextFollowUp, tomorrow);
+  assert.equal(r.patient.FollowUpStatus, 'upcoming');
+
+  // Contact on a record of theirs shows on the same timeline.
+  const sale = ok(call('createSale', arjun, { type: 'lab', data: lead({ customerName: 'Sanjay Das', contact: '9000044444', patientId: p.ID }) })).sale;
+  ok(call('logSaleActivity', arjun, { type: 'lab', id: sale.ID, data: { type: 'WhatsApp', direction: 'Outgoing', outcome: 'Connected', notes: 'Sent price list' } }));
+  const d = ok(call('getPatient', arjun, { id: p.ID }));
+  assert.equal(d.activities.length, 2);
+  assert.equal(d.activities.filter((a) => a.SaleType === 'lab').length, 1);
+
+  // Logging without a date clears the patient's own follow-up.
+  const cleared = ok(call('logPatientActivity', arjun, { id: p.ID, data: { type: 'Note', notes: 'Booked' } }));
+  assert.equal(cleared.patient.OwnFollowUp, '');
+
+  // Do Not Call on any of their records blocks outgoing calls on the patient.
+  ok(call('updateSale', arjun, { type: 'lab', id: sale.ID, data: { doNotCall: true } }));
+  assert.equal(call('logPatientActivity', arjun, { id: p.ID, data: { type: 'Call', direction: 'Outgoing', outcome: 'No answer' } }).forbidden, true);
+  ok(call('logPatientActivity', arjun, { id: p.ID, data: { type: 'Call', direction: 'Incoming', outcome: 'Connected' } }));
+});

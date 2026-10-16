@@ -7,7 +7,8 @@
 //
 //   Patients  ID | ContactKey | Contact | Name | NameKey | DOB | OwnerEmail |
 //             OwnerName | OwnerStatus | ConflictAgents | SplitFromHousehold |
-//             CreatedAt | UpdatedAt
+//             CreatedAt | UpdatedAt | AltContact | Address | Area | Pincode |
+//             Notes | NextFollowUp
 //
 // Module records point at their patient through the PatientID column. Rows
 // saved before Patients existed have no PatientID; they are matched by phone
@@ -28,7 +29,9 @@
 //    agent, so incentives stay with whoever closed the sale.
 
 var PATIENT_HEADERS = ['ID', 'ContactKey', 'Contact', 'Name', 'NameKey', 'DOB', 'OwnerEmail', 'OwnerName', 'OwnerStatus',
-  'ConflictAgents', 'SplitFromHousehold', 'CreatedAt', 'UpdatedAt'];
+  'ConflictAgents', 'SplitFromHousehold', 'CreatedAt', 'UpdatedAt',
+  // Patients page (PatientProfiles.gs)
+  'AltContact', 'Address', 'Area', 'Pincode', 'Notes', 'NextFollowUp'];
 var PATIENT_OWNED = 'Owned';
 var PATIENT_CONFLICT = 'Conflict';
 

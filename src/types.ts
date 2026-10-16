@@ -450,3 +450,58 @@ export interface IncentiveReport {
   agents: IncentiveAgent[];
   totals: { count: number; amount: number; incentive: number; modules: Record<string, { count: number; amount: number; incentive: number }> };
 }
+
+// ===== Patients page (apps-script/PatientProfiles.gs) =====
+export interface PatientModuleCount {
+  type: SaleType;
+  label: string;
+  open: number;
+  completed: number;
+  lost: number;
+}
+
+export interface PatientSummary {
+  ID: string;
+  Name: string;
+  Contact: string;
+  ContactKey: string;
+  DOB: string;
+  AltContact: string;
+  Address: string;
+  Area: string;
+  Pincode: string;
+  Notes: string;
+  OwnerName: string;
+  OwnerEmail: string;
+  Conflict: boolean;
+  Mine: boolean;
+  CanEdit: boolean; // owner, managers and admins
+  DoNotCall: boolean;
+  HouseholdSize: number;
+  Modules: PatientModuleCount[];
+  OpenCount: number;
+  NextFollowUp: string; // earliest of the patient's own and their open records'
+  FollowUpStatus: 'overdue' | 'today' | 'upcoming' | '';
+  OwnFollowUp: string;
+  LastContact: string;
+  CreatedAt: string;
+}
+
+export interface PatientRecord extends Sale {
+  Type: SaleType;
+  ModuleLabel: string;
+  CanOpen: boolean; // false: another agent's record, shown read-only
+}
+
+export interface PatientActivity extends SaleActivity {
+  SaleType: SaleType | 'patient';
+  About: string; // 'General' or the record it was logged on
+}
+
+export interface PatientDetail {
+  patient: PatientSummary;
+  records: PatientRecord[];
+  activities: PatientActivity[];
+  reminders: Reminder[];
+  household: { ID: string; Name: string; OwnerName: string; Conflict: boolean }[];
+}

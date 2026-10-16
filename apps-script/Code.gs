@@ -29,6 +29,7 @@ var WRITE_ACTIONS = [
   'createSale', 'importSales', 'updateSale', 'deleteSale', 'reopenSale', 'reassignSale', 'logSaleActivity',
   'saveDashboardLayout', 'resetDashboardLayout', 'saveRoleDefaultLayout',
   'saveTargets', 'copyTargets', 'setTargetMeasure', 'updateHomekareCatalogue',
+  'createPatient', 'updatePatient', 'logPatientActivity',
   'reassignPatient', 'bulkReassign', 'importReassignments', 'handoverAgent', 'migratePatients', 'resolvePatientConflict', 'decideMedpassDiscount', 'updateMedpassSettings',
   'createUser', 'updateUser', 'deleteUser', 'updateIncentives', 'requestDeactivation', 'decideUserRequest',
   'markContacted', 'reassignReminder',
@@ -140,6 +141,18 @@ function dispatch(action, token, p) {
       return { error: false, discounts: svc_listPendingDiscounts(session) };
     case 'decideMedpassDiscount':
       return { error: false, sale: svc_decideMedpassDiscount(session, p) };
+
+    // ----- Patients page (PatientProfiles.gs) -----
+    case 'listPatients':
+      return { error: false, patients: svc_listPatients(session) };
+    case 'getPatient':
+      return Object.assign({ error: false }, svc_getPatient(session, p.id));
+    case 'createPatient':
+      return Object.assign({ error: false }, svc_createPatient(session, p.data || {}));
+    case 'updatePatient':
+      return Object.assign({ error: false }, svc_updatePatient(session, p.id, p.data || {}));
+    case 'logPatientActivity':
+      return Object.assign({ error: false }, svc_logPatientActivity(session, p.id, p.data || {}));
 
     // ----- Patients (owners, migration, conflicts) -----
     case 'migratePatients':

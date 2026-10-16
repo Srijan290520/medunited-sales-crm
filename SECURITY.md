@@ -35,7 +35,14 @@ Report problems privately to the repository owner, not in public issues.
   patient go to their owner whatever the browser sends; an agent can't move a
   record onto another agent's patient by editing its phone number, or reopen a
   record whose patient is now someone else's. The people sharing a phone
-  number are shown only to that number's owner and to managers/admins.
+  number are shown only to that number's owner and to managers/admins on the
+  module forms.
+- **Patients page (by decision, Oct 2026):** every signed-in user can look up
+  any patient's profile — details, household, records in every module and
+  contact history — so whoever takes a call has the full picture. It is
+  read-only for anyone but the patient's agent, managers and admins (checked on
+  the server for edits and logged contact). Payment screenshots are still only
+  served to people who can open the record.
 - Incentive amounts are for managers and above only: the incentive report,
   the Incentives page and the incentive column of team figures are refused or
   removed for agents on the server. Agents see their own targets, never

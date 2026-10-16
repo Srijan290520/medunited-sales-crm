@@ -9,6 +9,7 @@ import { RemindersView } from './components/RemindersView';
 import { SettingsPage } from './components/SettingsPage';
 import { IncentivesView } from './components/IncentivesView';
 import { PerformanceView } from './components/PerformanceView';
+import { PatientsView } from './components/PatientsView';
 import { isTeamRole } from './utils/roles';
 import { LoginView } from './components/LoginView';
 import { ChangePasswordView } from './components/ChangePasswordView';
@@ -161,6 +162,7 @@ export const App: React.FC = () => {
 
   const pageTitles: Record<ActivePage, string> = {
     dashboard: 'Dashboard',
+    patients: 'Patients',
     medpass: 'Medpass Sales',
     pharmacy: 'Pharmacy Sales',
     homekare: 'Homekare',
@@ -235,6 +237,8 @@ export const App: React.FC = () => {
 
         {activePage === 'dashboard' && <Dashboard user={currentUser} onToast={addToast} onNavigate={setActivePage} />}
 
+        {activePage === 'patients' && <PatientsView user={currentUser} modules={modules} onToast={addToast} />}
+
         {isModulePage(activePage) && (
           <SalesView
             key={activePage}
@@ -283,18 +287,19 @@ export const App: React.FC = () => {
           <span>Medpass</span>
         </button>
 
+        {/* Pharmacy and the other modules are under More. */}
         <button
           type="button"
-          className={`mobile-tab-btn ${activePage === 'pharmacy' ? 'active' : ''}`}
-          onClick={() => setActivePage('pharmacy')}
+          className={`mobile-tab-btn ${activePage === 'patients' ? 'active' : ''}`}
+          onClick={() => setActivePage('patients')}
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <rect x="1" y="7" width="15" height="11" rx="1.5"></rect>
-            <path d="M16 10h3.5L22 13.5V18h-6"></path>
-            <circle cx="6" cy="19.5" r="1.7"></circle>
-            <circle cx="17.5" cy="19.5" r="1.7"></circle>
+            <circle cx="9" cy="8" r="3.5"></circle>
+            <path d="M2.5 20c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6"></path>
+            <path d="M16 4.5a3.5 3.5 0 0 1 0 7"></path>
+            <path d="M18 14.3c2 .7 3.5 2.8 3.5 5.7"></path>
           </svg>
-          <span>Pharmacy</span>
+          <span>Patients</span>
         </button>
 
         <button
