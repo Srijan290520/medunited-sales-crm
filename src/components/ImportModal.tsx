@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import Papa from 'papaparse';
 import readXlsxFile from 'read-excel-file';
 import { SaleType, User } from '../types';
+import { isTeamRole } from '../utils/roles';
 import { api } from '../services/api';
 
 // Bulk-add leads from an Excel (.xlsx) or CSV file.
@@ -119,7 +120,7 @@ interface RowResult {
 
 export const ImportModal: React.FC<ImportModalProps> = ({ type, user, agents, onClose, onImported, onToast }) => {
   const label = type === 'medpass' ? 'Medpass' : 'Pharmacy';
-  const canAssign = user.Role === 'admin' || user.Role === 'manager';
+  const canAssign = isTeamRole(user.Role);
 
   const [fileName, setFileName] = useState('');
   const [rows, setRows] = useState<Record<string, unknown>[]>([]);

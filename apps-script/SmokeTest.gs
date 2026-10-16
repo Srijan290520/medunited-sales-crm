@@ -19,10 +19,11 @@ function smokeTestV2() {
   check('bad token rejected', r.authError === true, r.message);
   r = JSON.parse(doGet().getContent());
   check('GET refused', r.error === true);
-  ['Medpass', 'Pharmacy'].forEach(function (n) {
+  moduleIds().forEach(function (t) {
+    var n = SALE_TYPES[t];
     var h = sheetHeaders(getSheetByName(n));
-    var miss = SALE_HEADERS.filter(function (x) { return h.indexOf(x) === -1; });
-    check(n + ' has all v2 columns', miss.length === 0, miss.join(','));
+    var miss = moduleHeaders(t).filter(function (x) { return h.indexOf(x) === -1; });
+    check(n + ' has all its columns', miss.length === 0, miss.join(','));
   });
   ['SaleActivities', 'Settings', 'Lists', 'AuditLog', 'Reminders', 'Users', 'Patients', 'UserRequests'].forEach(function (n) {
     check('tab ' + n + ' exists', !!getSpreadsheet().getSheetByName(n));

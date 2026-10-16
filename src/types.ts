@@ -1,4 +1,4 @@
-export type UserRole = 'agent' | 'manager' | 'admin';
+export type UserRole = 'agent' | 'manager' | 'senior_manager' | 'admin';
 
 export interface User {
   ID: string;
@@ -125,6 +125,50 @@ export interface Sale {
   PatientID?: string;
   AlsoIn?: string[]; // other modules where this patient has records
   HouseholdSize?: number; // people sharing this phone number
+
+  // Medpass only (worked out by the server, see apps-script/Medpass.gs)
+  Members?: MedpassMember[];
+  ListPrice?: number | null; // null on records from before the Medpass rules
+  ExtraChildFee?: number;
+  DiscountAmount?: number;
+  DiscountReason?: string;
+  DiscountStatus?: '' | 'Requested' | 'Approved' | 'Rejected';
+  DiscountRequestedBy?: string;
+  DiscountDecidedBy?: string;
+  OPCredit?: number; // OP consultation fee already paid, credited on a Converted From OP pass
+  PayableNow?: number; // what the customer pays today
+  ValidFrom?: string;
+  ValidUntil?: string;
+  PassStatus?: '' | 'active' | 'expired';
+}
+
+export type MedpassRelation = 'Father' | 'Mother' | 'Child';
+
+export interface MedpassMember {
+  name: string;
+  relation: MedpassRelation;
+  dob: string; // YYYY-MM-DD; required for children
+}
+
+export interface MedpassSettings {
+  price: number;
+  maxDiscount: number;
+  extraChildFee: number;
+  includedChildren: number;
+  maxExtraChildren: number;
+  childMaxAge: number;
+  singleParent: boolean;
+}
+
+export interface PendingDiscount {
+  ID: string;
+  CustomerName: string;
+  AgentName: string;
+  DiscountAmount: number;
+  DiscountReason: string;
+  DiscountRequestedBy: string;
+  Amount: number;
+  UpdatedAt: string;
 }
 
 // A person on a phone number, as returned by checkContact. Only the owner of

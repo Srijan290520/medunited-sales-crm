@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { User } from '../types';
+import { isSeniorRole } from '../utils/roles';
 import { api } from '../services/api';
 
 interface Props {
@@ -14,7 +15,7 @@ interface Props {
 // Managers send a request for an admin to approve; admins deactivate
 // directly (the server hands the patients over first).
 export const DeactivateUserModal: React.FC<Props> = ({ user, target, team, onClose, onDone }) => {
-  const isAdmin = user.Role === 'admin';
+  const isAdmin = isSeniorRole(user.Role); // admins and senior managers deactivate directly
   const successors = team.filter(
     (u) => u.Active && u.ID !== target.ID && (u.Role === 'agent' || u.Role === 'manager')
   );

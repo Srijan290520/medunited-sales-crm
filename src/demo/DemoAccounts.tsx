@@ -16,6 +16,6 @@ export const DemoAccounts: React.FC<{ onPick: (email: string, password: string) 
         </button>
       ))}
     </div>
-    <div className="demo-accounts-hint">Pick one, then press Log in. Password for the first three: <code>{DEMO_PASSWORD}</code></div>
+    <div className="demo-accounts-hint">Pick one, then press Log in. Password for the first four: <code>{DEMO_PASSWORD}</code></div>
   </div>
 );

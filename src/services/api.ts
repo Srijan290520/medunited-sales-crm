@@ -186,6 +186,12 @@ export const api = {
 
   getModules: () => call('getModules'),
 
+  // ----- Medpass (price, discounts) -----
+  getMedpassSettings: () => call('getMedpassSettings'),
+  updateMedpassSettings: (data: Record<string, unknown>) => call('updateMedpassSettings', { data }),
+  listPendingDiscounts: () => call('listPendingDiscounts'),
+  decideMedpassDiscount: (id: string, approve: boolean, note?: string) => call('decideMedpassDiscount', { id, approve, note }),
+
   // ----- Patients (owners, migration, conflicts) -----
   reassignPatient: (data: { contact?: string; patientId?: string; agentEmail: string; scope?: 'household' | 'person'; reason?: string }) =>
     call('reassignPatient', data),

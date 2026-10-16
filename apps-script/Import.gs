@@ -127,6 +127,10 @@ function svc_importSales(session, type, rows, options) {
       if (isNaN(n) || n < 0 || n > 1e8) errors.push('Amount is not a valid number.');
       else amount = Math.round(n * 100) / 100;
     }
+    // Module rules for imported leads (e.g. Medpass sets its own price).
+    var importHook = moduleHook(type, 'prepareImport');
+    var importFields = importHook ? (importHook({ priceType: priceType, amount: amount }, errors) || {}) : {};
+    if (importFields.Amount !== undefined) amount = importFields.Amount;
 
     var owner = defaultOwner;
     if (cleanText(r.agentEmail)) {
@@ -161,7 +165,7 @@ function svc_importSales(session, type, rows, options) {
     if (errors.length) return;
 
     var now = nowIso();
-    toSave.push({
+    toSave.push(Object.assign({
       ID: newId(),
       Date: date || todayKey(),
       AgentEmail: owner.email,
@@ -190,7 +194,7 @@ function svc_importSales(session, type, rows, options) {
       CreatedAt: now,
       UpdatedAt: now,
       PatientID: link.patient.ID
-    });
+    }, importFields));
   });
 
   var summary = {

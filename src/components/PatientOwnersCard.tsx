@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { User, PatientConflict, MigrationSummary } from '../types';
+import { isSeniorRole } from '../utils/roles';
 import { api } from '../services/api';
 import { formatDate } from '../utils/date';
 
@@ -12,7 +13,7 @@ interface Props {
 // earlier records were handled by more than one agent. The admin decides:
 // keep everyone on the number with one agent, or choose an agent per person.
 export const PatientOwnersCard: React.FC<Props> = ({ user, onToast }) => {
-  const isAdmin = user.Role === 'admin';
+  const isAdmin = isSeniorRole(user.Role);
   const [conflicts, setConflicts] = useState<PatientConflict[]>([]);
   const [team, setTeam] = useState<User[]>([]);
   const [dryRun, setDryRun] = useState<MigrationSummary | null>(null);

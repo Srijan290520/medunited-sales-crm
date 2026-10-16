@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { DeactivateUserModal } from './DeactivateUserModal';
 import { UserRequestsPanel } from './UserRequestsPanel';
 import { User, UserRole } from '../types';
+import { isTeamRole, isSeniorRole, isAdminRole, ROLE_LABELS } from '../utils/roles';
 import { api } from '../services/api';
 import { formatDate, initials, todayKey } from '../utils/date';
 import { exportToCsv, CsvColumn } from '../utils/exportCsv';
@@ -194,7 +195,7 @@ export const UsersView: React.FC<UsersViewProps> = ({ user, onToast }) => {
     }
   };
 
-  const canManageAll = user.Role === 'admin' || user.Role === 'manager';
+  const canManageAll = isTeamRole(user.Role);
 
   const handleExportUsers = () => {
     if (!canManageAll) {
@@ -253,7 +254,7 @@ export const UsersView: React.FC<UsersViewProps> = ({ user, onToast }) => {
             </button>
           )}
 
-          {user.Role === 'admin' && (
+          {isSeniorRole(user.Role) && (
             <button type="button" onClick={openNewModal}>
               + New User
             </button>
@@ -303,7 +304,7 @@ export const UsersView: React.FC<UsersViewProps> = ({ user, onToast }) => {
                         <span style={{ color: 'var(--text-secondary)', fontSize: '0.88rem' }}>{u.Email}</span>
                       </td>
                       <td>
-                        <span className={`role-badge ${u.Role}`}>{u.Role}</span>
+                        <span className={`role-badge ${u.Role}`}>{ROLE_LABELS[u.Role] || u.Role}</span>
                       </td>
                       <td>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -311,8 +312,8 @@ export const UsersView: React.FC<UsersViewProps> = ({ user, onToast }) => {
                             <input
                               type="checkbox"
                               checked={!!u.Active}
-                              disabled={u.ID === user.ID || (user.Role !== 'admin' && (u.Role === 'admin' || !u.Active))}
-                              title={user.Role === 'admin' ? '' : 'Managers can ask an admin to deactivate agents'}
+                              disabled={u.ID === user.ID || (!isAdminRole(user.Role) && u.Role === 'admin') || (!isSeniorRole(user.Role) && !u.Active)}
+                              title={isSeniorRole(user.Role) ? '' : 'Managers can ask an admin or senior manager to deactivate agents'}
                               onChange={(e) => handleToggleActive(u, e.target.checked)}
                             />
                             <span className="slider"></span>
@@ -327,7 +328,7 @@ export const UsersView: React.FC<UsersViewProps> = ({ user, onToast }) => {
                       </td>
                       <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
                         <div style={{ display: 'inline-flex', gap: '8px' }}>
-                          {user.Role === 'admin' && (
+                          {isSeniorRole(user.Role) && (isAdminRole(user.Role) || u.Role !== 'admin') && (
                             <button
                               type="button"
                               className="secondary"
@@ -413,7 +414,8 @@ export const UsersView: React.FC<UsersViewProps> = ({ user, onToast }) => {
                     <select value={formRole} onChange={(e) => setFormRole(e.target.value as UserRole)}>
                       <option value="agent">Agent (logs own sales &amp; leads)</option>
                       <option value="manager">Manager (views team sales &amp; assigns leads)</option>
-                      <option value="admin">Admin (full access, user management)</option>
+                      <option value="senior_manager">Senior Manager (approvals, users, settings — no admin accounts or deletions)</option>
+                      {isAdminRole(user.Role) && <option value="admin">Admin (full access, user management)</option>}
                     </select>
                   </div>
 

@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { User, DashboardSummary, UrgentFollowUpItem, AuditEntry, SaleActivity } from '../types';
+import { isTeamRole } from '../utils/roles';
 import { api } from '../services/api';
 import { formatMoney, initials, todayKey, formatDate } from '../utils/date';
 import { exportToCsv, CsvColumn } from '../utils/exportCsv';
@@ -26,7 +27,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ user, onToast, onNavigate 
   const [usefulChartType, setUsefulChartType] = useState<'pipeline' | 'medications' | 'payments'>('pipeline');
   const [activityFilter, setActivityFilter] = useState<'all' | 'audits' | 'calls'>('all');
 
-  const canSeeIncentives = user.Role === 'admin' || user.Role === 'manager';
+  const canSeeIncentives = isTeamRole(user.Role);
 
   const loadData = async () => {
     setLoading(true);

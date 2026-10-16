@@ -6,8 +6,10 @@ completed sale, with refill reminders, incentives and a full audit trail.
 - **Agents** see and work only their own leads and sales.
 - **Managers** see the whole team, reassign work, set incentive rates and the monthly target,
   and ask for agents to be deactivated (naming who takes over).
-- **Admins** do everything managers can, plus user accounts, dropdown lists, deletions,
-  approving deactivations and deciding patient-owner conflicts.
+- **Senior managers** do everything admins can except manage admin accounts and
+  delete records or users: they approve Medpass discounts and deactivations,
+  manage non-admin accounts, dropdown lists and Medpass prices.
+- **Admins** do everything, including admin accounts and deletions (always with a reason).
 - **One agent per patient**: every record of a patient, in every module, goes to
   the agent who handles that patient (see [Patients and owners](#patients-and-owners)).
 
@@ -31,6 +33,8 @@ browser — an agent's session cannot fetch another agent's records.
 - Security hardening — see [SECURITY.md](SECURITY.md).
 - **Patients and owners** (one agent per patient and household), patient-level
   reassign, deactivation with handover. Modules are configuration (`Modules.gs`).
+- **Medpass family pass** rules: members, server-side price, discount approval,
+  OP conversions, one-year validity (see [Medpass](#medpass-family-pass)).
 
 ## How it fits together
 
@@ -58,8 +62,8 @@ Apps Script deployment without rebuilding.
    workspace account, not a personal one).
 2. **Extensions → Apps Script.** Delete the default `Code.gs`, then create one
    file per `.gs` file in `apps-script/` and paste each in:
-   `Activities, Attachments, Audit, Auth, Code, Handover, Import, Lists, Modules,
-   Patients, Reminders, SalesService, Setup, SmokeTest, UserService, Utils`.
+   `Activities, Attachments, Audit, Auth, Code, Handover, Import, Lists, Medpass,
+   Modules, Patients, Reminders, SalesService, Setup, SmokeTest, UserService, Utils`.
 3. **Project Settings (gear) → "Show appsscript.json manifest file"** → open
    `appsscript.json` and replace it with `apps-script/appsscript.json`.
    *(Or use [clasp](https://github.com/google/clasp): `clasp push` from the
@@ -144,6 +148,40 @@ and the monthly target.
 - A row for a patient (or household) someone already handles goes to that
   agent; the preview shows "Already handled by …" on those rows.
 
+## Medpass (family pass)
+
+A Medpass is a **one-year pass for a family**: father, mother and their
+children **under 21** on the sale date. Older children and other relatives
+(e.g. grandparents on the same phone number) take their own pass.
+
+| | Default (Settings → Medpass prices) |
+|---|---|
+| Price (family of four) | ₹1,499 |
+| Children included | 2 |
+| Extra child | +₹375 each, up to 2 more (₹1,874 with a third child, ₹2,249 with a fourth) — the same for a single parent |
+| Maximum discount | ₹200 |
+| Single parent may buy a family pass | Yes |
+
+- The **server works out the price** from the members and the price type;
+  nobody types an amount for Medpass.
+  - **Full Price**: price + extra-child fee.
+  - **Discounted**: up to ₹200 off, with a reason. An **admin or senior
+    manager approves** it (Medpass page → *Discounts waiting for approval*, or
+    the record header) before the sale can be completed. Their own discounts
+    are approved straight away.
+  - **Converted From OP**: the OP consultation fee the patient already paid is
+    credited (shown on the bill as a discount). Revenue and incentives count the
+    **full price**; the customer pays the rest now. No other discount applies.
+- Completing needs at least one parent on the members list (children need a
+  date of birth).
+- Completing sets **valid from** (sale date) and **valid until** (one year).
+  If someone on the list already has an active pass on that number, a warning
+  is shown (renewal rules are still to be decided, so it doesn't block).
+- A completed pass keeps the price it was sold at, even if prices change
+  later. Passes completed before these rules keep their recorded amount; open
+  leads follow the rules on their next save.
+- Imported leads get the standard price; discounts must be added in the app.
+
 ## Patients and owners
 
 A **patient** is a person: a phone number **plus a name**. Relatives often
@@ -182,9 +220,10 @@ records for that number are saved as entered.
 ### Going live with Patients (one-time, on the existing Sheet)
 
 1. **Back up**: File → Make a copy of the Sheet.
-2. Paste the new/changed `.gs` files (new: `Handover`, `Modules`, `Patients`).
-3. Run **`setupSpreadsheet`** — adds the `Patients` and `UserRequests` tabs and
-   the `PatientID` column. It never deletes or renames anything.
+2. Paste the new/changed `.gs` files (new: `Handover`, `Medpass`, `Modules`, `Patients`).
+3. Run **`setupSpreadsheet`** — adds the `Patients` and `UserRequests` tabs, the
+   `PatientID` column and the Medpass columns (members, price, discount,
+   validity). It never deletes or renames anything.
 4. Run **`migratePatientsDryRun`** and read the log (patients to create,
    records to link, numbers with more than one agent). Nothing is saved.
 5. Run **`migratePatients`**. It only adds Patients rows and fills empty

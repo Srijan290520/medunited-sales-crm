@@ -17,7 +17,7 @@ Live state: the Sheet's Apps Script project has v2 code saved and
 | Phase | Branch | Status |
 |---|---|---|
 | 1. One agent per patient (people + households) + module engine | `phase1-patient-ownership` | **Done on branch, PR open — not deployed** |
-| 1b. Medpass rules + family members + senior role | `phase1b-medpass-rules` | Rules mostly given; a few questions open |
+| 1b. Medpass rules + family members + senior role | `phase1b-medpass-rules` (stacked on phase 1) | **Done on branch, PR open (base: Phase 1 branch) — not deployed** |
 | 2. Lab & Radiology, HOMEKARE modules | — | Blocked on user input (service list, tests, incentive rules) |
 | 3. Bulk reassign | — | Not started (agent handover partly pulled into Phase 1) |
 | 4. Calmer module pages + widget dashboard | — | Not started (mockup first) |
@@ -278,3 +278,25 @@ pass; single parent allowed on a family pass.
   README on the real Sheet (backup → paste files → setupSpreadsheet →
   migratePatientsDryRun → migratePatients → smokeTestV2 → new deployment);
   Phase 1b answers (new role name, 4th child, single parent); Phase 2 inputs.
+- **2026-10-16** — Phase 1b started on `phase1b-medpass-rules` (branched from
+  the Phase 1 branch; its PR will be stacked on PR #5). Defaults chosen for
+  the two open questions (configurable in Settings): single parent allowed;
+  at most 1 extra child — **corrected by the user the same day: a 4th child
+  is allowed too (+₹375 each beyond 2, so 1,874 / 2,249); single parents pay
+  the same extra-child fees.** Backend done:
+  role `senior_manager` (TEAM_ROLES / SENIOR_ROLES / ADMIN_ROLES in Auth.gs),
+  module extraHeaders + hooks, Medpass.gs (members with DOB, server-side
+  price, discount request/approval, OP credit, validity + coverage warning).
+  Members are a JSON column on the Medpass row (like Products), not a
+  separate tab. **Next:** frontend (role, Medpass form, approvals, Medpass
+  settings card), demo, README, PR.
+- **2026-10-16** — Phase 1b frontend done and checked in the demo build
+  (senior manager approves a discount from the Medpass page; prices: 1,874
+  with a third child, OP conversion payable 999, approved discount 1,399;
+  child aged 25 flagged; + Child disabled after 3). 38 backend tests + build
+  green. README "Medpass (family pass)", SECURITY updated. Pushed; PR opened
+  with base `phase1-patient-ownership` (merge Phase 1 first, then retarget
+  this PR to `v2-react-app`).
+  **Still open:** renewal rules / early renewal / renewal reminders (user:
+  "discuss later"); confirm the defaults single parent = yes, max 1 extra
+  child; Phase 2 inputs (Homekare services, Lab/Radiology tests, incentives).

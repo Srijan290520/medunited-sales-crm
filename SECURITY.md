@@ -22,9 +22,12 @@ Report problems privately to the repository owner, not in public issues.
   lists, details, attachments, reminders, dashboard and history are all
   filtered on the server.
 - Completed sales are locked for agents except medicines and notes.
-- Only managers/admins reassign, reopen completed sales (with a reason),
-  edit incentives and the monthly target. Only admins manage users, edit
-  dropdown lists and delete records (with a reason). The last active admin
+- Only managers and above reassign, reopen completed sales (with a reason),
+  edit incentives and the monthly target. Admins and senior managers manage
+  users (senior managers: non-admin accounts only), edit dropdown lists and
+  Medpass prices, approve discounts and deactivations. Only admins create or
+  change admin accounts and delete records or users (with a reason). Nobody
+  approves a request about their own account. The last active admin
   can't be removed or demoted; accounts with sales can only be deactivated.
 - Duplicate checks tell other agents only that an open record exists and who
   owns it — never the customer's details.
@@ -36,6 +39,10 @@ Report problems privately to the repository owner, not in public issues.
 - Deactivating someone who still handles patients requires a successor; the
   handover and the deactivation happen in one locked, audited step. Managers
   can only request it; admins approve.
+- Medpass prices are computed on the server from the members, price type and
+  Settings; an amount sent by the browser is ignored. A discount can't be
+  completed until an admin or senior manager approves it, and the decision is
+  audited.
 - Patient migration never changes a record's agent and never guesses an owner:
   numbers handled by several agents wait for an admin decision.
 

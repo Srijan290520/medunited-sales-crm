@@ -1,8 +1,8 @@
-// UserService.gs — user management (admin) and incentive rates (manager+)
+// UserService.gs — user accounts (admins; senior managers for non-admin accounts) and incentive rates (managers+)
 
 var USER_HEADERS = ['ID', 'Name', 'Email', 'PasswordHash', 'Salt', 'Role', 'MedpassFullRate', 'MedpassDiscountRate',
   'PharmacyIncentivePercent', 'Active', 'CreatedAt', 'MustChangePassword'];
-var ROLES = ['admin', 'manager', 'agent'];
+var ROLES = ['admin', 'senior_manager', 'manager', 'agent'];
 
 function getUsersSheet() { return getOrCreateSheet('Users', USER_HEADERS); }
 
@@ -23,12 +23,12 @@ function sanitizeUser(u) {
 }
 
 function svc_listUsers(session) {
-  requireRole(session, ['admin', 'manager']);
+  requireRole(session, TEAM_ROLES);
   return sheetToObjects(getUsersSheet()).filter(function (u) { return u.ID; }).map(sanitizeUser);
 }
 
 function svc_createUser(session, data) {
-  requireRole(session, ['admin']);
+  requireRole(session, SENIOR_ROLES);
 
   var email = cleanEmail(data.email);
   var name = cleanText(data.name, 80);
@@ -38,6 +38,7 @@ function svc_createUser(session, data) {
   if (!email || !name || !password) throw new Error('Name, email and password are required.');
   if (!isValidEmail(email)) throw new Error('Enter a valid email address.');
   requireOneOf(role, ROLES, 'Role');
+  if (role === 'admin') requireRole(session, ADMIN_ROLES); // only admins create admins
   validatePasswordStrength(password, email);
 
   var sheet = getUsersSheet();
@@ -72,11 +73,13 @@ function otherActiveAdmins(users, id) {
 }
 
 function svc_updateUser(session, id, data) {
-  requireRole(session, ['admin']);
+  requireRole(session, SENIOR_ROLES);
   var sheet = getUsersSheet();
   var users = sheetToObjects(sheet);
   var existing = users.find(function (u) { return String(u.ID) === String(id); });
   if (!existing) throw new Error('User not found.');
+  // Admin accounts — and making someone an admin — are for admins only.
+  if (existing.Role === 'admin' || data.role === 'admin') requireRole(session, ADMIN_ROLES);
   var patch = {};
 
   if (data.name !== undefined) {
@@ -132,7 +135,7 @@ function svc_updateUser(session, id, data) {
 // otherwise their sales would lose their owner and incentive rates. Those
 // accounts should be deactivated instead (they keep their history).
 function svc_deleteUser(session, id, reason) {
-  requireRole(session, ['admin']);
+  requireRole(session, ADMIN_ROLES); // hard delete: admins only
   var why = cleanText(reason, 300);
   if (why.length < 3) throw new Error('A reason is required to delete a user account.');
   if (String(id) === String(session.id)) throw new Error('You cannot delete your own account.');
@@ -156,11 +159,11 @@ function svc_deleteUser(session, id, reason) {
   return { deleted: true };
 }
 
-// Incentive rates are the one thing a manager (not just admin) may edit.
+// Incentive rates are the one thing a manager (not just admin / senior manager) may edit.
 // Medpass pays a flat ₹ rate per sale (Full Price vs Discounted); Pharmacy
 // pays a percentage of the sale amount.
 function svc_updateIncentives(session, id, data) {
-  requireRole(session, ['admin', 'manager']);
+  requireRole(session, TEAM_ROLES);
   var sheet = getUsersSheet();
   var patch = {};
 

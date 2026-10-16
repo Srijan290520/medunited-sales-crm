@@ -31,7 +31,7 @@ function saleSheetName(type) {
 }
 
 function getSaleSheet(type) {
-  return getOrCreateSheet(saleSheetName(type), SALE_HEADERS);
+  return getOrCreateSheet(saleSheetName(type), moduleHeaders(type));
 }
 
 function saleEntity(type) { return getModule(type).label + 'Sale'; }
@@ -53,11 +53,12 @@ function followUpStatusOf(row) {
 // A sale row as the browser should see it. Drive links never leave the
 // server — the browser gets "attached" and fetches images via getAttachment.
 // `extras` (from recordExtras in Patients.gs) adds the patient fields.
-function saleForClient(row, activities, extras) {
+function saleForClient(row, activities, extras, type) {
   if (!row) return row;
   var acts = activities || [];
   var ex = extras || { PatientID: String(row.PatientID || ''), AlsoIn: [], HouseholdSize: 1 };
-  return {
+  var own = type && moduleHook(type, 'clientFields');
+  return Object.assign({
     PatientID: ex.PatientID,
     AlsoIn: ex.AlsoIn,
     HouseholdSize: ex.HouseholdSize,
@@ -89,7 +90,7 @@ function saleForClient(row, activities, extras) {
     NextFollowUp: dateKey(row.NextFollowUp),
     FollowUpStatus: followUpStatusOf(row),
     AttemptCount: acts.filter(function (a) { return a.Direction === 'Outgoing'; }).length
-  };
+  }, own ? own(row) : {});
 }
 
 function findSaleRow(type, id) {
@@ -105,7 +106,7 @@ function requireSale(session, type, id) {
 // ===== Reads =====
 // A record with fresh activities and patient fields (used after every write).
 function fullSaleForClient(type, row) {
-  return saleForClient(row, activitiesForSale(row.ID), recordExtras(loadPatientWorld())(type, row));
+  return saleForClient(row, activitiesForSale(row.ID), recordExtras(loadPatientWorld())(type, row), type);
 }
 
 function svc_listSales(session, type) {
@@ -114,7 +115,7 @@ function svc_listSales(session, type) {
   var extras = recordExtras(world);
   var rows = world.records.filter(function (x) { return x.type === type && canAccessSale(session, x.row); });
   var acts = activitiesBySale();
-  var list = rows.map(function (x) { return saleForClient(x.row, acts[String(x.row.ID)], extras(type, x.row)); });
+  var list = rows.map(function (x) { return saleForClient(x.row, acts[String(x.row.ID)], extras(type, x.row), type); });
   var rank = { overdue: 0, today: 1, upcoming: 2, '': 3 };
   list.sort(function (a, b) {
     if (a.Status === 'Pending' && b.Status === 'Pending' && rank[a.FollowUpStatus] !== rank[b.FollowUpStatus]) {
@@ -128,7 +129,7 @@ function svc_listSales(session, type) {
 function saleDetail(session, type, row) {
   var acts = activitiesForSale(row.ID);
   return {
-    sale: saleForClient(row, acts, recordExtras(loadPatientWorld())(type, row)),
+    sale: saleForClient(row, acts, recordExtras(loadPatientWorld())(type, row), type),
     activities: acts.map(activityForClient),
     auditHistory: auditHistoryFor([row.ID])
   };
@@ -221,6 +222,17 @@ function validateCompletion(next, type) {
   if (!next.hasPayment) throw new Error('A payment screenshot is required to mark this sale as Completed.');
   if (next.PaymentMethod === 'UPI' && !next.UTR) throw new Error('UTR number is required for UPI payments.');
   if (!(Number(next.Amount) > 0)) throw new Error('Enter the sale amount before marking it Completed.');
+  var hook = moduleHook(type, 'validateCompletion');
+  if (hook) hook(next);
+}
+
+// Is a stored cell the same as a newly computed value? (Numbers come back
+// from the sheet as numbers, blanks as '', booleans as booleans.)
+function sameCellValue(before, after) {
+  if (typeof after === 'number') return before !== '' && before !== null && before !== undefined && Number(before) === after;
+  if (typeof after === 'boolean') return asBool(before) === after;
+  if (Object.prototype.toString.call(before) === '[object Date]') return dateKey(before) === String(after);
+  return String(before === undefined || before === null ? '' : before) === String(after);
 }
 
 function cleanAmount(value) {
@@ -371,8 +383,14 @@ function svc_createSale(session, type, data) {
 
   var bill = attachmentIntent(data.billScreenshot, '');
   var pay = attachmentIntent(data.paymentScreenshot, '');
-  validateCompletion({ Status: status, PaymentMethod: paymentMethod, UTR: utr, Amount: amount, hasBill: bill.present, hasPayment: pay.present,
-    Products: JSON.stringify(products) }, type);
+  // Module rules, e.g. Medpass works out its own price from the members.
+  var prep = moduleHook(type, 'prepareSave');
+  var computed = prep ? prep(session, { isCreate: true, data: data, existing: null,
+    next: { ID: '', Status: status, PriceType: priceType, Date: date, ContactKey: contactKey, CustomerName: customerName } }) : null;
+  var computedFields = (computed && computed.fields) || {};
+  if (computedFields.Amount !== undefined) amount = computedFields.Amount;
+  validateCompletion(Object.assign({ Status: status, PaymentMethod: paymentMethod, UTR: utr, Amount: amount, hasBill: bill.present, hasPayment: pay.present,
+    Products: JSON.stringify(products), PriceType: priceType }, computedFields), type);
 
   var owner = link.owner;
   var id = newId();
@@ -407,13 +425,15 @@ function svc_createSale(session, type, data) {
     UpdatedAt: now,
     PatientID: link.patient.ID
   };
+  Object.keys(computedFields).forEach(function (k) { sale[k] = computedFields[k]; });
   savePatientChanges(world);
   appendObject(sheet, sale);
   afterSaleSaved(type, sale);
   audit(session, status === 'Completed' ? 'complete' : 'create', saleEntity(type), id, saleChanges(null, sale),
     'Created ' + SALE_TYPES[type] + ' record for ' + customerName + ' (' + status + ')' +
     (link.notice && !link.conflict ? '; assigned to ' + owner.name + ', who handles this patient' : ''));
-  return { sale: fullSaleForClient(type, sale), notice: link.notice };
+  var notice = [link.notice].concat((computed && computed.warnings) || []).filter(Boolean).join(' ');
+  return { sale: fullSaleForClient(type, sale), notice: notice };
 }
 
 // ===== Update =====
@@ -473,6 +493,21 @@ function svc_updateSale(session, type, id, data) {
     if (same) delete patch[k];
   });
 
+  // Module rules, e.g. Medpass recomputes its price from members/discount.
+  // Computed fields that end up the same as before are not changes.
+  var warnings = [];
+  var prep = moduleHook(type, 'prepareSave');
+  if (prep) {
+    var draft = {};
+    moduleHeaders(type).forEach(function (h) { draft[h] = patch[h] !== undefined ? patch[h] : existing[h]; });
+    var computed = prep(session, { isCreate: false, data: data, existing: existing, next: draft }) || {};
+    Object.keys(computed.fields || {}).forEach(function (k) {
+      if (sameCellValue(existing[k], computed.fields[k])) delete patch[k];
+      else patch[k] = computed.fields[k];
+    });
+    warnings = computed.warnings || [];
+  }
+
   var bill = attachmentIntent(data.billScreenshot, existing.BillScreenshotUrl);
   var pay = attachmentIntent(data.paymentScreenshot, existing.PaymentScreenshotUrl);
 
@@ -484,7 +519,7 @@ function svc_updateSale(session, type, id, data) {
   }
 
   var next = {};
-  SALE_HEADERS.forEach(function (h) { next[h] = patch[h] !== undefined ? patch[h] : existing[h]; });
+  moduleHeaders(type).forEach(function (h) { next[h] = patch[h] !== undefined ? patch[h] : existing[h]; });
   if (next.Direction === 'Outbound' && next.HeardFrom) { patch.HeardFrom = ''; next.HeardFrom = ''; }
 
   // Status transitions.
@@ -574,7 +609,8 @@ function svc_updateSale(session, type, id, data) {
   if (pay.kind === 'upload') patch.PaymentScreenshotUrl = saveAttachmentFromDataUrl(data.paymentScreenshot, type + '_' + existing.ID + '_payment');
   if (pay.kind === 'clear') patch.PaymentScreenshotUrl = '';
 
-  if (Object.keys(patch).length === 0) return { sale: fullSaleForClient(type, existing), notice: '' };
+  notice = [notice].concat(warnings).filter(Boolean).join(' ');
+  if (Object.keys(patch).length === 0) return { sale: fullSaleForClient(type, existing), notice: notice };
 
   if (world) savePatientChanges(world);
   patch.UpdatedAt = nowIso();
@@ -597,7 +633,7 @@ function svc_reopenSale(session, type, id, reason) {
   var why = cleanText(reason, 300);
   if (existing.Status === 'Pending') throw new Error('This record is already open.');
   if (existing.Status === 'Completed') {
-    requireRole(session, ['admin', 'manager']);
+    requireRole(session, TEAM_ROLES);
     if (why.length < 3) throw new Error('Give a reason for reopening a completed sale.');
   }
   var world = loadPatientWorld();
@@ -605,6 +641,8 @@ function svc_reopenSale(session, type, id, reason) {
 
   var patch = { Status: 'Pending', LostReason: '', Temperature: 'Hot', NextFollowUp: todayKey(), UpdatedAt: nowIso() };
   Object.keys(own).forEach(function (k) { patch[k] = own[k]; });
+  // A reopened pass is no longer valid (Medpass).
+  if (moduleHeaders(type).indexOf('ValidUntil') !== -1) { patch.ValidFrom = ''; patch.ValidUntil = ''; }
   savePatientChanges(world);
   var updated = updateObjectById(sheet, existing.ID, patch);
   var summary = why || 'Customer came back and is interested. Reopened as a Hot lead.';
@@ -625,7 +663,7 @@ function svc_reassignSale(session, type, id, agentEmail, scope, reason) {
 }
 
 function svc_deleteSale(session, type, id, reason) {
-  requireRole(session, ['admin']);
+  requireRole(session, ADMIN_ROLES); // hard delete: admins only
   var why = cleanText(reason, 300);
   if (why.length < 3) throw new Error('A reason (at least 3 characters) is required to delete a record.');
   var sheet = getSaleSheet(type);
