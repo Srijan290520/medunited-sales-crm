@@ -13,7 +13,6 @@
     "build:demo": "node scripts/build-demo-backend.mjs && tsc --noEmit && vite build --config vite.demo.config.ts"
   },
   "dependencies": {
-    "chart.js": "^4.4.8",
     "lucide-react": "^1.16.0",
     "papaparse": "^5.7.0",
     "react": "^19.0.0",

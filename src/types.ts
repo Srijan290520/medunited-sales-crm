@@ -374,6 +374,12 @@ export interface DashboardSummary {
   recentAudits?: AuditEntry[];
   recentActivities?: SaleActivity[];
   urgentFollowUps?: UrgentFollowUpItem[];
+  // Phase 4 widgets (always filtered by role on the server)
+  temperature?: { Hot: number; Warm: number; Cold: number };
+  modules?: { id: SaleType; label: string; count: number; amount: number }[];
+  remindersDue?: { id: string; kind: 'refill' | 'renewal'; customerName: string; detail: string; daysRemaining: number | null; overdue: boolean; agentName: string }[];
+  pendingDiscounts?: PendingDiscount[] | null; // team only
+
   monthlyTarget?: {
     targetAmount: number;
     currentAmount: number;
@@ -385,4 +391,17 @@ export interface ToastMessage {
   id: string;
   text: string;
   type: 'error' | 'success';
+}
+
+// Dashboard layout: widgets on a 12-column grid.
+export type WidgetId = 'target' | 'followups' | 'reminders' | 'temperature' | 'modules' | 'pipeline' | 'activity' | 'discounts' | 'team';
+export interface LayoutItem {
+  id: WidgetId;
+  span: 4 | 6 | 8 | 12;
+}
+export interface DashboardLayoutInfo {
+  layout: LayoutItem[];
+  source: 'user' | 'role';
+  widgets: { id: WidgetId; title: string }[]; // what this role may add
+  spans: number[];
 }

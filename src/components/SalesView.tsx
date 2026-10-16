@@ -26,6 +26,7 @@ import { PendingDiscountsPanel } from './PendingDiscountsPanel';
 import { HomekareServicesEditor, LabTestsEditor, LabTrackingFields, ServiceDraft, TestDraft, LabTracking, linesTotal } from './LineItemEditors';
 import { MODULE_TEXT } from '../modules';
 import { BulkReassignModal } from './BulkReassignModal';
+import { RecordPanel } from './RecordPanel';
 import { formatMoney, formatDate, formatDateTime, formatTimeAgo, initials, todayKey } from '../utils/date';
 import { exportToCsv, CsvColumn } from '../utils/exportCsv';
 import { readScreenshot } from '../utils/image';
@@ -47,6 +48,9 @@ const samePersonName = (a: string, b: string) => !!normName(b) && normName(a) ==
 const ImportModal = lazy(() => import('./ImportModal').then((m) => ({ default: m.ImportModal })));
 const ReassignFileModal = lazy(() => import('./ReassignFileModal').then((m) => ({ default: m.ReassignFileModal })));
 
+const TAB_LABELS = { due: 'Due today', pending: 'Open', completed: 'Completed', cancelled: 'Lost', all: 'All' } as const;
+const STATUS_LABELS: Record<string, string> = { Pending: 'Open', Completed: 'Completed', Cancelled: 'Lost' };
+
 const EMPTY_LAB: LabTracking = { homeCollection: false, collectionDate: '', appointmentDate: '', reportDeliveredOn: '', reportDeliveredVia: '' };
 
 export const SalesView: React.FC<SalesViewProps> = ({ type, moduleInfo, user, onToast }) => {
@@ -60,7 +64,11 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, moduleInfo, user, on
 
   const [sales, setSales] = useState<Sale[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
-  const [viewMode, setViewMode] = useState<'board' | 'table'>('board');
+  // 'table' is the list (default); the board stays available from ⋯ More.
+  const [viewMode, setViewMode] = useState<'board' | 'table'>('table');
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [filtersOpen, setFiltersOpen] = useState<boolean>(false);
+  const [moreOpen, setMoreOpen] = useState<boolean>(false);
   const [activeTab, setActiveTab] = useState<'due' | 'pending' | 'completed' | 'cancelled' | 'all'>('due');
 
   // Filters
@@ -918,6 +926,20 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, moduleInfo, user, on
     return true;
   };
 
+  // Filters in the Filters panel (temperature has its own chips).
+  const activeFilterCount = [agentFilter, channelFilter, paymentFilter, isMedpass ? priceTypeFilter : ''].filter(Boolean).length;
+  const selectedSale = selectedId ? sales.find((x) => x.ID === selectedId) || null : null;
+  // The list's "when" column: the next follow-up, the pass validity or why it was lost.
+  const dueText = (s: Sale) => {
+    if (s.Status === 'Pending') {
+      if (!s.NextFollowUp) return 'No follow-up set';
+      if (s.FollowUpStatus === 'today') return 'Today';
+      return (s.FollowUpStatus === 'overdue' ? 'Overdue · ' : '') + formatDate(s.NextFollowUp);
+    }
+    if (s.Status === 'Completed') return s.ValidUntil ? `Valid until ${formatDate(s.ValidUntil)}` : `Sold ${formatDate(s.Date)}`;
+    return s.LostReason || 'Lost';
+  };
+
   // Filtered sales
   const filteredSales = sales.filter((s) => {
     if (!inTab(s, activeTab)) return false;
@@ -1002,85 +1024,49 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, moduleInfo, user, on
 
   return (
     <div>
-      <div className="topbar">
-        <div>
-          <h1>{pageTitle}</h1>
-          <p className="subtitle">
-            {isMedpass
-              ? 'Manage memberships, member inquiries, follow-ups, and sales'
-              : 'Track prescription inquiries, home deliveries, and refill reminders'}
-          </p>
+      {/* Header: one search box, Filters, ⋯ More and the one main action. */}
+      <div className="mp-header">
+        <div className="mp-title">
+          <h1>{moduleLabel}</h1>
+          <p className="subtitle">{pageTitle}</p>
         </div>
-        <div className="topbar-actions">
-          {canManageAll && (
-            <button
-              type="button"
-              className="secondary"
-              onClick={handleExportSales}
-              title="Export filtered records to CSV (Managers & Admins only)"
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '6px',
-                padding: '7px 13px',
-                fontWeight: 600,
-              }}
-            >
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-                <polyline points="7 10 12 15 17 10"></polyline>
-                <line x1="12" y1="15" x2="12" y2="3"></line>
-              </svg>
-              <span>Export CSV</span>
-            </button>
-          )}
-
-          <button
-            type="button"
-            className="secondary"
-            onClick={() => setImportOpen(true)}
-            title="Add many leads at once from an Excel or CSV file"
-            style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '7px 13px', fontWeight: 600 }}
-          >
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-              <polyline points="17 8 12 3 7 8"></polyline>
-              <line x1="12" y1="3" x2="12" y2="15"></line>
+        <div className="mp-actions">
+          <label htmlFor="mp-search" className="sr-only">Search {moduleLabel}</label>
+          <input
+            id="mp-search"
+            className="mp-search"
+            type="search"
+            placeholder={isPharmacy ? 'Search name, phone, medicine or note' : 'Search name, phone or note'}
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+          <button type="button" className="mp-btn" aria-expanded={filtersOpen} onClick={() => { setFiltersOpen(!filtersOpen); setMoreOpen(false); }}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+              <path d="M3 5h18M6 12h12M10 19h4"></path>
             </svg>
-            <span>Import</span>
+            Filters
+            {activeFilterCount > 0 && <span className="mp-badge">{activeFilterCount}</span>}
           </button>
-
-          {canManageAll && (
-            <button
-              type="button"
-              className="secondary"
-              onClick={() => setRefileOpen(true)}
-              title="Export CSV, change the Assigned Agent Email column, and load the file to reassign"
-              style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '7px 13px', fontWeight: 600 }}
-            >
-              <span>Reassign from file</span>
+          <div className="mp-more">
+            <button type="button" className="mp-btn mp-icon-only" aria-label="More actions" aria-haspopup="menu" aria-expanded={moreOpen}
+              onClick={() => { setMoreOpen(!moreOpen); setFiltersOpen(false); }}>
+              ⋯
             </button>
-          )}
-
-          <div className="view-toggle">
-            <button
-              type="button"
-              className={viewMode === 'board' ? 'active' : ''}
-              onClick={() => setViewMode('board')}
-            >
-              Board
-            </button>
-            <button
-              type="button"
-              className={viewMode === 'table' ? 'active' : ''}
-              onClick={() => setViewMode('table')}
-            >
-              Table
-            </button>
+            {moreOpen && (
+              <>
+                <div className="mp-dismiss" onClick={() => setMoreOpen(false)} aria-hidden="true" />
+                <div className="mp-menu" role="menu">
+                  <button type="button" role="menuitem" onClick={() => { setMoreOpen(false); setImportOpen(true); }}>Import from Excel / CSV</button>
+                  {canManageAll && <button type="button" role="menuitem" onClick={() => { setMoreOpen(false); handleExportSales(); }}>Export CSV</button>}
+                  {canManageAll && <button type="button" role="menuitem" onClick={() => { setMoreOpen(false); setRefileOpen(true); }}>Reassign from file</button>}
+                  <button type="button" role="menuitem" onClick={() => { setMoreOpen(false); setViewMode(viewMode === 'board' ? 'table' : 'board'); }}>
+                    {viewMode === 'board' ? 'Show as list' : 'Show as board'}
+                  </button>
+                </div>
+              </>
+            )}
           </div>
-          <button type="button" onClick={openNewModal}>
-            + New {moduleLabel} Record
-          </button>
+          <button type="button" className="mp-btn-primary" onClick={openNewModal}>New record</button>
         </div>
       </div>
 
@@ -1091,100 +1077,76 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, moduleInfo, user, on
             refreshKey={discountsKey}
             onToast={onToast}
             onChanged={loadData}
-            onOpen={(id) => { const s = sales.find((x) => x.ID === id); if (s) openEditModal(s); }}
+            onOpen={(id) => { setViewMode('table'); setSelectedId(id); }}
           />
         )}
 
-        {/* Pipeline Tabs */}
-        <div className="lead-tabs view-toggle" style={{ maxWidth: '780px', marginBottom: '16px' }}>
+        {filtersOpen && (
+          <section className="mp-filters" aria-label="Filters">
+            {canManageAll && (
+              <div className="mp-field">
+                <label htmlFor="f-agent">Agent</label>
+                <select id="f-agent" value={agentFilter} onChange={(e) => setAgentFilter(e.target.value)}>
+                  <option value="">Everyone</option>
+                  {agentOptions.map((a: any) => <option key={a.email} value={a.email}>{a.name}</option>)}
+                </select>
+              </div>
+            )}
+            <div className="mp-field">
+              <label htmlFor="f-channel">Channel</label>
+              <select id="f-channel" value={channelFilter} onChange={(e) => setChannelFilter(e.target.value)}>
+                <option value="">Any</option>
+                {options.channels.map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+            <div className="mp-field">
+              <label htmlFor="f-payment">Payment method</label>
+              <select id="f-payment" value={paymentFilter} onChange={(e) => setPaymentFilter(e.target.value)}>
+                <option value="">Any</option>
+                <option value="UPI">UPI</option>
+                <option value="Cash">Cash</option>
+                <option value="Card">Card</option>
+                <option value="Net Banking">Net Banking</option>
+              </select>
+            </div>
+            {isMedpass && (
+              <div className="mp-field">
+                <label htmlFor="f-price">Price type</label>
+                <select id="f-price" value={priceTypeFilter} onChange={(e) => setPriceTypeFilter(e.target.value)}>
+                  <option value="">Any</option>
+                  <option value="Full Price">Full Price</option>
+                  <option value="Discounted">Discounted</option>
+                  <option value="Converted From OP">Converted From OP</option>
+                </select>
+              </div>
+            )}
+            {activeFilterCount > 0 && (
+              <button type="button" className="mp-link" onClick={() => { setAgentFilter(''); setChannelFilter(''); setPaymentFilter(''); setPriceTypeFilter(''); }}>
+                Clear filters
+              </button>
+            )}
+          </section>
+        )}
+
+        {/* Status tabs */}
+        <div className="mp-tabs" role="tablist" aria-label="Status">
           {(['due', 'pending', 'completed', 'cancelled', 'all'] as const).map((t) => (
-            <button
-              key={t}
-              type="button"
-              className={activeTab === t ? 'active' : ''}
-              onClick={() => setActiveTab(t)}
-            >
-              {t === 'due'
-                ? 'Follow-ups due'
-                : t === 'pending'
-                ? 'Pending Pipeline'
-                : t === 'cancelled'
-                ? 'Lost / Cancelled'
-                : t.charAt(0).toUpperCase() + t.slice(1)}
-              <span className="tab-count"> ({tabCounts[t]})</span>
+            <button key={t} type="button" role="tab" aria-selected={activeTab === t} className={`mp-tab${activeTab === t ? ' active' : ''}`} onClick={() => setActiveTab(t)}>
+              {TAB_LABELS[t]} <span className="mp-count">{tabCounts[t]}</span>
             </button>
           ))}
         </div>
 
-        {/* Filter Bar */}
-        <div className="filter-bar">
-          <input
-            type="search"
-            placeholder="Search by customer, phone, medicine or notes…"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
-
-          {canManageAll && (
-            <select value={agentFilter} onChange={(e) => setAgentFilter(e.target.value)}>
-              <option value="">All Agents</option>
-              {agentOptions.map((a: any) => (
-                <option key={a.email} value={a.email}>
-                  {a.name}
-                </option>
-              ))}
-            </select>
-          )}
-
-          <select value={tempFilter} onChange={(e) => setTempFilter(e.target.value)}>
-            <option value="">All Temperatures</option>
-            <option value="Hot">Hot</option>
-            <option value="Warm">Warm</option>
-            <option value="Cold">Cold</option>
-          </select>
-
-          <select value={channelFilter} onChange={(e) => setChannelFilter(e.target.value)}>
-            <option value="">All Channels</option>
-            {options.channels.map((c) => (
-              <option key={c} value={c}>
-                {c}
-              </option>
-            ))}
-          </select>
-
-          <select value={paymentFilter} onChange={(e) => setPaymentFilter(e.target.value)}>
-            <option value="">All Payment Methods</option>
-            <option value="UPI">UPI</option>
-            <option value="Cash">Cash</option>
-            <option value="Card">Card</option>
-            <option value="Net Banking">Net Banking</option>
-          </select>
-
-          {isMedpass && (
-            <select value={priceTypeFilter} onChange={(e) => setPriceTypeFilter(e.target.value)}>
-              <option value="">All Price Types</option>
-              <option value="Full Price">Full Price</option>
-              <option value="Discounted">Discounted</option>
-              <option value="Converted From OP">Converted From OP</option>
-            </select>
-          )}
-
-          {(search || agentFilter || tempFilter || channelFilter || paymentFilter || priceTypeFilter) && (
-            <button
-              type="button"
-              className="secondary"
-              onClick={() => {
-                setSearch('');
-                setAgentFilter('');
-                setTempFilter('');
-                setChannelFilter('');
-                setPaymentFilter('');
-                setPriceTypeFilter('');
-              }}
-            >
-              Clear
+        {/* Lead temperature, as quick filters */}
+        <div className="mp-temps" role="group" aria-label="Lead temperature">
+          <span className="mp-temps-label">Temperature</span>
+          {(['', 'Hot', 'Warm', 'Cold'] as const).map((t) => (
+            <button key={t || 'all'} type="button" aria-pressed={tempFilter === t}
+              className={`mp-chip${tempFilter === t ? ` active${t ? ' temp-' + t.toLowerCase() : ''}` : ''}`}
+              onClick={() => setTempFilter(t)}>
+              {t || 'All'} <span className="mp-count">{sales.filter((s) => inTab(s, activeTab) && (!t || (s.Temperature || 'Warm') === t)).length}</span>
             </button>
-          )}
+          ))}
         </div>
 
         {/* Board View */}
@@ -1427,238 +1389,77 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, moduleInfo, user, on
           </div>
         )}
 
-        {/* Table View */}
-        {canManageAll && viewMode === 'board' && (
-          <p className="muted small-text" style={{ margin: '0 0 8px' }}>To reassign many records at once, switch to the table view and tick them.</p>
-        )}
-
-        {viewMode === 'table' && canManageAll && selectedIds.length > 0 && (
-          <div className="contact-check" style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '10px' }}>
-            <strong>{selectedIds.length} selected</strong>
-            <button type="button" onClick={() => setBulkOpen(true)} style={{ padding: '5px 12px' }}>Reassign to…</button>
-            <button type="button" className="secondary" onClick={() => setSelectedIds([])} style={{ padding: '5px 12px' }}>Clear</button>
-          </div>
-        )}
-
+        {/* List (default view) with the record's details beside it */}
         {viewMode === 'table' && (
-          <div className="table-card">
-            <div className="table-container">
-              <table className="data-table">
-                <thead>
-                  <tr>
-                    {canManageAll && (
-                      <th style={{ width: '32px' }}>
-                        <input type="checkbox" aria-label="Select all shown records"
-                          checked={filteredSales.length > 0 && filteredSales.every((s) => selectedIds.includes(s.ID))}
-                          onChange={(e) => setSelectedIds(e.target.checked ? filteredSales.map((s) => s.ID) : [])} />
-                      </th>
-                    )}
-                    <th>Customer</th>
-                    <th>Status</th>
-                    <th>Temp</th>
-                    <th>Source</th>
-                    <th>{text.detail}</th>
-                    <th>Amount</th>
-                    <th>Follow-up / Due</th>
-                    <th>Attempts</th>
-                    <th>Proof</th>
-                    {canManageAll && <th>Agent</th>}
-                    <th>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredSales.length === 0 ? (
-                    <tr>
-                      <td colSpan={canManageAll ? 12 : 10} style={{ textAlign: 'center', padding: '24px', color: 'var(--text-muted)' }}>
-                        No records match current criteria.
-                      </td>
-                    </tr>
+          <div className="mp-body">
+            <section className="mp-list" aria-label={`${moduleLabel} records`}>
+              {canManageAll && filteredSales.length > 0 && (
+                <div className="mp-list-head">
+                  <input
+                    type="checkbox"
+                    aria-label="Select all shown records"
+                    checked={filteredSales.every((s) => selectedIds.includes(s.ID))}
+                    onChange={(e) => setSelectedIds(e.target.checked ? filteredSales.map((s) => s.ID) : [])}
+                  />
+                  {selectedIds.length > 0 ? (
+                    <>
+                      <strong>{selectedIds.length} selected</strong>
+                      <button type="button" className="mp-btn-primary mp-small" onClick={() => setBulkOpen(true)}>Reassign to…</button>
+                      <button type="button" className="mp-link" onClick={() => setSelectedIds([])}>Clear</button>
+                    </>
                   ) : (
-                    filteredSales.map((s) => {
-                      const isOverdue = s.FollowUpStatus === 'overdue';
-                      const isToday = s.FollowUpStatus === 'today';
-
-                      return (
-                        <tr
-                          key={s.ID}
-                          className="lead-row"
-                          onClick={() => openEditModal(s)}
-                          style={{ cursor: 'pointer' }}
-                        >
-                          {canManageAll && (
-                            <td onClick={(e) => e.stopPropagation()}>
-                              <input type="checkbox" aria-label={`Select ${s.CustomerName}`} checked={selectedIds.includes(s.ID)}
-                                onChange={(e) => setSelectedIds((ids) => (e.target.checked ? [...ids, s.ID] : ids.filter((x) => x !== s.ID)))} />
-                            </td>
-                          )}
-                          <td>
-                            <strong>{s.CustomerName}</strong>
-                            {s.DoNotCall && <span className="dnd-tag" style={{ marginLeft: '6px' }}>DND</span>}
-                            {s.AlsoIn && s.AlsoIn.length > 0 && (
-                                <span className="also-in-chip" title="This patient also has records in these modules">Also in: {s.AlsoIn.join(', ')}</span>
-                              )}
-                            <div>
-                              <small className="muted">{s.Contact || '—'}</small>
-                            </div>
-                          </td>
-
-                          <td>
-                            <span className={`status-pill stage-${s.Status.toLowerCase()}`}>{s.Status}</span>
-                            {s.Status === 'Cancelled' && s.LostReason && (
-                              <div>
-                                <small className="muted">{s.LostReason}</small>
-                              </div>
-                            )}
-                          </td>
-
-                          <td>
-                            {s.Temperature && (
-                              <span className={`temp-badge ${s.Temperature.toLowerCase()}`}>{s.Temperature}</span>
-                            )}
-                          </td>
-
-                          <td>
-                            <div>{s.Channel || '—'}</div>
-                            {s.HeardFrom && <small className="muted">{s.HeardFrom}</small>}
-                          </td>
-
-                          <td style={{ maxWidth: '200px' }} title={s.Detail}>
-                            {s.Detail || '—'}
-                          </td>
-
-                          <td>
-                            <strong>{s.Amount ? formatMoney(s.Amount) : '—'}</strong>
-                          </td>
-
-                          <td>
-                            {s.NextFollowUp ? (
-                              <div>
-                                {isOverdue && <span className="reminder-badge overdue small" style={{ marginRight: '4px' }}>Overdue</span>}
-                                {isToday && <span className="reminder-badge upcoming small" style={{ marginRight: '4px' }}>Today</span>}
-                                <span>{formatDate(s.NextFollowUp)}</span>
-                              </div>
-                            ) : (
-                              <span className="muted">—</span>
-                            )}
-                          </td>
-
-                          <td>
-                            <strong>{s.AttemptCount || 0}</strong>
-                          </td>
-
-                          <td>
-                            <div style={{ display: 'flex', gap: '4px' }}>
-                              {s.BillScreenshotUrl ? (
-                                <button
-                                  type="button"
-                                  className="proof-link"
-                                  style={{ border: 'none', cursor: 'pointer' }}
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setProofModal({ title: `Bill Proof - ${s.CustomerName}`, url: s.BillScreenshotUrl, attachment: { type, saleId: s.ID, kind: 'bill' } });
-                                  }}
-                                >
-                                  Bill
-                                </button>
-                              ) : (
-                                <span className="proof-link disabled">No Bill</span>
-                              )}
-                              {s.PaymentScreenshotUrl ? (
-                                <button
-                                  type="button"
-                                  className="proof-link"
-                                  style={{ border: 'none', cursor: 'pointer' }}
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setProofModal({ title: `Payment Proof - ${s.CustomerName}`, url: s.PaymentScreenshotUrl, attachment: { type, saleId: s.ID, kind: 'payment' } });
-                                  }}
-                                >
-                                  Pay
-                                </button>
-                              ) : (
-                                <span className="proof-link disabled">No Pay</span>
-                              )}
-                            </div>
-                          </td>
-
-                          {canManageAll && (
-                            <td>
-                              <div className="table-person">
-                                <span className="avatar-sm">{initials(s.AgentName)}</span>
-                                <span>{s.AgentName}</span>
-                              </div>
-                            </td>
-                          )}
-
-                          <td>
-                            <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }} onClick={(e) => e.stopPropagation()}>
-                              <button
-                                type="button"
-                                className="secondary"
-                                style={{ padding: '4px 8px', fontSize: '0.78rem' }}
-                                onClick={() => openEditModal(s)}
-                              >
-                                View
-                              </button>
-                              {isPharmacy && (
-                                <button
-                                  type="button"
-                                  style={{
-                                    padding: '4px 8px',
-                                    fontSize: '0.78rem',
-                                    fontWeight: 600,
-                                    background: '#eff6ff',
-                                    color: '#1d4ed8',
-                                    border: '1px solid #bfdbfe',
-                                    borderRadius: '6px',
-                                    cursor: 'pointer',
-                                    whiteSpace: 'nowrap',
-                                  }}
-                                  onClick={() => openEditMedicationsModal(s)}
-                                  title="Edit prescribed medicines, dosages, and refill duration"
-                                >
-                                  💊 Edit Meds
-                                </button>
-                              )}
-                              {s.Status === 'Cancelled' && (
-                                <button
-                                  type="button"
-                                  style={{
-                                    padding: '4px 8px',
-                                    fontSize: '0.75rem',
-                                    fontWeight: 700,
-                                    background: '#dcfce7',
-                                    color: '#166534',
-                                    border: '1px solid #86efac',
-                                    borderRadius: '6px',
-                                    cursor: 'pointer',
-                                  }}
-                                  onClick={() => handleQuickReopen(s)}
-                                  title="Customer reached back out or interested in service"
-                                >
-                                  🔄 Reopen
-                                </button>
-                              )}
-                              {user.Role === 'admin' && (
-                                <button
-                                  type="button"
-                                  className="danger"
-                                  style={{ padding: '4px 8px', fontSize: '0.78rem', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
-                                  onClick={() => openDeleteModal(s)}
-                                  title="Delete record (Admin only - requires reason)"
-                                >
-                                  <span>🗑️</span> Delete
-                                </button>
-                              )}
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })
+                    <span className="mp-muted">{filteredSales.length} record{filteredSales.length === 1 ? '' : 's'}</span>
                   )}
-                </tbody>
-              </table>
-            </div>
+                </div>
+              )}
+              {loading && sales.length === 0 ? (
+                <div className="mp-empty">Loading…</div>
+              ) : filteredSales.length === 0 ? (
+                <div className="mp-empty">Nothing matches. Try another tab, temperature or filter, or clear the search.</div>
+              ) : (
+                filteredSales.map((s) => (
+                  <div key={s.ID} className={`mp-row${s.ID === selectedId ? ' selected' : ''}`}>
+                    {canManageAll && (
+                      <input
+                        type="checkbox"
+                        aria-label={`Select ${s.CustomerName}`}
+                        checked={selectedIds.includes(s.ID)}
+                        onChange={(e) => setSelectedIds((ids) => (e.target.checked ? [...ids, s.ID] : ids.filter((x) => x !== s.ID)))}
+                      />
+                    )}
+                    <button type="button" className="mp-row-main" onClick={() => setSelectedId(s.ID)} aria-current={s.ID === selectedId}>
+                      <span className="mp-who">
+                        <strong>{s.CustomerName}</strong>
+                        <small>
+                          {s.Contact || 'No phone'}
+                          {s.AlsoIn && s.AlsoIn.length ? ` · Also in: ${s.AlsoIn.join(', ')}` : ''}
+                          {s.DoNotCall ? ' · Do not call' : ''}
+                        </small>
+                      </span>
+                      <span className={`mp-pill temp-${(s.Temperature || 'Warm').toLowerCase()}`}>{s.Temperature || 'Warm'}</span>
+                      <span className={`mp-pill status-${s.Status.toLowerCase()}`}>{STATUS_LABELS[s.Status] || s.Status}</span>
+                      <span className={`mp-due ${s.Status === 'Pending' ? s.FollowUpStatus || '' : ''}`}>{dueText(s)}</span>
+                      <span className="mp-amount">{s.Amount ? formatMoney(s.Amount) : '—'}</span>
+                      {canManageAll && <span className="mp-agent">{s.AgentName}</span>}
+                    </button>
+                  </div>
+                ))
+              )}
+            </section>
+
+            {selectedSale && (
+              <RecordPanel
+                type={type}
+                sale={selectedSale}
+                canManageAll={canManageAll}
+                onClose={() => setSelectedId(null)}
+                onEdit={() => openEditModal(selectedSale)}
+                onLogCall={async () => {
+                  await openEditModal(selectedSale);
+                  setEditMainTab('log_contact');
+                }}
+              />
+            )}
           </div>
         )}
 
