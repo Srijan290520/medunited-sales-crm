@@ -18,7 +18,7 @@ Live state: the Sheet's Apps Script project has v2 code saved and
 |---|---|---|
 | 1. One agent per patient (people + households) + module engine | `phase1-patient-ownership` | **Done on branch, PR open — not deployed** |
 | 1b. Medpass rules + family members + senior role | `phase1b-medpass-rules` (stacked on phase 1) | **Done on branch, PR open (base: Phase 1 branch) — not deployed** |
-| 2. Lab & Radiology, HOMEKARE modules | `phase2-new-modules` (from 1b) | Homekare service list received (38, no prices); Lab & Radiology = typed by hand for now; Homekare prices typed per patient; incentives later (Phase 5); **Approved — build next session** (user paused for credits) |
+| 2. Lab & Radiology, HOMEKARE modules | `phase2-new-modules` (stacked on 1b) | **Done on branch, PR open — not deployed** |
 | 3. Bulk reassign | — | Not started (agent handover partly pulled into Phase 1) |
 | 4. Calmer module pages + widget dashboard | — | Not started (mockup first) |
 | 5. Settings page, Incentives page, per-agent targets | — | Blocked on user answers (revenue vs count, agent visibility, target→incentive) |
@@ -361,3 +361,16 @@ pass; single parent allowed on a family pass.
   4. Import/export for both modules; tests for every rule; then the
      frontend (sidebar from `getModules`, which was deferred to now; line
      editors), README, demo, PR.
+- **2026-10-16** — **Phase 2 built.** Backend: `Homekare.gs` (38-service
+  catalogue, typed prices, monthly renewal reminders), `Lab.gs` (typed tests,
+  collection/appointment/report fields), Reminders generalised (Kind,
+  SaleType, SaleID…; old rows still refills), Modules.gs hooks afterSave /
+  afterDelete / clientConfig, incentive kind none. Frontend: sidebar + pages
+  from getModules (deferred item done), line editors, renewal cards on the
+  Reminders page. 42 backend tests + build green; checked in the demo build
+  (form save → ₹2,050 total; lab report editable after completion; renewal
+  card). Pushed; PR opened with base `phase1b-medpass-rules`.
+  **Open for later:** Homekare tracking (visit dates, days, staff);
+  incentives for Homekare and Lab (Phase 5); Lab test catalogue; renewal
+  days-before (5) as a setting; dashboard per-module KPIs (Phase 4).
+  **Next phase:** 3 (bulk reassign).

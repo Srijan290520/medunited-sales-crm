@@ -1,7 +1,8 @@
 # MedUnited Sales CRM
 
-Tracks Medpass and Pharmacy (home delivery) enquiries from first contact to
-completed sale, with refill reminders, incentives and a full audit trail.
+Tracks Medpass, Pharmacy (home delivery), Homekare and Lab & Radiology
+enquiries from first contact to completed sale, with refill and renewal
+reminders, incentives and a full audit trail.
 
 - **Agents** see and work only their own leads and sales.
 - **Managers** see the whole team, reassign work, set incentive rates and the monthly target,
@@ -44,8 +45,9 @@ Browser (static React app, any host)
    ▼
 Google Apps Script Web App  (apps-script/*.gs)
    │
-   ├── Google Sheet: Users, Medpass, Pharmacy, Patients, Reminders, SaleActivities,
-   │                 UserRequests, Lists, Settings, AuditLog (protected)
+   ├── Google Sheet: Users, Medpass, Pharmacy, Homekare, Lab & Radiology, Patients,
+   │                 Reminders, SaleActivities, UserRequests, Lists, Settings,
+   │                 AuditLog (protected)
    └── Google Drive: "MedUnited Sales CRM Attachments" (private screenshots)
 ```
 
@@ -62,8 +64,9 @@ Apps Script deployment without rebuilding.
    workspace account, not a personal one).
 2. **Extensions → Apps Script.** Delete the default `Code.gs`, then create one
    file per `.gs` file in `apps-script/` and paste each in:
-   `Activities, Attachments, Audit, Auth, Code, Handover, Import, Lists, Medpass,
-   Modules, Patients, Reminders, SalesService, Setup, SmokeTest, UserService, Utils`.
+   `Activities, Attachments, Audit, Auth, Code, Handover, Homekare, Import, Lab,
+   Lists, Medpass, Modules, Patients, Reminders, SalesService, Setup, SmokeTest,
+   UserService, Utils`.
 3. **Project Settings (gear) → "Show appsscript.json manifest file"** → open
    `appsscript.json` and replace it with `apps-script/appsscript.json`.
    *(Or use [clasp](https://github.com/google/clasp): `clasp push` from the
@@ -129,7 +132,7 @@ and the monthly target.
 
 ---
 
-## Bulk import (Medpass / Pharmacy page → **Import**)
+## Bulk import (any module page → **Import**)
 
 - Excel **.xlsx** or **.csv**, up to **500 rows** and 5 MB per file
   (old `.xls`: save as `.xlsx` first). Use **Download the template** in the dialog.
@@ -147,6 +150,32 @@ and the monthly target.
   rows without an Agent Email; agents always import for themselves.
 - A row for a patient (or household) someone already handles goes to that
   agent; the preview shows "Already handled by …" on those rows.
+
+## Homekare
+
+- A record lists one or more services picked from MedUnited's 38 Homekare
+  services (names exactly as in the billing system, see
+  `apps-script/Homekare.gs` and `docs/catalogues/homekare-services.csv`).
+- **Prices vary per patient**, so the agent types each service's price; the
+  server adds them up for the amount.
+- **Monthly packages** (caretaker monthly, caretaker with travel package, major
+  dressing monthly, suction operator per month): when the sale is Completed, a
+  **renewal reminder** appears on the Reminders page. The package runs one
+  month from the record date (1 Oct → 31 Oct; 31 Jan → 28 Feb); the reminder is
+  due 5 days before it ends. Next month's completed package marks the old
+  reminder **Renewed**. Reminders follow the patient when reassigned.
+- Not tracked yet (to be decided): visit dates, number of days/visits, staff sent.
+- No incentive yet (to be added with the Incentives page).
+
+## Lab & Radiology
+
+- Tests and packages are **typed by hand** for now: name, Lab or Radiology,
+  price. The amount is their sum (server-side).
+- Optional: home sample collection (+ date), appointment date, report
+  delivered on + by (WhatsApp, Email, Collected, Other). Agents can update
+  these after the sale is Completed (reports come later), but not the tests
+  or prices.
+- No incentive yet (to be added with the Incentives page).
 
 ## Medpass (family pass)
 
@@ -220,10 +249,12 @@ records for that number are saved as entered.
 ### Going live with Patients (one-time, on the existing Sheet)
 
 1. **Back up**: File → Make a copy of the Sheet.
-2. Paste the new/changed `.gs` files (new: `Handover`, `Medpass`, `Modules`, `Patients`).
-3. Run **`setupSpreadsheet`** — adds the `Patients` and `UserRequests` tabs, the
-   `PatientID` column and the Medpass columns (members, price, discount,
-   validity). It never deletes or renames anything.
+2. Paste the new/changed `.gs` files (new: `Handover`, `Homekare`, `Lab`, `Medpass`,
+   `Modules`, `Patients`).
+3. Run **`setupSpreadsheet`** — adds the `Homekare`, `Lab & Radiology`, `Patients`
+   and `UserRequests` tabs, the `PatientID` column, the Medpass columns (members,
+   price, discount, validity) and the new Reminders columns. It never deletes or
+   renames anything; existing refill reminders keep working.
 4. Run **`migratePatientsDryRun`** and read the log (patients to create,
    records to link, numbers with more than one agent). Nothing is saved.
 5. Run **`migratePatients`**. It only adds Patients rows and fills empty
@@ -234,6 +265,9 @@ records for that number are saved as entered.
 8. Resolve any owner conflicts on the Patient owners card.
 
 ## Refill reminders (Pharmacy)
+
+(Homekare monthly packages get renewal reminders on the same page — see
+[Homekare](#homekare).)
 
 A reminder is created when a Pharmacy sale is **Completed** with at least one
 medicine. Days of supply by form:
