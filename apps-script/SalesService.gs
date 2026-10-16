@@ -831,8 +831,29 @@ function computeDashboardSummary(session) {
   });
   var target = getMonthlyTarget();
 
+  // Widget data (Phase 4). Same visibility as everything above: agents only
+  // ever get their own records and reminders; team-only parts are omitted.
+  var temperature = { Hot: 0, Warm: 0, Cold: 0 };
+  all.forEach(function (x) {
+    if (x.row.Status !== 'Pending') return;
+    var t = LEAD_TEMPERATURES.indexOf(x.row.Temperature) !== -1 ? x.row.Temperature : 'Warm';
+    temperature[t]++;
+  });
+  var modulesList = moduleIds().map(function (t) {
+    return { id: t, label: SALE_TYPES[t], count: totals[t + 'Count'] || 0, amount: totals[t + 'Amount'] || 0 };
+  });
+  var remindersDue = svc_listReminders(session, false).filter(function (r) { return r.IsDue; }).slice(0, 6).map(function (r) {
+    return { id: String(r.ID), kind: r.Kind, customerName: String(r.CustomerName), detail: r.Kind === 'renewal' ? String(r.Detail) : (r.Products || []).map(function (p) { return p.name; }).join(', '),
+      daysRemaining: r.DaysRemaining, overdue: !!r.Overdue, agentName: String(r.AgentName) };
+  });
+  var pendingDiscounts = isAgent ? null : svc_listPendingDiscounts(session).slice(0, 6);
+
   return {
     totals: totals,
+    temperature: temperature,
+    modules: modulesList,
+    remindersDue: remindersDue,
+    pendingDiscounts: pendingDiscounts,
     agents: agentsArray,
     pipeline: {
       completed: counts.Completed, pending: counts.Pending, cancelled: counts.Cancelled, totalLeads: total,

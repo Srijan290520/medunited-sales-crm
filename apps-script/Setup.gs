@@ -9,6 +9,7 @@ function setupSpreadsheet() {
   moduleIds().forEach(function (type) { getSaleSheet(type); });
   getPatientsSheet();
   getUserRequestsSheet();
+  getUserLayoutsSheet();
   getRemindersSheet();
   getActivitiesSheet();
   getListsSheet();

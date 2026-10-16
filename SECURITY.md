@@ -36,6 +36,9 @@ Report problems privately to the repository owner, not in public issues.
   record onto another agent's patient by editing its phone number, or reopen a
   record whose patient is now someone else's. The people sharing a phone
   number are shown only to that number's owner and to managers/admins.
+- Dashboard layouts only choose which widgets are drawn. Every widget's data
+  comes from the same role-filtered summary; team-only widgets are refused for
+  agents when a layout is saved, and their data is never sent to agents.
 - Bulk reassign, reassign from file and agent handover are for managers and
   above, run under the script lock, recheck every row on the real run, and
   audit each moved record plus a summary.

@@ -1,13 +1,10 @@
-import React, { useEffect, useState, useRef } from 'react';
-import { User, DashboardSummary, UrgentFollowUpItem, AuditEntry, SaleActivity } from '../types';
-import { isTeamRole } from '../utils/roles';
+import React, { useEffect, useState } from 'react';
+import { User, DashboardSummary, LayoutItem, WidgetId, DashboardLayoutInfo, SaleType } from '../types';
+import { isTeamRole, isSeniorRole } from '../utils/roles';
 import { api } from '../services/api';
-import { formatMoney, initials, todayKey, formatDate } from '../utils/date';
+import { formatMoney, formatDate, formatTimeAgo, todayKey } from '../utils/date';
 import { exportToCsv, CsvColumn } from '../utils/exportCsv';
-import { Chart, registerables } from 'chart.js';
 import { ActivePage } from './Sidebar';
-
-Chart.register(...registerables);
 
 interface DashboardProps {
   user: User;
@@ -15,816 +12,334 @@ interface DashboardProps {
   onNavigate?: (page: ActivePage) => void;
 }
 
+// The dashboard is a grid of widgets. Each person arranges their own
+// (Customize: add, move, resize, remove), saved on the server; without one
+// they get their role's default. The layout only decides what is drawn —
+// every number comes from dashboardSummary, which the server filters by role.
+
+const SPANS: LayoutItem['span'][] = [4, 6, 8, 12];
+const SIZE_NAMES: Record<number, string> = { 4: 'Small', 6: 'Medium', 8: 'Large', 12: 'Full width' };
+const MODULE_COLORS: Record<string, string> = { medpass: '#3730a3', pharmacy: '#0e7490', homekare: '#9d174d', lab: '#b45309' };
+
+const Bars: React.FC<{ rows: { label: string; value: number; color: string; text?: string }[] }> = ({ rows }) => {
+  const max = Math.max(1, ...rows.map((r) => r.value));
+  return (
+    <div className="dw-bars">
+      {rows.map((r) => (
+        <div key={r.label} className="dw-bar-row">
+          <span className="dw-bar-label">{r.label}</span>
+          <span className="dw-bar-track" aria-hidden="true">
+            <span style={{ width: `${(r.value / max) * 100}%`, background: r.color }} />
+          </span>
+          <span className="dw-bar-value">{r.text ?? r.value}</span>
+        </div>
+      ))}
+    </div>
+  );
+};
+
 export const Dashboard: React.FC<DashboardProps> = ({ user, onToast, onNavigate }) => {
-  const [loading, setLoading] = useState<boolean>(true);
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
+  const [info, setInfo] = useState<DashboardLayoutInfo | null>(null);
+  const [layout, setLayout] = useState<LayoutItem[]>([]);
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const isTeam = isTeamRole(user.Role);
 
-  const salesChartRef = useRef<HTMLCanvasElement | null>(null);
-  const secondaryChartRef = useRef<HTMLCanvasElement | null>(null);
-  const salesChartInstance = useRef<Chart | null>(null);
-  const secondaryChartInstance = useRef<Chart | null>(null);
-  const [usefulChartType, setUsefulChartType] = useState<'pipeline' | 'medications' | 'payments'>('pipeline');
-  const [activityFilter, setActivityFilter] = useState<'all' | 'audits' | 'calls'>('all');
-
-  const canSeeIncentives = isTeamRole(user.Role);
-
-  const loadData = async () => {
-    setLoading(true);
+  const load = async () => {
     setError(null);
-    try {
-      const res = await api.dashboardSummary();
-      if (res.error) {
-        setError(res.message || 'Could not load dashboard data.');
-      } else {
-        setSummary(res.summary);
-      }
-    } catch (err: any) {
-      setError(err.message || 'Error fetching summary');
-    } finally {
-      setLoading(false);
+    const [s, l] = await Promise.all([api.dashboardSummary(), api.getDashboardLayout()]);
+    if (s.error) setError(s.message || 'Could not load the dashboard.');
+    else setSummary(s.summary);
+    if (!l.error) {
+      setInfo(l as unknown as DashboardLayoutInfo);
+      setLayout((l as unknown as DashboardLayoutInfo).layout);
     }
   };
 
   useEffect(() => {
-    loadData();
+    load();
   }, [user]);
 
-  // Render charts when summary or chart view changes
-  useEffect(() => {
+  const titleOf = (id: WidgetId) => info?.widgets.find((w) => w.id === id)?.title || id;
+  const go = (type: SaleType) => onNavigate?.(type);
+
+  // ----- Customize -----
+  const move = (i: number, d: -1 | 1) => {
+    const j = i + d;
+    if (j < 0 || j >= layout.length) return;
+    const n = layout.slice();
+    [n[i], n[j]] = [n[j], n[i]];
+    setLayout(n);
+  };
+  const resize = (i: number) =>
+    setLayout(layout.map((w, j) => (j === i ? { ...w, span: SPANS[(SPANS.indexOf(w.span) + 1) % SPANS.length] } : w)));
+  const remove = (i: number) => setLayout(layout.filter((_, j) => j !== i));
+  const add = (id: WidgetId) => setLayout([...layout, { id, span: 6 }]);
+  const available = (info?.widgets || []).filter((w) => !layout.some((l) => l.id === w.id));
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      const res = await api.saveDashboardLayout(layout);
+      if (res.error) return onToast(res.message || 'Could not save the layout.', 'error');
+      setInfo(res as unknown as DashboardLayoutInfo);
+      setEditing(false);
+      onToast('Dashboard layout saved for you.', 'success');
+    } finally {
+      setSaving(false);
+    }
+  };
+  const cancel = () => {
+    if (info) setLayout(info.layout);
+    setEditing(false);
+  };
+  const reset = async () => {
+    const res = await api.resetDashboardLayout();
+    if (res.error) return onToast(res.message || 'Could not reset.', 'error');
+    setInfo(res as unknown as DashboardLayoutInfo);
+    setLayout((res as unknown as DashboardLayoutInfo).layout);
+    setEditing(false);
+    onToast('Back to the default dashboard for your role.', 'success');
+  };
+  const saveAsDefault = async (group: 'agent' | 'team') => {
+    const res = await api.saveRoleDefaultLayout(group, layout);
+    if (res.error) return onToast(res.message || 'Could not save the default.', 'error');
+    onToast(`Saved as the default dashboard for ${group === 'agent' ? 'agents' : 'managers and admins'}.`, 'success');
+  };
+
+  const exportTeam = () => {
     if (!summary) return;
+    const columns: CsvColumn<(typeof summary.agents)[number]>[] = [
+      { header: 'Agent', accessor: (a) => a.agentName },
+      { header: 'Agent Email', accessor: (a) => a.agentEmail },
+      ...(summary.modules || []).flatMap((m) => [
+        { header: `${m.label} sales`, accessor: (a: any) => a[`${m.id}Count`] ?? 0 },
+        { header: `${m.label} revenue (INR)`, accessor: (a: any) => a[`${m.id}Amount`] ?? 0 },
+      ]),
+      { header: 'Incentive (INR)', accessor: (a) => a.incentive ?? '' },
+    ];
+    exportToCsv(`MedUnited_Team_Performance_${todayKey()}.csv`, columns, summary.agents);
+  };
 
-    const agents = summary.agents;
-    const labels = agents.map((a) => a.agentName);
-
-    // Sales Chart
-    if (salesChartRef.current) {
-      if (salesChartInstance.current) {
-        salesChartInstance.current.destroy();
+  // ----- Widgets -----
+  const widget = (id: WidgetId) => {
+    if (!summary) return <div className="mp-muted">Loading…</div>;
+    switch (id) {
+      case 'target': {
+        const t = summary.monthlyTarget;
+        if (!t) return <div className="mp-muted">No target set.</div>;
+        return (
+          <div className="dw-target">
+            <div className="dw-big">{formatMoney(t.currentAmount)}</div>
+            <div className="dw-progress" role="progressbar" aria-valuenow={t.percentage} aria-valuemin={0} aria-valuemax={100} aria-label="Progress to the monthly target">
+              <span style={{ width: `${Math.min(100, t.percentage)}%` }} />
+            </div>
+            <div className="mp-muted">
+              {t.percentage}% of {formatMoney(t.targetAmount)} {isTeam ? 'team target' : 'target'} · completed sales this month
+            </div>
+          </div>
+        );
       }
-      salesChartInstance.current = new Chart(salesChartRef.current, {
-        type: 'bar',
-        data: {
-          labels,
-          datasets: [
-            {
-              label: 'Medpass',
-              data: agents.map((a) => a.medpassCount),
-              backgroundColor: '#6366f1',
-              borderRadius: 4,
-            },
-            {
-              label: 'Pharmacy',
-              data: agents.map((a) => a.pharmacyCount),
-              backgroundColor: '#10b981',
-              borderRadius: 4,
-            },
-          ],
-        },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          plugins: {
-            legend: { position: 'top' },
-          },
-          scales: {
-            y: {
-              beginAtZero: true,
-              ticks: { precision: 0 },
-            },
-          },
-        },
-      });
+      case 'followups': {
+        const list = summary.urgentFollowUps || [];
+        if (!list.length) return <div className="mp-muted">No follow-ups due.</div>;
+        return (
+          <div className="dw-list">
+            {list.map((f) => (
+              <button key={f.id} type="button" className="dw-item" onClick={() => go(f.type)}>
+                <strong>{f.customerName}</strong>
+                <span className="mp-muted">
+                  {f.type === 'lab' ? 'Lab & Radiology' : f.type.charAt(0).toUpperCase() + f.type.slice(1)} · {f.temperature}
+                  {isTeam ? ` · ${f.agentName}` : ''}
+                </span>
+                <span className={`dw-when ${f.followUpStatus || ''}`}>
+                  {f.followUpStatus === 'today' ? 'Today' : f.followUpStatus === 'overdue' ? `Overdue · ${formatDate(f.nextFollowUp || '')}` : formatDate(f.nextFollowUp || '')}
+                </span>
+              </button>
+            ))}
+          </div>
+        );
+      }
+      case 'reminders': {
+        const list = summary.remindersDue || [];
+        if (!list.length) return <div className="mp-muted">No reminders due.</div>;
+        return (
+          <div className="dw-list">
+            {list.map((r) => (
+              <button key={r.id} type="button" className="dw-item" onClick={() => onNavigate?.('reminders')}>
+                <strong>{r.customerName}</strong>
+                <span className="mp-muted">{r.kind === 'renewal' ? 'Homekare renewal' : 'Refill'} · {r.detail}</span>
+                <span className={`dw-when ${r.overdue ? 'overdue' : 'today'}`}>
+                  {r.daysRemaining === null ? '' : r.overdue ? `${Math.abs(r.daysRemaining)}d late` : `${r.daysRemaining}d left`}
+                </span>
+              </button>
+            ))}
+          </div>
+        );
+      }
+      case 'temperature': {
+        const t = summary.temperature || { Hot: 0, Warm: 0, Cold: 0 };
+        return (
+          <Bars rows={[
+            { label: 'Hot', value: t.Hot, color: '#912018' },
+            { label: 'Warm', value: t.Warm, color: '#b54708' },
+            { label: 'Cold', value: t.Cold, color: '#0b4a6f' },
+          ]} />
+        );
+      }
+      case 'modules':
+        return (
+          <Bars rows={(summary.modules || []).map((m) => ({ label: m.label, value: m.count, color: MODULE_COLORS[m.id] || '#374151', text: `${m.count} · ${formatMoney(m.amount)}` }))} />
+        );
+      case 'pipeline': {
+        const p = summary.pipeline;
+        return (
+          <>
+            <Bars rows={[
+              { label: 'Open', value: p.pending, color: '#312e81' },
+              { label: 'Completed', value: p.completed, color: '#166534' },
+              { label: 'Lost', value: p.cancelled, color: '#4b5563' },
+            ]} />
+            <div className="mp-muted">{p.conversionRate}% of all records became sales</div>
+          </>
+        );
+      }
+      case 'activity': {
+        const list = (summary.recentActivities || []).slice(0, 6);
+        if (!list.length) return <div className="mp-muted">No recent activity.</div>;
+        return (
+          <div className="dw-list">
+            {list.map((a) => (
+              <div key={a.ID} className="dw-item dw-static">
+                <strong>{a.ByName}</strong>
+                <span className="mp-muted">
+                  {a.Type}{a.Outcome ? ` · ${a.Outcome}` : ''}{a.Notes ? ` — ${a.Notes}` : ''}
+                </span>
+                <span className="mp-muted">{formatTimeAgo(a.Date)}</span>
+              </div>
+            ))}
+          </div>
+        );
+      }
+      case 'discounts': {
+        const list = summary.pendingDiscounts || [];
+        if (!list.length) return <div className="mp-muted">Nothing waiting.</div>;
+        return (
+          <div className="dw-list">
+            {list.map((d) => (
+              <button key={d.ID} type="button" className="dw-item" onClick={() => go('medpass')}>
+                <strong>{d.CustomerName}</strong>
+                <span className="mp-muted">− {formatMoney(d.DiscountAmount)} · {d.DiscountReason}</span>
+                <span className="dw-when today">{isSeniorRole(user.Role) ? 'Review' : 'Waiting'}</span>
+              </button>
+            ))}
+          </div>
+        );
+      }
+      case 'team': {
+        const rows = summary.agents || [];
+        if (!rows.length) return <div className="mp-muted">No completed sales yet.</div>;
+        return (
+          <>
+            <div className="dw-table-wrap">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Agent</th>
+                    {(summary.modules || []).map((m) => <th key={m.id}>{m.label}</th>)}
+                    <th>Incentive</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((a: any) => (
+                    <tr key={a.agentEmail}>
+                      <td>{a.agentName}</td>
+                      {(summary.modules || []).map((m) => (
+                        <td key={m.id}>{a[`${m.id}Count`] ?? 0} · {formatMoney(a[`${m.id}Amount`] ?? 0)}</td>
+                      ))}
+                      <td>{a.incentive === undefined ? '—' : formatMoney(a.incentive)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <button type="button" className="mp-link" onClick={exportTeam}>Export CSV</button>
+          </>
+        );
+      }
+      default:
+        return null;
     }
-
-    // Secondary Useful Chart (Pipeline, Top Medications, or Payment Modes)
-    if (secondaryChartRef.current) {
-      if (secondaryChartInstance.current) {
-        secondaryChartInstance.current.destroy();
-      }
-
-      if (usefulChartType === 'pipeline') {
-        const pipe = summary.pipeline || { completed: 0, pending: 0, cancelled: 0, totalLeads: 0, conversionRate: 0 };
-        secondaryChartInstance.current = new Chart(secondaryChartRef.current, {
-          type: 'doughnut',
-          data: {
-            labels: ['Won / Completed', 'In Pipeline / Pending', 'Lost / Cancelled'],
-            datasets: [
-              {
-                data: [pipe.completed, pipe.pending, pipe.cancelled],
-                backgroundColor: ['#10b981', '#6366f1', '#ef4444'],
-                borderWidth: 2,
-                borderColor: '#ffffff',
-              },
-            ],
-          },
-          options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: {
-              legend: { position: 'bottom' },
-              tooltip: {
-                callbacks: {
-                  label: (ctx) => {
-                    const total = pipe.totalLeads || 1;
-                    const val = Number(ctx.raw) || 0;
-                    const pct = Math.round((val / total) * 100);
-                    return ` ${ctx.label}: ${val} leads (${pct}%)`;
-                  },
-                },
-              },
-            },
-          },
-        });
-      } else if (usefulChartType === 'medications') {
-        const meds = (summary.topMedications && summary.topMedications.length > 0)
-          ? summary.topMedications
-          : [{ name: 'No medications recorded yet', prescriptions: 0, totalUnits: 0 }];
-
-        secondaryChartInstance.current = new Chart(secondaryChartRef.current, {
-          type: 'bar',
-          data: {
-            labels: meds.map((m) => m.name),
-            datasets: [
-              {
-                label: 'Prescription Count',
-                data: meds.map((m) => m.prescriptions),
-                backgroundColor: '#06b6d4',
-                borderRadius: 4,
-              },
-              {
-                label: 'Total Units Dispensed',
-                data: meds.map((m) => m.totalUnits),
-                backgroundColor: '#8b5cf6',
-                borderRadius: 4,
-              },
-            ],
-          },
-          options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: {
-              legend: { position: 'top' },
-            },
-            scales: {
-              y: {
-                beginAtZero: true,
-                ticks: { precision: 0 },
-              },
-            },
-          },
-        });
-      } else if (usefulChartType === 'payments') {
-        const payments = (summary.paymentBreakdown && summary.paymentBreakdown.length > 0)
-          ? summary.paymentBreakdown
-          : [{ method: 'UPI', count: 0, amount: 0 }];
-
-        secondaryChartInstance.current = new Chart(secondaryChartRef.current, {
-          type: 'doughnut',
-          data: {
-            labels: payments.map((p) => p.method),
-            datasets: [
-              {
-                data: payments.map((p) => p.amount),
-                backgroundColor: ['#10b981', '#3b82f6', '#f59e0b', '#8b5cf6', '#64748b'],
-                borderWidth: 2,
-                borderColor: '#ffffff',
-              },
-            ],
-          },
-          options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: {
-              legend: { position: 'bottom' },
-              tooltip: {
-                callbacks: {
-                  label: (ctx) => {
-                    const val = Number(ctx.raw) || 0;
-                    return ` ${ctx.label}: ₹${val.toLocaleString('en-IN')}`;
-                  },
-                },
-              },
-            },
-          },
-        });
-      }
-    }
-
-    return () => {
-      if (salesChartInstance.current) salesChartInstance.current.destroy();
-      if (secondaryChartInstance.current) secondaryChartInstance.current.destroy();
-    };
-  }, [summary, usefulChartType]);
-
-  // Combined and sorted activity stream
-  const activities = summary?.recentActivities || [];
-  const audits = summary?.recentAudits || [];
-
-  const combinedFeed: Array<{
-    id: string;
-    type: 'audit' | 'activity';
-    timestamp: string;
-    title: string;
-    subtitle: string;
-    badge: string;
-    isDelete: boolean;
-  }> = [];
-
-  audits.forEach((aud) => {
-    const isDelete = aud.Action === 'delete';
-    combinedFeed.push({
-      id: aud.ID,
-      type: 'audit',
-      timestamp: aud.Date,
-      title: aud.Summary,
-      subtitle: `${aud.ByName} (${aud.ByRole || 'User'}) · ${(String(aud.RecordType || '').replace(/Sale$/, '') || 'record').toUpperCase()}`,
-      badge: isDelete ? 'DELETE' : aud.Action.toUpperCase(),
-      isDelete,
-    });
-  });
-
-  activities.forEach((act) => {
-    combinedFeed.push({
-      id: act.ID,
-      type: 'activity',
-      timestamp: act.Date,
-      title: `${act.Type} (${act.Direction}): ${act.Outcome}`,
-      subtitle: `${act.ByName} — ${act.Notes || 'No notes logged'}`,
-      badge: act.Type.toUpperCase(),
-      isDelete: false,
-    });
-  });
-
-  combinedFeed.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
-
-  const filteredFeed = combinedFeed.filter((item) => {
-    if (activityFilter === 'audits') return item.type === 'audit';
-    if (activityFilter === 'calls') return item.type === 'activity';
-    return true;
-  });
+  };
 
   return (
     <div>
-      <div className="topbar">
-        <div>
+      <div className="mp-header">
+        <div className="mp-title">
           <h1>Dashboard</h1>
-          <p className="subtitle">
-            {user.Role === 'agent' ? 'Your sales performance' : 'Medpass & Pharmacy team performance overview'}
-          </p>
+          <p className="subtitle">{isTeam ? 'The whole team' : 'Your own patients and sales'}</p>
         </div>
-        <div className="topbar-actions" style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', color: 'var(--text-secondary)', background: 'var(--surface)', padding: '5px 10px', borderRadius: '6px', border: '1px solid var(--border)' }}>
-            <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#10b981' }}></span>
-            <span>Live Sync · {formatDate(todayKey())}</span>
-          </div>
-          <button
-            type="button"
-            className="secondary"
-            onClick={loadData}
-            disabled={loading}
-          >
-            {loading ? 'Refreshing…' : 'Refresh'}
-          </button>
+        <div className="mp-actions">
+          {editing ? (
+            <>
+              <button type="button" className="mp-btn" onClick={cancel}>Cancel</button>
+              <button type="button" className="mp-btn-primary" onClick={save} disabled={saving || layout.length === 0}>
+                {saving ? 'Saving…' : 'Save layout'}
+              </button>
+            </>
+          ) : (
+            <button type="button" className="mp-btn" onClick={() => setEditing(true)}>Customize</button>
+          )}
         </div>
       </div>
 
       <main>
-        {error && (
-          <div className="inline-error">
-            <span>{error}</span>
-            <button type="button" className="secondary" onClick={loadData}>
-              Retry
-            </button>
-          </div>
+        {error && <div className="contact-check blocking" style={{ marginBottom: '12px' }}>{error}</div>}
+
+        {editing && (
+          <section className="dw-customize" aria-label="Customize the dashboard">
+            <strong>Add a widget:</strong>
+            {available.map((w) => (
+              <button key={w.id} type="button" className="mp-chip" onClick={() => add(w.id)}>+ {w.title}</button>
+            ))}
+            {available.length === 0 && <span className="mp-muted">Every widget for your role is on the dashboard.</span>}
+            <span style={{ flex: 1 }} />
+            <button type="button" className="mp-link" onClick={reset}>Reset to the default for your role</button>
+            {isSeniorRole(user.Role) && (
+              <>
+                <button type="button" className="mp-link" onClick={() => saveAsDefault('team')}>Make this the team default</button>
+                <button type="button" className="mp-link" onClick={() => saveAsDefault('agent')}>Make this the agent default</button>
+              </>
+            )}
+            <div className="mp-muted" style={{ flexBasis: '100%' }}>
+              Your layout is saved for you only. Moving or adding widgets never changes what you can see: the server still filters every widget by your role.
+            </div>
+          </section>
         )}
 
-        {/* KPI Grid */}
-        <div className={`kpi-grid ${loading ? 'is-loading' : ''}`}>
-          <div className="kpi-card">
-            <div className="kpi-icon blue">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
-              </svg>
-            </div>
-            <div>
-              <div className="kpi-value">{loading ? '…' : summary?.totals.medpassCount ?? 0}</div>
-              <div className="kpi-label">Completed Medpass Sales</div>
-            </div>
-          </div>
-
-          <div className="kpi-card">
-            <div className="kpi-icon green">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <rect x="1" y="7" width="15" height="11" rx="1.5"></rect>
-                <path d="M16 10h3.5L22 13.5V18h-6"></path>
-                <circle cx="6" cy="19.5" r="1.7"></circle>
-                <circle cx="17.5" cy="19.5" r="1.7"></circle>
-              </svg>
-            </div>
-            <div>
-              <div className="kpi-value">{loading ? '…' : summary?.totals.pharmacyCount ?? 0}</div>
-              <div className="kpi-label">Completed Pharmacy Sales</div>
-            </div>
-          </div>
-
-          <div className="kpi-card">
-            <div className="kpi-icon amber">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M6 3h12"></path>
-                <path d="M6 8h12"></path>
-                <path d="M6 13l8.5 8"></path>
-                <path d="M6 13h3a4.5 4.5 0 0 0 0-9H6"></path>
-              </svg>
-            </div>
-            <div>
-              <div className="kpi-value">{loading ? '…' : formatMoney(summary?.totals.medpassAmount ?? 0)}</div>
-              <div className="kpi-label">Medpass Revenue</div>
-            </div>
-          </div>
-
-          <div className="kpi-card">
-            <div className="kpi-icon violet">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M6 3h12"></path>
-                <path d="M6 8h12"></path>
-                <path d="M6 13l8.5 8"></path>
-                <path d="M6 13h3a4.5 4.5 0 0 0 0-9H6"></path>
-              </svg>
-            </div>
-            <div>
-              <div className="kpi-value">{loading ? '…' : formatMoney(summary?.totals.pharmacyAmount ?? 0)}</div>
-              <div className="kpi-label">Pharmacy Revenue</div>
-            </div>
-          </div>
-        </div>
-
-        {/* Monthly Target Progress Banner */}
-        <div className="target-banner-card">
-          <div className="target-banner-header">
-            <div>
-              <span style={{ fontSize: '0.74rem', textTransform: 'uppercase', letterSpacing: '0.06em', color: '#a5b4fc', fontWeight: 600 }}>
-                🎯 Target &amp; Goal Tracking
-              </span>
-              <div style={{ fontSize: '1.15rem', fontWeight: 700, marginTop: '2px' }}>
-                Monthly Revenue Progress: {formatMoney(summary?.monthlyTarget?.currentAmount ?? 0)} of {formatMoney(summary?.monthlyTarget?.targetAmount ?? 500000)}
-              </div>
-            </div>
-            <div style={{ textAlign: 'right' }}>
-              <span style={{ fontSize: '1.25rem', fontWeight: 800, color: '#34d399' }}>
-                {summary?.monthlyTarget?.percentage ?? 0}%
-              </span>
-              <div style={{ fontSize: '0.72rem', color: '#c7d2fe' }}>Goal Achieved</div>
-            </div>
-          </div>
-
-          <div className="target-progress-track">
-            <div
-              className="target-progress-fill"
-              style={{ width: `${Math.min(100, summary?.monthlyTarget?.percentage ?? 0)}%` }}
-            />
-          </div>
-
-          <div className="target-stats-row">
-            <div className="target-stat-item">
-              <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#818cf8' }}></span>
-              <span>Medpass: {formatMoney(summary?.totals.medpassAmount ?? 0)} ({summary?.totals.medpassCount ?? 0} plans)</span>
-            </div>
-            <div className="target-stat-item">
-              <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#34d399' }}></span>
-              <span>Pharmacy: {formatMoney(summary?.totals.pharmacyAmount ?? 0)} ({summary?.totals.pharmacyCount ?? 0} orders)</span>
-            </div>
-            <div className="target-stat-item">
-              <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#f472b6' }}></span>
-              <span>Homekare: {formatMoney(summary?.totals.homekareAmount ?? 0)} ({summary?.totals.homekareCount ?? 0} orders)</span>
-            </div>
-            <div className="target-stat-item">
-              <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#60a5fa' }}></span>
-              <span>Lab &amp; Radiology: {formatMoney(summary?.totals.labAmount ?? 0)} ({summary?.totals.labCount ?? 0} orders)</span>
-            </div>
-            <div className="target-stat-item">
-              <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#fbbf24' }}></span>
-              <span>Total Orders: {(summary?.totals.medpassCount ?? 0) + (summary?.totals.pharmacyCount ?? 0) + (summary?.totals.homekareCount ?? 0) + (summary?.totals.labCount ?? 0)} completed</span>
-            </div>
-          </div>
-        </div>
-
-        {/* Charts Container */}
-        <div className="charts-container" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '20px', marginBottom: '28px' }}>
-          <div className="chart-card card" style={{ minHeight: '340px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
-              <h2 style={{ margin: 0, fontSize: '1rem', fontWeight: 600 }}>Sales Volume by Agent</h2>
-              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Medpass vs Pharmacy</span>
-            </div>
-            <div style={{ height: '250px', position: 'relative' }}>
-              <canvas ref={salesChartRef}></canvas>
-            </div>
-          </div>
-
-          <div className="chart-card card" style={{ minHeight: '340px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                <h2 style={{ margin: 0, fontSize: '1rem', fontWeight: 600 }}>
-                  {usefulChartType === 'pipeline' && 'Lead Conversion & Pipeline'}
-                  {usefulChartType === 'medications' && 'Top Prescribed Medicines'}
-                  {usefulChartType === 'payments' && 'Revenue by Payment Mode'}
-                </h2>
-                {usefulChartType === 'pipeline' && summary?.pipeline && (
-                  <span style={{ fontSize: '0.75rem', fontWeight: 700, padding: '2px 8px', borderRadius: '999px', background: '#dcfce7', color: '#166534' }}>
-                    {summary.pipeline.conversionRate}% Win Rate
+        <div className="dw-grid">
+          {layout.map((w, i) => (
+            <article key={w.id} className={`dw-card${editing ? ' editing' : ''}`} style={{ gridColumn: `span ${w.span}` }}>
+              <div className="dw-card-head">
+                <h2>{titleOf(w.id)}</h2>
+                {editing && (
+                  <span className="dw-tools">
+                    <button type="button" onClick={() => move(i, -1)} aria-label={`Move ${titleOf(w.id)} earlier`} disabled={i === 0}>←</button>
+                    <button type="button" onClick={() => move(i, 1)} aria-label={`Move ${titleOf(w.id)} later`} disabled={i === layout.length - 1}>→</button>
+                    <button type="button" onClick={() => resize(i)} aria-label={`Change size of ${titleOf(w.id)}`}>{SIZE_NAMES[w.span]}</button>
+                    <button type="button" onClick={() => remove(i)} aria-label={`Remove ${titleOf(w.id)}`}>✕</button>
                   </span>
                 )}
               </div>
-              <div className="tab-pill-group" style={{ display: 'inline-flex', background: 'var(--bg)', padding: '2px', borderRadius: '6px', border: '1px solid var(--border)' }}>
-                <button
-                  type="button"
-                  style={{
-                    border: 'none',
-                    background: usefulChartType === 'pipeline' ? 'var(--surface)' : 'transparent',
-                    color: usefulChartType === 'pipeline' ? 'var(--accent)' : 'var(--text-secondary)',
-                    fontWeight: usefulChartType === 'pipeline' ? 600 : 500,
-                    padding: '4px 8px',
-                    fontSize: '0.72rem',
-                    borderRadius: '4px',
-                    cursor: 'pointer',
-                    boxShadow: usefulChartType === 'pipeline' ? '0 1px 2px rgba(0,0,0,0.06)' : 'none',
-                  }}
-                  onClick={() => setUsefulChartType('pipeline')}
-                >
-                  Pipeline
-                </button>
-                <button
-                  type="button"
-                  style={{
-                    border: 'none',
-                    background: usefulChartType === 'medications' ? 'var(--surface)' : 'transparent',
-                    color: usefulChartType === 'medications' ? 'var(--accent)' : 'var(--text-secondary)',
-                    fontWeight: usefulChartType === 'medications' ? 600 : 500,
-                    padding: '4px 8px',
-                    fontSize: '0.72rem',
-                    borderRadius: '4px',
-                    cursor: 'pointer',
-                    boxShadow: usefulChartType === 'medications' ? '0 1px 2px rgba(0,0,0,0.06)' : 'none',
-                  }}
-                  onClick={() => setUsefulChartType('medications')}
-                >
-                  Top Meds
-                </button>
-                <button
-                  type="button"
-                  style={{
-                    border: 'none',
-                    background: usefulChartType === 'payments' ? 'var(--surface)' : 'transparent',
-                    color: usefulChartType === 'payments' ? 'var(--accent)' : 'var(--text-secondary)',
-                    fontWeight: usefulChartType === 'payments' ? 600 : 500,
-                    padding: '4px 8px',
-                    fontSize: '0.72rem',
-                    borderRadius: '4px',
-                    cursor: 'pointer',
-                    boxShadow: usefulChartType === 'payments' ? '0 1px 2px rgba(0,0,0,0.06)' : 'none',
-                  }}
-                  onClick={() => setUsefulChartType('payments')}
-                >
-                  Payments
-                </button>
-              </div>
-            </div>
-
-            {/* Always-Visible Visual Summary Panel so it is never blank */}
-            <div style={{ display: 'flex', gap: '8px', marginBottom: '10px', flexWrap: 'wrap' }}>
-              {usefulChartType === 'pipeline' && (
-                <>
-                  <div style={{ flex: 1, minWidth: '90px', padding: '6px 10px', background: '#ecfdf5', borderRadius: '6px', border: '1px solid #d1fae5' }}>
-                    <div style={{ fontSize: '0.7rem', color: '#047857', fontWeight: 600 }}>Won / Completed</div>
-                    <div style={{ fontSize: '1rem', fontWeight: 700, color: '#065f46' }}>{summary?.pipeline.completed ?? 0}</div>
-                  </div>
-                  <div style={{ flex: 1, minWidth: '90px', padding: '6px 10px', background: '#eef2ff', borderRadius: '6px', border: '1px solid #e0e7ff' }}>
-                    <div style={{ fontSize: '0.7rem', color: '#4338ca', fontWeight: 600 }}>In Pipeline</div>
-                    <div style={{ fontSize: '1rem', fontWeight: 700, color: '#3730a3' }}>{summary?.pipeline.pending ?? 0}</div>
-                  </div>
-                  <div style={{ flex: 1, minWidth: '90px', padding: '6px 10px', background: '#fef2f2', borderRadius: '6px', border: '1px solid #fee2e2' }}>
-                    <div style={{ fontSize: '0.7rem', color: '#b91c1c', fontWeight: 600 }}>Lost / Cancelled</div>
-                    <div style={{ fontSize: '1rem', fontWeight: 700, color: '#991b1b' }}>{summary?.pipeline.cancelled ?? 0}</div>
-                  </div>
-                </>
-              )}
-              {usefulChartType === 'medications' && (
-                <div style={{ fontSize: '0.76rem', color: 'var(--text-secondary)' }}>
-                  Total unique prescribed medicines tracked: <strong>{summary?.topMedications.length ?? 0}</strong>
-                </div>
-              )}
-              {usefulChartType === 'payments' && (
-                <div style={{ fontSize: '0.76rem', color: 'var(--text-secondary)' }}>
-                  Active payment channels: <strong>{summary?.paymentBreakdown.length ?? 0}</strong>
-                </div>
-              )}
-            </div>
-
-            <div style={{ height: '210px', position: 'relative' }}>
-              <canvas ref={secondaryChartRef}></canvas>
-            </div>
-          </div>
+              {widget(w.id)}
+            </article>
+          ))}
         </div>
-
-        {/* Performance Table */}
-        <div className="card" style={{ marginBottom: '24px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px', flexWrap: 'wrap', gap: '8px' }}>
-            <div className="card-title" style={{ margin: 0 }}>
-              {user.Role === 'agent' ? 'My Performance' : 'Team Performance'}
-            </div>
-            {canSeeIncentives && (
-              <button
-                type="button"
-                className="secondary"
-                onClick={() => {
-                  if (!canSeeIncentives) {
-                    onToast('Access denied: Export is only available for Managers and Admins.', 'error');
-                    return;
-                  }
-                  if (!summary || summary.agents.length === 0) {
-                    onToast('No performance records to export.', 'error');
-                    return;
-                  }
-                  const columns: CsvColumn<any>[] = [
-                    { header: 'Agent Name', accessor: (a) => a.agentName },
-                    { header: 'Agent Email', accessor: (a) => a.agentEmail },
-                    { header: 'Medpass Sales Count', accessor: (a) => a.medpassCount },
-                    { header: 'Medpass Revenue (INR)', accessor: (a) => a.medpassAmount },
-                    { header: 'Pharmacy Sales Count', accessor: (a) => a.pharmacyCount },
-                    { header: 'Pharmacy Revenue (INR)', accessor: (a) => a.pharmacyAmount },
-                    { header: 'Total Orders Closed', accessor: (a) => a.medpassCount + a.pharmacyCount },
-                    { header: 'Total Revenue (INR)', accessor: (a) => a.medpassAmount + a.pharmacyAmount },
-                    { header: 'Incentive Commission (INR)', accessor: (a) => a.incentive ?? 0 },
-                  ];
-                  const timestamp = todayKey();
-                  exportToCsv(`MedUnited_Team_Performance_${timestamp}.csv`, columns, summary.agents);
-                  onToast(`Exported performance report for ${summary.agents.length} agents to CSV`, 'success');
-                }}
-                title="Export performance report to CSV (Managers & Admins only)"
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                  padding: '5px 12px',
-                  fontSize: '0.8rem',
-                  fontWeight: 600,
-                }}
-              >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-                  <polyline points="7 10 12 15 17 10"></polyline>
-                  <line x1="12" y1="15" x2="12" y2="3"></line>
-                </svg>
-                <span>Export Report</span>
-              </button>
-            )}
-          </div>
-          <div className="table-container">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>Agent</th>
-                  <th>Medpass Sales</th>
-                  <th>Pharmacy Sales</th>
-                  <th>Medpass Revenue</th>
-                  <th>Pharmacy Revenue</th>
-                  {canSeeIncentives && <th>Incentive</th>}
-                </tr>
-              </thead>
-              <tbody>
-                {loading ? (
-                  <tr className="loading-row">
-                    <td colSpan={canSeeIncentives ? 6 : 5}>Loading…</td>
-                  </tr>
-                ) : !summary || summary.agents.length === 0 ? (
-                  <tr>
-                    <td colSpan={canSeeIncentives ? 6 : 5} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '24px' }}>
-                      No sales on record yet.
-                    </td>
-                  </tr>
-                ) : (
-                  summary.agents.map((a) => (
-                    <tr key={a.agentEmail}>
-                      <td>
-                        <div className="table-person">
-                          <span className="avatar-sm">{initials(a.agentName)}</span>
-                          <span>{a.agentName}</span>
-                        </div>
-                      </td>
-                      <td>{a.medpassCount}</td>
-                      <td>{a.pharmacyCount}</td>
-                      <td>{formatMoney(a.medpassAmount)}</td>
-                      <td>{formatMoney(a.pharmacyAmount)}</td>
-                      {canSeeIncentives && (
-                        <td>
-                          <strong>{formatMoney(a.incentive ?? 0)}</strong>
-                        </td>
-                      )}
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        {/* Action Center & Activity Stream (Populates formerly blank lower dashboard) */}
-        <div className="dashboard-extra-grid">
-          {/* Action Center: Priority Follow-ups */}
-          <div className="card">
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px', flexWrap: 'wrap', gap: '8px' }}>
-              <div>
-                <h2 style={{ margin: 0, fontSize: '0.98rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <span>⚡</span> Priority Action Center
-                </h2>
-                <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)' }}>
-                  Hot leads due for contact &amp; follow-up today
-                </div>
-              </div>
-              {onNavigate && (
-                <button
-                  type="button"
-                  className="secondary"
-                  style={{ padding: '3px 8px', fontSize: '0.74rem' }}
-                  onClick={() => onNavigate('medpass')}
-                >
-                  View All Leads &rarr;
-                </button>
-              )}
-            </div>
-
-            {(!summary?.urgentFollowUps || summary.urgentFollowUps.length === 0) ? (
-              <div style={{ padding: '24px 16px', textAlign: 'center', background: '#f8fafc', borderRadius: '8px', border: '1px dashed #cbd5e1' }}>
-                <div style={{ fontSize: '1.4rem', marginBottom: '6px' }}>✅</div>
-                <div style={{ fontWeight: 600, fontSize: '0.85rem', color: '#166534' }}>All follow-ups up to date!</div>
-                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '2px' }}>
-                  No overdue contacts or pending calls for today.
-                </div>
-              </div>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                {summary.urgentFollowUps.map((item) => (
-                  <div key={item.id} className="urgent-followup-card">
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '2px' }}>
-                        <span style={{ fontWeight: 700, fontSize: '0.86rem', color: 'var(--text-primary)' }}>
-                          {item.customerName}
-                        </span>
-                        <span className={`temp-badge ${item.temperature.toLowerCase()}`} style={{ fontSize: '0.68rem', padding: '1px 6px' }}>
-                          {item.temperature}
-                        </span>
-                        {item.followUpStatus === 'overdue' && (
-                          <span className="reminder-badge overdue small" style={{ fontSize: '0.68rem', padding: '1px 6px' }}>
-                            Overdue
-                          </span>
-                        )}
-                        {item.followUpStatus === 'today' && (
-                          <span className="reminder-badge upcoming small" style={{ fontSize: '0.68rem', padding: '1px 6px' }}>
-                            Due Today
-                          </span>
-                        )}
-                      </div>
-                      <div style={{ fontSize: '0.76rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                        {item.detail || item.notes || 'Inquiry pending follow-up'}
-                      </div>
-                      <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '2px' }}>
-                        👤 {item.agentName} · 📞 {item.contact} · {formatMoney(item.amount)}
-                      </div>
-                    </div>
-
-                    <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
-                      <button
-                        type="button"
-                        style={{
-                          background: '#ecfdf5',
-                          color: '#065f46',
-                          border: '1px solid #a7f3d0',
-                          padding: '4px 8px',
-                          fontSize: '0.72rem',
-                          borderRadius: '6px',
-                          cursor: 'pointer',
-                          fontWeight: 600,
-                        }}
-                        onClick={() => {
-                          const cleanPhone = item.contact.replace(/\D/g, '');
-                          window.open(`https://wa.me/91${cleanPhone}?text=Hello%20${encodeURIComponent(item.customerName)},%20reaching%20out%20from%20MedUnited.`, '_blank', 'noopener,noreferrer');
-                        }}
-                        title="Open WhatsApp chat"
-                      >
-                        💬 WhatsApp
-                      </button>
-                      {onNavigate && (
-                        <button
-                          type="button"
-                          className="secondary"
-                          style={{ padding: '4px 8px', fontSize: '0.72rem' }}
-                          onClick={() => onNavigate(item.type)}
-                          title="Open sales board"
-                        >
-                          View &rarr;
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Live Activity & Audit Trail (Shows Deletion Logs with Reason) */}
-          <div className="card">
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px', flexWrap: 'wrap', gap: '8px' }}>
-              <div>
-                <h2 style={{ margin: 0, fontSize: '0.98rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <span>📜</span> Live Activity &amp; Audit Trail
-                </h2>
-                <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)' }}>
-                  All updates, calls, and administrator deletions with reasons
-                </div>
-              </div>
-
-              <div className="tab-pill-group" style={{ display: 'inline-flex', background: 'var(--bg)', padding: '2px', borderRadius: '6px', border: '1px solid var(--border)' }}>
-                <button
-                  type="button"
-                  style={{
-                    border: 'none',
-                    background: activityFilter === 'all' ? 'var(--surface)' : 'transparent',
-                    color: activityFilter === 'all' ? 'var(--accent)' : 'var(--text-secondary)',
-                    fontWeight: activityFilter === 'all' ? 600 : 500,
-                    padding: '3px 7px',
-                    fontSize: '0.7rem',
-                    borderRadius: '4px',
-                    cursor: 'pointer',
-                  }}
-                  onClick={() => setActivityFilter('all')}
-                >
-                  All
-                </button>
-                <button
-                  type="button"
-                  style={{
-                    border: 'none',
-                    background: activityFilter === 'audits' ? 'var(--surface)' : 'transparent',
-                    color: activityFilter === 'audits' ? 'var(--accent)' : 'var(--text-secondary)',
-                    fontWeight: activityFilter === 'audits' ? 600 : 500,
-                    padding: '3px 7px',
-                    fontSize: '0.7rem',
-                    borderRadius: '4px',
-                    cursor: 'pointer',
-                  }}
-                  onClick={() => setActivityFilter('audits')}
-                >
-                  Audits
-                </button>
-                <button
-                  type="button"
-                  style={{
-                    border: 'none',
-                    background: activityFilter === 'calls' ? 'var(--surface)' : 'transparent',
-                    color: activityFilter === 'calls' ? 'var(--accent)' : 'var(--text-secondary)',
-                    fontWeight: activityFilter === 'calls' ? 600 : 500,
-                    padding: '3px 7px',
-                    fontSize: '0.7rem',
-                    borderRadius: '4px',
-                    cursor: 'pointer',
-                  }}
-                  onClick={() => setActivityFilter('calls')}
-                >
-                  Calls
-                </button>
-              </div>
-            </div>
-
-            {filteredFeed.length === 0 ? (
-              <div style={{ padding: '24px 16px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.82rem' }}>
-                No recent activity recorded yet.
-              </div>
-            ) : (
-              <div className="activity-feed-list">
-                {filteredFeed.map((item) => (
-                  <div key={item.id} className={`activity-feed-item ${item.isDelete ? 'is-delete' : ''}`}>
-                    <div className={`activity-icon-bubble ${item.isDelete ? 'delete' : item.badge === 'CALL' ? 'call' : 'complete'}`}>
-                      {item.isDelete ? '🗑️' : item.badge === 'CALL' ? '📞' : item.badge === 'WHATSAPP' ? '💬' : '📝'}
-                    </div>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '6px' }}>
-                        <span style={{ fontWeight: 600, color: item.isDelete ? '#991b1b' : 'var(--text-primary)', fontSize: '0.82rem' }}>
-                          {item.title}
-                        </span>
-                        <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', flexShrink: 0 }}>
-                          {formatDate(item.timestamp)}
-                        </span>
-                      </div>
-                      <div style={{ fontSize: '0.76rem', color: item.isDelete ? '#b91c1c' : 'var(--text-secondary)', marginTop: '2px', wordBreak: 'break-word' }}>
-                        {item.subtitle}
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
+        {!editing && layout.length === 0 && info && (
+          <div className="mp-empty">Your dashboard is empty. Choose Customize to add widgets.</div>
+        )}
       </main>
     </div>
   );

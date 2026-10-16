@@ -25,7 +25,7 @@ function smokeTestV2() {
     var miss = moduleHeaders(t).filter(function (x) { return h.indexOf(x) === -1; });
     check(n + ' has all its columns', miss.length === 0, miss.join(','));
   });
-  ['SaleActivities', 'Settings', 'Lists', 'AuditLog', 'Reminders', 'Users', 'Patients', 'UserRequests'].forEach(function (n) {
+  ['SaleActivities', 'Settings', 'Lists', 'AuditLog', 'Reminders', 'Users', 'Patients', 'UserRequests', 'UserLayouts'].forEach(function (n) {
     check('tab ' + n + ' exists', !!getSpreadsheet().getSheetByName(n));
   });
   var admin = sheetToObjects(getSheetByName('Users')).filter(function (u) {

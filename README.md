@@ -34,6 +34,8 @@ browser — an agent's session cannot fetch another agent's records.
 - Security hardening — see [SECURITY.md](SECURITY.md).
 - **Patients and owners** (one agent per patient and household), patient-level
   reassign, deactivation with handover. Modules are configuration (`Modules.gs`).
+- **Calmer module pages** (one search, Filters, a list with a side panel) and a
+  **customizable dashboard** (see [Pages and dashboard](#pages-and-dashboard)).
 - **Medpass family pass** rules: members, server-side price, discount approval,
   OP conversions, one-year validity (see [Medpass](#medpass-family-pass)).
 
@@ -46,8 +48,8 @@ Browser (static React app, any host)
 Google Apps Script Web App  (apps-script/*.gs)
    │
    ├── Google Sheet: Users, Medpass, Pharmacy, Homekare, Lab & Radiology, Patients,
-   │                 Reminders, SaleActivities, UserRequests, Lists, Settings,
-   │                 AuditLog (protected)
+   │                 Reminders, SaleActivities, UserRequests, UserLayouts, Lists,
+   │                 Settings, AuditLog (protected)
    └── Google Drive: "MedUnited Sales CRM Attachments" (private screenshots)
 ```
 
@@ -64,9 +66,9 @@ Apps Script deployment without rebuilding.
    workspace account, not a personal one).
 2. **Extensions → Apps Script.** Delete the default `Code.gs`, then create one
    file per `.gs` file in `apps-script/` and paste each in:
-   `Activities, Attachments, Audit, Auth, Code, Handover, Homekare, Import, Lab,
-   Lists, Medpass, Modules, Patients, Reminders, SalesService, Setup, SmokeTest,
-   UserService, Utils`.
+   `Activities, Attachments, Audit, Auth, BulkReassign, Code, DashboardLayouts,
+   Handover, Homekare, Import, Lab, Lists, Medpass, Modules, Patients, Reminders,
+   SalesService, Setup, SmokeTest, UserService, Utils`.
 3. **Project Settings (gear) → "Show appsscript.json manifest file"** → open
    `appsscript.json` and replace it with `apps-script/appsscript.json`.
    *(Or use [clasp](https://github.com/google/clasp): `clasp push` from the
@@ -150,6 +152,22 @@ and the monthly target.
   rows without an Agent Email; agents always import for themselves.
 - A row for a patient (or household) someone already handles goes to that
   agent; the preview shows "Already handled by …" on those rows.
+
+## Pages and dashboard
+
+- **Module pages** (Medpass, Pharmacy, Homekare, Lab & Radiology) share one
+  layout: a search box, **Filters** (agent, channel, payment, price type),
+  **⋯ More** (import, export, reassign from file, board view) and **New record**.
+  Status tabs and **lead temperature** chips (Hot / Warm / Cold) sit above a
+  list; clicking a record opens its details beside the list, with Log a call,
+  WhatsApp and Edit.
+- **Dashboard**: widgets you can **Customize** — add, move, resize, remove —
+  and **Save** for yourself (saved on the server, `UserLayouts` tab). Without
+  your own layout you get your role's default; admins and senior managers can
+  make a layout the default for agents or for the team. Team-only widgets
+  (discount approvals, team performance) can't be added by agents, and **the
+  layout never changes what you can see**: the server filters every widget's
+  data by role.
 
 ## Homekare
 
@@ -265,10 +283,10 @@ records for that number are saved as entered.
 ### Going live with Patients (one-time, on the existing Sheet)
 
 1. **Back up**: File → Make a copy of the Sheet.
-2. Paste the new/changed `.gs` files (new: `Handover`, `Homekare`, `Lab`, `Medpass`,
-   `Modules`, `Patients`).
-3. Run **`setupSpreadsheet`** — adds the `Homekare`, `Lab & Radiology`, `Patients`
-   and `UserRequests` tabs, the `PatientID` column, the Medpass columns (members,
+2. Paste the new/changed `.gs` files (new: `BulkReassign`, `DashboardLayouts`,
+   `Handover`, `Homekare`, `Lab`, `Medpass`, `Modules`, `Patients`).
+3. Run **`setupSpreadsheet`** — adds the `Homekare`, `Lab & Radiology`, `Patients`,
+   `UserRequests` and `UserLayouts` tabs, the `PatientID` column, the Medpass columns (members,
    price, discount, validity) and the new Reminders columns. It never deletes or
    renames anything; existing refill reminders keep working.
 4. Run **`migratePatientsDryRun`** and read the log (patients to create,

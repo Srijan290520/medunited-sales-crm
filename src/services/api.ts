@@ -208,6 +208,11 @@ export const api = {
 
   // ----- Dashboard -----
   dashboardSummary: () => call('dashboardSummary'),
+  // Layouts only decide what is drawn; the summary is filtered by role either way.
+  getDashboardLayout: () => call('getDashboardLayout'),
+  saveDashboardLayout: (layout: { id: string; span: number }[]) => call('saveDashboardLayout', { layout }),
+  resetDashboardLayout: () => call('resetDashboardLayout'),
+  saveRoleDefaultLayout: (group: 'agent' | 'team', layout: { id: string; span: number }[]) => call('saveRoleDefaultLayout', { group, layout }),
 
   // ----- Users & incentives -----
   listUsers: () => call('listUsers'),

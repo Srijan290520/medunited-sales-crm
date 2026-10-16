@@ -1205,3 +1205,55 @@ test('agent handover: everything one agent handles moves, nobody is deactivated'
   assert.equal(ok(call('listSales', arjun, { type: 'pharmacy' })).sales.length, 1, 'completed sale stays with Arjun');
   assert.match(call('handoverAgent', manager, { fromEmail: 'arjun@medunited.in', toEmail: 'divya@medunited.in', dryRun: false, reason: 'Again' }).message, /nothing to hand over/);
 });
+
+// ===== Phase 4: dashboard layouts =====
+
+test('dashboard layouts: role defaults, own layout per user, team widgets only for the team', () => {
+  const { call, admin, arjun, divya, manager } = world();
+  const mine = ok(call('getDashboardLayout', arjun, {}));
+  assert.equal(mine.source, 'role');
+  assert.equal(mine.layout.map((w) => w.id).join(','), 'target,temperature,reminders,followups,modules');
+  assert.ok(!mine.widgets.some((w) => w.id === 'team' || w.id === 'discounts'), 'agents can not pick team widgets');
+  const team = ok(call('getDashboardLayout', manager, {}));
+  assert.ok(team.layout.some((w) => w.id === 'team') && team.layout.some((w) => w.id === 'discounts'));
+
+  // Saving: checked on the server.
+  assert.match(call('saveDashboardLayout', arjun, { layout: [{ id: 'team', span: 8 }] }).message, /not available for your role/);
+  assert.match(call('saveDashboardLayout', arjun, { layout: [{ id: 'nope', span: 4 }] }).message, /Unknown widget/);
+  assert.match(call('saveDashboardLayout', arjun, { layout: [{ id: 'target', span: 5 }] }).message, /4, 6, 8 or 12/);
+  assert.match(call('saveDashboardLayout', arjun, { layout: [{ id: 'target', span: 4 }, { id: 'target', span: 6 }] }).message, /twice/);
+  assert.match(call('saveDashboardLayout', arjun, { layout: [] }).message, /at least one widget/);
+  const saved = ok(call('saveDashboardLayout', arjun, { layout: [{ id: 'followups', span: 12 }, { id: 'target', span: 6 }] }));
+  assert.equal(saved.source, 'user');
+  assert.equal(ok(call('getDashboardLayout', arjun, {})).layout[0].span, 12);
+  assert.equal(ok(call('getDashboardLayout', divya, {})).source, 'role', 'layouts are per person');
+
+  // Role defaults: admins / senior managers only; people with their own layout keep it.
+  assert.equal(call('saveRoleDefaultLayout', manager, { group: 'agent', layout: [{ id: 'target', span: 12 }] }).forbidden, true);
+  assert.match(call('saveRoleDefaultLayout', admin, { group: 'agent', layout: [{ id: 'team', span: 12 }] }).message, /not available/);
+  ok(call('saveRoleDefaultLayout', admin, { group: 'agent', layout: [{ id: 'pipeline', span: 12 }, { id: 'target', span: 4 }] }));
+  assert.equal(ok(call('getDashboardLayout', divya, {})).layout[0].id, 'pipeline');
+  assert.equal(ok(call('getDashboardLayout', arjun, {})).layout[0].id, 'followups');
+  const reset = ok(call('resetDashboardLayout', arjun, {}));
+  assert.equal(reset.source, 'role');
+  assert.equal(reset.layout[0].id, 'pipeline');
+});
+
+test('dashboard widget data stays filtered by role, whatever the layout', () => {
+  const { call, arjun, divya, manager } = world();
+  ok(call('createSale', arjun, { type: 'medpass', data: lead({ temperature: 'Hot' }) }));
+  ok(call('createSale', arjun, { type: 'medpass', data: lead({ contact: '9840000001', temperature: 'Cold' }) }));
+  ok(call('createSale', divya, { type: 'medpass', data: lead({ contact: '9840000002', temperature: 'Hot', priceType: 'Discounted', discountAmount: 100, discountReason: 'Camp offer', members: FAMILY }) }));
+
+  const a = ok(call('dashboardSummary', arjun)).summary;
+  assert.deepEqual({ ...a.temperature }, { Hot: 1, Warm: 0, Cold: 1 }, 'only Arjun\'s own open leads');
+  assert.equal(a.pendingDiscounts, null, 'no approvals data for agents');
+  assert.equal(a.modules.map((m) => m.id).join(','), 'medpass,pharmacy,homekare,lab');
+  // Even with a team widget forced into a saved layout, the data is not there.
+  assert.equal(call('saveDashboardLayout', arjun, { layout: [{ id: 'discounts', span: 4 }] }).error, true);
+
+  const m = ok(call('dashboardSummary', manager)).summary;
+  assert.deepEqual({ ...m.temperature }, { Hot: 2, Warm: 0, Cold: 1 });
+  assert.equal(m.pendingDiscounts.length, 1);
+  assert.equal(m.pendingDiscounts[0].DiscountAmount, 100);
+});
