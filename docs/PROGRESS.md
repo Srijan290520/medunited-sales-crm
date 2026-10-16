@@ -20,7 +20,7 @@ Live state: the Sheet's Apps Script project has v2 code saved and
 | 1b. Medpass rules + family members + senior role | `phase1b-medpass-rules` (stacked on phase 1) | **Done on branch, PR open (base: Phase 1 branch) — not deployed** |
 | 2. Lab & Radiology, HOMEKARE modules | `phase2-new-modules` (stacked on 1b) | **Done on branch, PR open — not deployed** |
 | 3. Bulk reassign | `phase3-bulk-reassign` (stacked on 2) | **Done on branch, PR open — not deployed** |
-| 4. Calmer module pages + widget dashboard | — | Not started (mockup first) |
+| 4. Calmer module pages + widget dashboard | `phase4-calm-ui` (from 3) | Mockup published, waiting for feedback |
 | 5. Settings page, Incentives page, per-agent targets | — | Blocked on user answers (revenue vs count, agent visibility, target→incentive) |
 
 ---
@@ -385,3 +385,17 @@ pass; single parent allowed on a family pass.
   `phase2-new-modules` (PR #7) and this branch.
   **Next phase:** 4 (calmer module pages + widget dashboard) — needs a mockup
   or preview build for the user before the full rewrite.
+- **2026-10-16** — User checked the live Google Sheet: as expected nothing
+  from Phases 1–3 is there (tabs: Users, SaleActivities, Settings,
+  LeadActivities, Leads, Lists, AuditLog, Medpass, Pharmacy, Reminders; no
+  PatientID/Members/Kind columns; /exec still v1). **Decision: deploy at the
+  end of the roadmap** ("lets work it out in the end").
+- **2026-10-16** — Phase 4 mockup published (Design canvas, private):
+  https://claude.ai/artifact/HTD6GrBKW8payhWUVgHvXR — two clickable
+  artboards: module page (one search, Filters button, ⋯ More for
+  import/export/reassign-from-file/board view, one "New record" button,
+  quiet status tabs, list by default, side panel with quick actions) and
+  dashboard (widgets; Customize → add / move / resize / remove; agent vs
+  manager defaults; "layout never changes what you can see"). Mockup source
+  is in the session scratchpad, not the repo. **Waiting for user feedback**
+  before the rewrite.
