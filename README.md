@@ -68,7 +68,7 @@ Apps Script deployment without rebuilding.
    file per `.gs` file in `apps-script/` and paste each in:
    `Activities, Attachments, Audit, Auth, BulkReassign, Code, DashboardLayouts,
    Handover, Homekare, Import, Incentives, Lab, Lists, Medpass, Modules, Patients,
-   Reminders, SalesService, Setup, SmokeTest, UserService, Utils`.
+   Performance, Reminders, SalesService, Setup, SmokeTest, UserService, Utils`.
 3. **Project Settings (gear) → "Show appsscript.json manifest file"** → open
    `appsscript.json` and replace it with `apps-script/appsscript.json`.
    *(Or use [clasp](https://github.com/google/clasp): `clasp push` from the
@@ -169,6 +169,16 @@ and the monthly target.
   / **Export sales** (CSV). Incentives use each agent's *current* rates, so a
   rate change also changes earlier months. **Agents never see incentive
   amounts.** Homekare and Lab & Radiology have no incentive rule yet.
+- **Performance** page (everyone): pick a month and see revenue, sales, new
+  enquiries and average sale **vs last month** and **vs the same month last
+  year**, **year to date vs the same period last year**, a 12-month chart
+  against the year before (or as a table), and a per-module breakdown.
+  Managers and above see the **whole team** or pick **one agent**, plus every
+  agent side by side with rank, change and year to date (**Export CSV**).
+  Agents only ever see their own figures. Sales count by the sale date of
+  completed records, new enquiries by the day the record was created.
+  No incentive amounts appear here. The dashboard has a matching **This month
+  vs last month** widget.
 
 ## Pages and dashboard
 
@@ -301,7 +311,7 @@ records for that number are saved as entered.
 
 1. **Back up**: File → Make a copy of the Sheet.
 2. Paste the new/changed `.gs` files (new: `BulkReassign`, `DashboardLayouts`,
-   `Handover`, `Homekare`, `Incentives`, `Lab`, `Medpass`, `Modules`, `Patients`).
+   `Handover`, `Homekare`, `Incentives`, `Lab`, `Medpass`, `Modules`, `Patients`, `Performance`).
 3. Run **`setupSpreadsheet`** — adds the `Homekare`, `Lab & Radiology`, `Patients`,
    `UserRequests`, `UserLayouts` and `Targets` tabs, the `PatientID` column, the Medpass columns (members,
    price, discount, validity) and the new Reminders columns. It never deletes or

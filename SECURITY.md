@@ -40,6 +40,9 @@ Report problems privately to the repository owner, not in public issues.
   the Incentives page and the incentive column of team figures are refused or
   removed for agents on the server. Agents see their own targets, never
   anyone else's.
+- Performance figures: agents get only their own (the server ignores any
+  agent they ask for); managers and above get the team or one agent. The
+  performance data never includes incentive amounts.
 - The audit log viewer is for admins and senior managers (summaries name
   patients and amounts).
 - Dashboard layouts only choose which widgets are drawn. Every widget's data
