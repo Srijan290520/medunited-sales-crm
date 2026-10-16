@@ -14,7 +14,7 @@
 //  - one open (Pending) record per phone number across both modules;
 //  - only admins delete, and only with a reason.
 
-var SALE_TYPES = { medpass: 'Medpass', pharmacy: 'Pharmacy' };
+// The modules themselves (and SALE_TYPES) are defined in Modules.gs.
 var SALE_STATUSES = ['Pending', 'Completed', 'Cancelled'];
 var PRICE_TYPES = ['Full Price', 'Discounted', 'Converted From OP'];
 var PAYMENT_METHODS = ['UPI', 'Cash', 'Card', 'Net Banking'];
@@ -26,16 +26,14 @@ var SALE_HEADERS = ['ID', 'Date', 'AgentEmail', 'AgentName', 'CustomerName', 'Co
   'CreatedAt', 'UpdatedAt'];
 
 function saleSheetName(type) {
-  var name = SALE_TYPES[type];
-  if (!name) throw new Error('Invalid sale type.');
-  return name;
+  return getModule(type).label;
 }
 
 function getSaleSheet(type) {
   return getOrCreateSheet(saleSheetName(type), SALE_HEADERS);
 }
 
-function saleEntity(type) { return SALE_TYPES[type] + 'Sale'; }
+function saleEntity(type) { return getModule(type).label + 'Sale'; }
 
 // Agents can only see/touch their own rows.
 function canAccessSale(session, sale) {
@@ -175,10 +173,11 @@ function findOpenRecordByPhone(key, exceptId) {
 // ===== Validation helpers =====
 function validateCompletion(next, type) {
   if (next.Status !== 'Completed') return;
-  if (type === 'pharmacy') {
+  var mod = getModule(type);
+  if (mod.needsProducts) {
     var lines = [];
     try { lines = JSON.parse(next.Products || '[]'); } catch (e) { lines = []; }
-    if (!lines.length) throw new Error('Add the medicines before marking this Pharmacy sale as Completed.');
+    if (!lines.length) throw new Error('Add the medicines before marking this ' + mod.label + ' sale as Completed.');
   }
   if (!next.PaymentMethod) throw new Error('Payment method is required to mark this sale as Completed.');
   if (!next.hasBill) throw new Error('A bill screenshot is required to mark this sale as Completed.');
@@ -286,6 +285,7 @@ function resolveAssignee(session, agentEmail) {
 
 // ===== Create =====
 function svc_createSale(session, type, data) {
+  var mod = getModule(type);
   var sheet = getSaleSheet(type);
   var customerName = cleanText(data.customerName, 120);
   if (!customerName) throw new Error('Customer name is required.');
@@ -309,12 +309,12 @@ function svc_createSale(session, type, data) {
   if (paymentMethod) requireOneOf(paymentMethod, PAYMENT_METHODS, 'Payment method');
   var utr = cleanText(data.utr, 40);
   var priceType = cleanText(data.priceType, 30);
-  if (type === 'medpass') requireOneOf(priceType, PRICE_TYPES, 'Price type');
+  if (mod.priceTypes) requireOneOf(priceType, PRICE_TYPES, 'Price type');
   else priceType = '';
 
   var detail = cleanText(data.detail, MAX_LONG_TEXT);
   var products = [];
-  if (type === 'pharmacy') {
+  if (mod.products) {
     products = validateProducts(data.products === undefined ? [] : data.products, status !== 'Completed');
     detail = summarizeProducts(products);
   }
@@ -345,7 +345,7 @@ function svc_createSale(session, type, data) {
     Contact: contact,
     ContactKey: contactKey,
     Detail: detail,
-    Products: type === 'pharmacy' ? JSON.stringify(products) : '',
+    Products: mod.products ? JSON.stringify(products) : '',
     Amount: amount,
     Status: status,
     PriceType: priceType,
@@ -366,7 +366,7 @@ function svc_createSale(session, type, data) {
     UpdatedAt: now
   };
   appendObject(sheet, sale);
-  if (type === 'pharmacy') syncReminderForSale(sale);
+  afterSaleSaved(type, sale);
   audit(session, status === 'Completed' ? 'complete' : 'create', saleEntity(type), id, saleChanges(null, sale),
     'Created ' + SALE_TYPES[type] + ' record for ' + customerName + ' (' + status + ')');
   return saleForClient(sale, []);
@@ -377,6 +377,7 @@ function svc_createSale(session, type, data) {
 var AGENT_COMPLETED_EDITABLE = ['Products', 'Detail', 'Notes'];
 
 function svc_updateSale(session, type, id, data) {
+  var mod = getModule(type);
   var sheet = getSaleSheet(type);
   var existing = requireSale(session, type, id);
   var patch = {};
@@ -402,11 +403,12 @@ function svc_updateSale(session, type, id, data) {
   }
   if (data.utr !== undefined) patch.UTR = cleanText(data.utr, 40);
   if (data.notes !== undefined) patch.Notes = cleanText(data.notes, MAX_LONG_TEXT);
-  if (type === 'medpass') {
-    if (data.priceType !== undefined) { patch.PriceType = cleanText(data.priceType, 30); requireOneOf(patch.PriceType, PRICE_TYPES, 'Price type'); }
-    if (data.detail !== undefined) patch.Detail = cleanText(data.detail, MAX_LONG_TEXT);
+  if (mod.priceTypes && data.priceType !== undefined) {
+    patch.PriceType = cleanText(data.priceType, 30);
+    requireOneOf(patch.PriceType, PRICE_TYPES, 'Price type');
   }
-  if (type === 'pharmacy' && data.products !== undefined) {
+  if (!mod.products && data.detail !== undefined) patch.Detail = cleanText(data.detail, MAX_LONG_TEXT);
+  if (mod.products && data.products !== undefined) {
     var products = validateProducts(data.products, String(data.status || existing.Status) !== 'Completed');
     patch.Products = JSON.stringify(products);
     patch.Detail = summarizeProducts(products);
@@ -489,7 +491,7 @@ function svc_updateSale(session, type, id, data) {
 
   patch.UpdatedAt = nowIso();
   var updated = updateObjectById(sheet, existing.ID, patch);
-  if (type === 'pharmacy') syncReminderForSale(updated);
+  afterSaleSaved(type, updated);
   var changes = saleChanges(existing, patch);
   if (!summary) summary = 'Updated ' + (changes.map(function (c) { return c.field; }).join(', ') || 'details');
   audit(session, action, saleEntity(type), existing.ID, changes, summary);
@@ -515,7 +517,7 @@ function svc_reopenSale(session, type, id, reason) {
   var updated = updateObjectById(sheet, existing.ID, patch);
   var summary = why || 'Customer came back and is interested. Reopened as a Hot lead.';
   addActivity(session, type, existing.ID, { Type: 'Note', Notes: 'Reopened: ' + summary, NextFollowUp: todayKey() });
-  if (type === 'pharmacy') syncReminderForSale(updated);
+  afterSaleSaved(type, updated);
   audit(session, 'reopen', saleEntity(type), existing.ID, saleChanges(existing, patch), summary);
   return saleForClient(updated, activitiesForSale(existing.ID));
 }
@@ -535,7 +537,7 @@ function svc_reassignSale(session, type, id, agentEmail) {
   var patch = { AgentEmail: agent.Email, AgentName: agent.Name, UpdatedAt: nowIso() };
   var updated = updateObjectById(sheet, existing.ID, patch);
   addActivity(session, type, existing.ID, { Type: 'Note', Notes: 'Reassigned from ' + existing.AgentName + ' to ' + agent.Name + '.' });
-  if (type === 'pharmacy') syncReminderForSale(updated);
+  afterSaleSaved(type, updated);
   audit(session, 'reassign', saleEntity(type), existing.ID, saleChanges(existing, patch),
     'Reassigned from ' + existing.AgentName + ' to ' + agent.Name);
   return saleForClient(updated, activitiesForSale(existing.ID));
@@ -551,7 +553,7 @@ function svc_deleteSale(session, type, id, reason) {
   var rowIndex = findRowIndexById(sheet, existing.ID);
   if (rowIndex === -1) throw new Error('Record not found.');
   sheet.deleteRow(rowIndex);
-  if (type === 'pharmacy') removeReminderForSale(existing.ID);
+  afterSaleDeleted(type, existing.ID);
   var snapshot = auditDiff(existing, null);
   delete snapshot.BillScreenshotUrl;
   delete snapshot.PaymentScreenshotUrl;
@@ -602,46 +604,41 @@ function svc_dashboardSummary(session) {
   return summary;
 }
 
-// Only Completed sales count toward revenue and incentives. Medpass pays a
-// flat per-sale rate (Full Price vs Discounted; "Converted From OP" counts as
-// Full Price); Pharmacy pays a percentage of the amount.
+// Only Completed sales count toward revenue and incentives; how each module
+// pays is in its config (Modules.gs → incentiveForSale). Per-module figures
+// are named <module>Count / <module>Amount (e.g. medpassCount).
 function computeDashboardSummary(session) {
   var isAgent = session.role === 'agent';
-  var medpassAll = sheetToObjects(getSaleSheet('medpass')).filter(function (r) { return r.ID && canAccessSale(session, r); });
-  var pharmacyAll = sheetToObjects(getSaleSheet('pharmacy')).filter(function (r) { return r.ID && canAccessSale(session, r); });
-  function completed(rows) { return rows.filter(function (r) { return r.Status === 'Completed'; }); }
-  var medpass = completed(medpassAll);
-  var pharmacy = completed(pharmacyAll);
-
-  var rateByEmail = {};
-  sheetToObjects(getSheetByName('Users')).forEach(function (u) {
-    rateByEmail[String(u.Email).toLowerCase()] = {
-      full: Number(u.MedpassFullRate) || 0,
-      discount: Number(u.MedpassDiscountRate) || 0,
-      percent: Number(u.PharmacyIncentivePercent) || 0
-    };
+  var all = [];
+  moduleIds().forEach(function (type) {
+    sheetToObjects(getSaleSheet(type)).forEach(function (r) {
+      if (r.ID && canAccessSale(session, r)) all.push({ type: type, row: r });
+    });
   });
 
+  var ratesByEmail = {};
+  sheetToObjects(getSheetByName('Users')).forEach(function (u) { ratesByEmail[String(u.Email).toLowerCase()] = u; });
+
+  var totals = {};
+  moduleIds().forEach(function (type) { totals[type + 'Count'] = 0; totals[type + 'Amount'] = 0; });
   var agents = {};
   function ensureAgent(key, name) {
-    if (!agents[key]) agents[key] = { agentName: String(name), agentEmail: key, medpassCount: 0, pharmacyCount: 0, medpassAmount: 0, pharmacyAmount: 0, incentive: 0 };
+    if (!agents[key]) {
+      agents[key] = { agentName: String(name), agentEmail: key, incentive: 0 };
+      moduleIds().forEach(function (type) { agents[key][type + 'Count'] = 0; agents[key][type + 'Amount'] = 0; });
+    }
     return agents[key];
   }
-  medpass.forEach(function (r) {
-    var key = String(r.AgentEmail).toLowerCase();
-    var a = ensureAgent(key, r.AgentName);
-    a.medpassCount += 1;
-    a.medpassAmount += Number(r.Amount) || 0;
-    var rate = rateByEmail[key] || { full: 0, discount: 0 };
-    a.incentive += r.PriceType === 'Discounted' ? rate.discount : rate.full;
-  });
-  pharmacy.forEach(function (r) {
-    var key = String(r.AgentEmail).toLowerCase();
-    var a = ensureAgent(key, r.AgentName);
-    var amount = Number(r.Amount) || 0;
-    a.pharmacyCount += 1;
-    a.pharmacyAmount += amount;
-    a.incentive += amount * (((rateByEmail[key] || {}).percent || 0) / 100);
+  all.forEach(function (x) {
+    if (x.row.Status !== 'Completed') return;
+    var key = String(x.row.AgentEmail).toLowerCase();
+    var amount = Number(x.row.Amount) || 0;
+    var a = ensureAgent(key, x.row.AgentName);
+    a[x.type + 'Count'] += 1;
+    a[x.type + 'Amount'] += amount;
+    a.incentive += incentiveForSale(getModule(x.type), x.row, ratesByEmail[key]);
+    totals[x.type + 'Count'] += 1;
+    totals[x.type + 'Amount'] += amount;
   });
   var agentsArray = Object.keys(agents).map(function (k) {
     var a = agents[k];
@@ -650,14 +647,14 @@ function computeDashboardSummary(session) {
     return a;
   });
 
-  var all = medpassAll.map(function (r) { return { type: 'medpass', row: r }; })
-    .concat(pharmacyAll.map(function (r) { return { type: 'pharmacy', row: r }; }));
   var counts = { Completed: 0, Pending: 0, Cancelled: 0 };
   all.forEach(function (x) { if (counts[x.row.Status] !== undefined) counts[x.row.Status]++; });
   var total = all.length;
 
   var medMap = {};
-  pharmacyAll.forEach(function (s) {
+  all.forEach(function (x) {
+    if (!getModule(x.type).products) return;
+    var s = x.row;
     var prods = [];
     try { prods = JSON.parse(s.Products || '[]'); } catch (e) { prods = []; }
     prods.forEach(function (p) {
@@ -714,12 +711,7 @@ function computeDashboardSummary(session) {
   var target = getMonthlyTarget();
 
   return {
-    totals: {
-      medpassCount: medpass.length,
-      pharmacyCount: pharmacy.length,
-      medpassAmount: medpass.reduce(function (s, r) { return s + (Number(r.Amount) || 0); }, 0),
-      pharmacyAmount: pharmacy.reduce(function (s, r) { return s + (Number(r.Amount) || 0); }, 0)
-    },
+    totals: totals,
     agents: agentsArray,
     pipeline: {
       completed: counts.Completed, pending: counts.Pending, cancelled: counts.Cancelled, totalLeads: total,

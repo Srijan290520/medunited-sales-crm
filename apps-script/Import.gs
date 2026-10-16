@@ -42,7 +42,7 @@ function parseYesNo(value, fallback) {
 }
 
 function svc_importSales(session, type, rows, options) {
-  saleSheetName(type);
+  var mod = getModule(type);
   options = options || {};
   if (!Array.isArray(rows) || rows.length === 0) throw new Error('The file has no rows to import.');
   if (rows.length > IMPORT_MAX_ROWS) throw new Error('You can import at most ' + IMPORT_MAX_ROWS + ' rows at a time. Split the file and import it in parts.');
@@ -115,7 +115,7 @@ function svc_importSales(session, type, rows, options) {
     if (dnd === null) { errors.push('Do Not Call must be Yes or No.'); dnd = false; }
 
     var priceType = '';
-    if (type === 'medpass') {
+    if (mod.priceTypes) {
       priceType = 'Full Price';
       if (cleanText(r.priceType)) {
         priceType = matchOption(r.priceType, PRICE_TYPES);
@@ -142,7 +142,7 @@ function svc_importSales(session, type, rows, options) {
 
     var notes = cleanText(r.notes, MAX_LONG_TEXT);
     var detail = cleanText(r.detail, MAX_LONG_TEXT);
-    if (type === 'pharmacy' && detail) {
+    if (mod.products && detail) {
       notes = (notes ? notes + '\n' : '') + 'Medicines mentioned: ' + detail;
       detail = '';
     }
@@ -163,7 +163,7 @@ function svc_importSales(session, type, rows, options) {
       Contact: contact,
       ContactKey: key,
       Detail: detail,
-      Products: type === 'pharmacy' ? '[]' : '',
+      Products: mod.products ? '[]' : '',
       Amount: amount,
       Status: 'Pending',
       PriceType: priceType,

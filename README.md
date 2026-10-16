@@ -52,7 +52,7 @@ Apps Script deployment without rebuilding.
    workspace account, not a personal one).
 2. **Extensions → Apps Script.** Delete the default `Code.gs`, then create one
    file per `.gs` file in `apps-script/` and paste each in:
-   `Activities, Attachments, Audit, Auth, Code, Import, Lists, Reminders,
+   `Activities, Attachments, Audit, Auth, Code, Import, Lists, Modules, Reminders,
    SalesService, Setup, SmokeTest, UserService, Utils`.
 3. **Project Settings (gear) → "Show appsscript.json manifest file"** → open
    `appsscript.json` and replace it with `apps-script/appsscript.json`.

@@ -99,7 +99,9 @@ function dispatch(action, token, p) {
     case 'changePassword':
       return Object.assign({ error: false }, svc_changePassword(session, p.currentPassword, p.newPassword));
 
-    // ----- Medpass & Pharmacy records -----
+    // ----- Module records (Medpass, Pharmacy, …) -----
+    case 'getModules':
+      return { error: false, modules: svc_getModules(session) };
     case 'listSales':
       return { error: false, sales: svc_listSales(session, p.type) };
     case 'getSale':

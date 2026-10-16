@@ -117,7 +117,7 @@ function svc_logSaleActivity(session, type, saleId, data) {
   if (Object.keys(patch).length) {
     patch.UpdatedAt = nowIso();
     var updated = updateObjectById(sheet, sale.ID, patch);
-    if (type === 'pharmacy') syncReminderForSale(updated);
+    afterSaleSaved(type, updated);
     if (auditAction) audit(session, auditAction, saleEntity(type), sale.ID, saleChanges(sale, patch), auditSummary);
     sale = updated;
   }

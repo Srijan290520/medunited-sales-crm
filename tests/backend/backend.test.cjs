@@ -456,3 +456,16 @@ test('smokeTestV2 passes on a set-up sheet and saves nothing', () => {
   assert.ok(out.length > 15);
   assert.equal(sheets.get('Medpass').rows.length, before);
 });
+
+test('modules come from one config; unknown module ids are rejected', () => {
+  const { call, arjun } = world();
+  const mods = ok(call('getModules', arjun, {})).modules;
+  assert.equal(mods.map((m) => m.id).join(','), 'medpass,pharmacy');
+  assert.equal(mods.find((m) => m.id === 'pharmacy').products, true);
+  assert.equal(mods.find((m) => m.id === 'medpass').priceTypes, true);
+  for (const type of ['constructor', '__proto__', 'toString', 'Medpass', '']) {
+    const r = call('listSales', arjun, { type });
+    assert.equal(r.error, true, 'type ' + type);
+    assert.match(r.message, /Invalid sale type/);
+  }
+});
