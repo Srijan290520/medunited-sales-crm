@@ -27,7 +27,7 @@ function doPost(e) { return handleRequest(e); }
 var WRITE_ACTIONS = [
   'changePassword',
   'createSale', 'importSales', 'updateSale', 'deleteSale', 'reopenSale', 'reassignSale', 'logSaleActivity',
-  'reassignPatient', 'migratePatients', 'resolvePatientConflict', 'decideMedpassDiscount', 'updateMedpassSettings',
+  'reassignPatient', 'bulkReassign', 'importReassignments', 'handoverAgent', 'migratePatients', 'resolvePatientConflict', 'decideMedpassDiscount', 'updateMedpassSettings',
   'createUser', 'updateUser', 'deleteUser', 'updateIncentives', 'requestDeactivation', 'decideUserRequest',
   'markContacted', 'reassignReminder',
   'updateLists', 'updateMonthlyTarget'
@@ -121,6 +121,12 @@ function dispatch(action, token, p) {
       return Object.assign({ error: false }, svc_reassignSale(session, p.type, p.id, p.agentEmail, p.scope, p.reason));
     case 'reassignPatient':
       return Object.assign({ error: false }, svc_reassignPatient(session, p));
+    case 'bulkReassign':
+      return Object.assign({ error: false }, svc_bulkReassign(session, p));
+    case 'importReassignments':
+      return Object.assign({ error: false }, svc_importReassignments(session, p));
+    case 'handoverAgent':
+      return Object.assign({ error: false }, svc_handoverAgent(session, p));
 
     // ----- Medpass (price, discounts) -----
     case 'getMedpassSettings':
