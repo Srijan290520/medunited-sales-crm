@@ -18,7 +18,7 @@ Live state: the Sheet's Apps Script project has v2 code saved and
 |---|---|---|
 | 1. One agent per patient (people + households) + module engine | `phase1-patient-ownership` | **Done on branch, PR open — not deployed** |
 | 1b. Medpass rules + family members + senior role | `phase1b-medpass-rules` (stacked on phase 1) | **Done on branch, PR open (base: Phase 1 branch) — not deployed** |
-| 2. Lab & Radiology, HOMEKARE modules | — | Blocked on user input (service list, tests, incentive rules) |
+| 2. Lab & Radiology, HOMEKARE modules | `phase2-new-modules` (from 1b) | Homekare service list received (38, no prices); waiting for prices, Lab/Radiology list, incentive rules |
 | 3. Bulk reassign | — | Not started (agent handover partly pulled into Phase 1) |
 | 4. Calmer module pages + widget dashboard | — | Not started (mockup first) |
 | 5. Settings page, Incentives page, per-agent targets | — | Blocked on user answers (revenue vs count, agent visibility, target→incentive) |
@@ -300,3 +300,14 @@ pass; single parent allowed on a family pass.
   **Still open:** renewal rules / early renewal / renewal reminders (user:
   "discuss later"); confirm the defaults single parent = yes, max 1 extra
   child; Phase 2 inputs (Homekare services, Lab/Radiology tests, incentives).
+- **2026-10-16** — Phase 2 inputs: user sent the 38 Homekare services (names
+  only). Saved as `docs/catalogues/homekare-services.csv` with a proposed charge
+  unit and recurring flag per service, for the user to add prices and
+  corrections. Names kept exactly as given (some look misspelt: MONTHY, MOTHLY,
+  CATHERIZATION, ELETROTHERAPY, CONSULTATAION, PRACTIONER, ELIVATION) — asked
+  whether they must match the billing system. Branch `phase2-new-modules`
+  created from `phase1b-medpass-rules`; no code yet.
+  **Asked the user:** prices (fixed or quoted?), units/recurring OK?, monthly
+  renewal reminders?, what to track per order (dates, visits, staff), one
+  order = one service or several?, Homekare incentive rule; and still the
+  Lab & Radiology list + home collection / appointment / report questions.
