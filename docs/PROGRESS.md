@@ -18,7 +18,7 @@ Live state: the Sheet's Apps Script project has v2 code saved and
 |---|---|---|
 | 1. One agent per patient (people + households) + module engine | `phase1-patient-ownership` | **Done on branch, PR open — not deployed** |
 | 1b. Medpass rules + family members + senior role | `phase1b-medpass-rules` (stacked on phase 1) | **Done on branch, PR open (base: Phase 1 branch) — not deployed** |
-| 2. Lab & Radiology, HOMEKARE modules | `phase2-new-modules` (from 1b) | Homekare service list received (38, no prices); Lab & Radiology = typed by hand for now; Homekare prices typed per patient; incentives later (Phase 5); monthly-package renewal reminders: yes; waiting for "go" on the remaining defaults |
+| 2. Lab & Radiology, HOMEKARE modules | `phase2-new-modules` (from 1b) | Homekare service list received (38, no prices); Lab & Radiology = typed by hand for now; Homekare prices typed per patient; incentives later (Phase 5); **Approved — build next session** (user paused for credits) |
 | 3. Bulk reassign | — | Not started (agent handover partly pulled into Phase 1) |
 | 4. Calmer module pages + widget dashboard | — | Not started (mockup first) |
 | 5. Settings page, Incentives page, per-agent targets | — | Blocked on user answers (revenue vs count, agent visibility, target→incentive) |
@@ -341,3 +341,23 @@ pass; single parent allowed on a family pass.
   the monthly-package reminder uses the record Date as the start (end = Date
   + 1 month, reminder 5 days before). Fields can be added later via the
   module config (extraHeaders) without touching existing rows.
+- **2026-10-16** — **Phase 2 approved** with the defaults; user paused the
+  work until their credits reset. **Start here next session:**
+  1. `git checkout phase2-new-modules` (branched from `phase1b-medpass-rules`;
+     PRs #5 and #6 are still open — check if they were merged, and if so
+     rebase/retarget onto `v2-react-app`).
+  2. Backend: add `homekare` and `lab` modules in `Modules.gs` (incentive
+     `{ kind: 'none' }` → 0 in `incentiveForSale`), a lines JSON column
+     like Products: Homekare lines = { service (from the 38 in
+     docs/catalogues/homekare-services.csv), price }, Lab lines = { name,
+     kind Lab|Radiology, price }; amount = sum on the server via
+     prepareSave hooks. Lab extra columns: HomeCollection, CollectionDate,
+     AppointmentDate, ReportDeliveredOn, ReportDeliveredVia. Homekare
+     catalogue (names + unit + monthly flag) in a new `Homekare.gs`.
+  3. Reminders: generalise `Reminders.gs` (it is Pharmacy-only via
+     `PharmacySaleID`; add SaleType/SaleID columns, keep the old ones) and
+     create a Homekare renewal reminder for completed orders with a monthly
+     service: due Date + 1 month − 5 days.
+  4. Import/export for both modules; tests for every rule; then the
+     frontend (sidebar from `getModules`, which was deferred to now; line
+     editors), README, demo, PR.
