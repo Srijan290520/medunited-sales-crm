@@ -446,3 +446,13 @@ test('upgrading a v1 sheet: setup adds columns, keeps rows, old records still lo
   assert.equal(sales[0].Date, '2026-10-01');
   assert.equal(sales[0].Temperature, 'Warm');
 });
+
+test('smokeTestV2 passes on a set-up sheet and saves nothing', () => {
+  const { ctx, sheets } = world();
+  const before = sheets.get('Medpass').rows.length;
+  const out = ctx.smokeTestV2();
+  const failed = out.filter((l) => !l.startsWith('PASS '));
+  assert.equal(failed.join('\n'), '');
+  assert.ok(out.length > 15);
+  assert.equal(sheets.get('Medpass').rows.length, before);
+});
