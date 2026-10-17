@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!--
+      Content Security Policy: the app may only load its own files and talk to
+      Google Apps Script. If you move the backend somewhere else, add that
+      origin to connect-src here (and in deploy/nginx.conf).
+    -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' https://script.google.com https://script.googleusercontent.com; object-src 'none'; base-uri 'self'; form-action 'self'">
+    <meta name="referrer" content="no-referrer">
+    <meta name="robots" content="noindex, nofollow">
+    <title>MedUnited Sales CRM</title>
+    <meta name="description" content="Medpass & Pharmacy sales tracking, lead management, and refill reminders for the sales team.">
+    <!-- Runtime settings (backend URL). Edit config.js on the server; no rebuild needed. -->
+    <script src="./config.js"></script>
+  <script type="module" crossorigin src="./assets/index-DBTYSET_.js"></script>
+  <link rel="stylesheet" crossorigin href="./assets/index-x8wbrLTm.css">
+</head>
+<body>
+    <noscript>This app needs JavaScript enabled.</noscript>
+    <div id="root"></div>
+</body>
+</html>
