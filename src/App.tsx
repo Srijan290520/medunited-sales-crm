@@ -108,11 +108,32 @@ export const App: React.FC = () => {
 
   // Hooks must all run before the early returns below.
   // Which sales modules exist (Medpass, Pharmacy, Homekare, …) comes from the server.
+  // After login, load every module's list, the patients and the form data in
+  // the background, so the first click on a page already has something to
+  // show. It waits a moment so the dashboard's own requests go first.
+  const preloadedFor = useRef('');
   useEffect(() => {
+    if (!currentUser) preloadedFor.current = ''; // logged out: the next login preloads again
     if (!currentUser || currentUser.MustChangePassword) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     api.getModules().then((res) => {
-      if (!res.error && Array.isArray(res.modules) && res.modules.length) setModules(res.modules);
+      const list: ModuleInfo[] = !res.error && Array.isArray(res.modules) && res.modules.length ? res.modules : BUILT_IN_MODULES;
+      if (!cancelled && list !== BUILT_IN_MODULES) setModules(list);
+      if (cancelled || preloadedFor.current === currentUser.Email) return;
+      preloadedFor.current = currentUser.Email;
+      timer = setTimeout(() => {
+        list.forEach((m) => api.listSales(m.id));
+        api.listPatients();
+        api.getOptionLists();
+        if (list.some((m) => m.id === 'medpass')) api.getMedpassSettings();
+        if (isTeamRole(currentUser.Role)) api.listUsers();
+      }, 2500);
     });
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
   }, [currentUser]);
 
   if (checkingSession) {

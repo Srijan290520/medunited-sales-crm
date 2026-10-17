@@ -1,4 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef, Suspense, lazy } from 'react';
+import { peek } from '../services/cache';
+import type { ApiResponse } from '../services/api';
+import { PlaceholderRows, UpdatingBar } from './Placeholders';
 import {
   User,
   Sale,
@@ -72,7 +75,11 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, moduleInfo, user, on
   const canManageAll = isTeamRole(user.Role);
 
   const [sales, setSales] = useState<Sale[]>([]);
-  const [loading, setLoading] = useState<boolean>(true);
+  const [loading, setLoading] = useState<boolean>(true); // no list to show yet
+  const [refreshing, setRefreshing] = useState<boolean>(false); // showing the last copy while the fresh one loads
+  const [formReady, setFormReady] = useState<boolean>(false); // dropdowns, prices and users are in
+  const typeRef = useRef(type);
+  typeRef.current = type;
   // 'table' is the list (default); the board stays available from ⋯ More.
   const [viewMode, setViewMode] = useState<'board' | 'table'>('table');
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -263,22 +270,31 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, moduleInfo, user, on
   };
 
 
+  // The list and the form's data are sent together (each request costs
+  // ~3 s of Apps Script overhead) but handled apart: the table draws as soon
+  // as its own answer arrives. Dropdowns, users and prices come once per
+  // login (api.ts), so after the first page they're instant.
+  const listRequest = useRef(0); // only the newest answer may draw the list
   const loadData = async () => {
-    setLoading(true);
-    try {
-      // Sent together: each request costs ~3 s of Apps Script overhead.
-      // Opened from the Patients page, the list itself isn't needed.
-      const none = Promise.resolve(null);
-      const [res, optRes, mpRes, uRes] = await Promise.all([
-        embed ? none : api.listSales(type),
-        api.getOptionLists(),
-        isMedpass ? api.getMedpassSettings() : none,
-        canManageAll ? api.listUsers() : none,
-      ]);
+    setRefreshing(true);
+    const none = Promise.resolve(null);
+    const mine = ++listRequest.current;
+    const forType = type;
+    // Opened from the Patients page, the list itself isn't needed.
+    const list = (embed ? none : api.listSales(type)).then((res) => {
+      if (mine !== listRequest.current || forType !== typeRef.current) return; // a newer request or another module took over
       if (res) {
         if (res.error) onToast(res.message || 'Could not load sales', 'error');
         else setSales(res.sales || []);
       }
+      setLoading(false);
+      setRefreshing(false);
+    });
+    const form = Promise.all([
+      api.getOptionLists(),
+      isMedpass ? api.getMedpassSettings() : none,
+      canManageAll ? api.listUsers() : none,
+    ]).then(([optRes, mpRes, uRes]) => {
       if (!optRes.error && optRes.lists) setOptions(optRes.lists);
       if (mpRes) {
         if (!mpRes.error) setMedpassSettings(mpRes.settings);
@@ -287,12 +303,17 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, moduleInfo, user, on
       if (uRes && !uRes.error && uRes.users) {
         setAgentRoster(uRes.users.filter((u: User) => (u.Role === 'agent' || u.Role === 'manager') && u.Active));
       }
-    } finally {
-      setLoading(false);
-    }
+      setFormReady(true);
+    });
+    await Promise.all([list, form]);
   };
 
+  // Opening a module: draw the last copy this tab loaded at once (if any),
+  // then fetch the fresh one.
   useEffect(() => {
+    const last = embed ? undefined : peek<ApiResponse>('sales:' + type);
+    setSales(last && !last.error ? last.sales || [] : []);
+    setLoading(!last);
     loadData();
   }, [type, user]);
 
@@ -302,7 +323,7 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, moduleInfo, user, on
   const changedRef = useRef(false);
   const embedOpened = useRef(false);
   useEffect(() => {
-    if (!embed || loading || embedOpened.current) return;
+    if (!embed || !formReady || embedOpened.current) return;
     embedOpened.current = true;
     if (embed.record) {
       openEditModal(embed.record);
@@ -313,7 +334,7 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, moduleInfo, user, on
         setFormContact(embed.patient.contact);
       }
     }
-  }, [embed, loading]);
+  }, [embed, formReady]);
   useEffect(() => {
     if (embed && embedOpened.current && !modalOpen) embed.onClose(changedRef.current);
   }, [modalOpen]);
@@ -1464,8 +1485,9 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, moduleInfo, user, on
                   )}
                 </div>
               )}
+              {refreshing && !loading && <UpdatingBar />}
               {loading && sales.length === 0 ? (
-                <div className="mp-empty">Loading…</div>
+                <PlaceholderRows label={`Loading ${moduleLabel} records`} />
               ) : filteredSales.length === 0 ? (
                 <div className="mp-empty">Nothing matches. Try another tab, temperature or filter, or clear the search.</div>
               ) : (

@@ -1,4 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { peek } from '../services/cache';
+import type { ApiResponse } from '../services/api';
+import { PlaceholderRows, UpdatingBar } from './Placeholders';
 import {
   ActivityDirection,
   ActivityOutcome,
@@ -64,8 +67,11 @@ function recordSummary(r: PatientRecord): string {
 
 export const PatientsView: React.FC<Props> = ({ user, modules, onToast }) => {
   const isTeam = isTeamRole(user.Role);
-  const [patients, setPatients] = useState<PatientSummary[]>([]);
-  const [loading, setLoading] = useState(true);
+  // The last list this tab loaded draws at once; the fresh one replaces it.
+  const lastList = peek<ApiResponse>('patients');
+  const [patients, setPatients] = useState<PatientSummary[]>(lastList && !lastList.error ? lastList.patients || [] : []);
+  const [loading, setLoading] = useState(!lastList);
+  const [refreshing, setRefreshing] = useState(true);
   const [search, setSearch] = useState('');
   const [scope, setScope] = useState<'mine' | 'all' | 'due'>(isTeam ? 'all' : 'mine');
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -76,11 +82,16 @@ export const PatientsView: React.FC<Props> = ({ user, modules, onToast }) => {
   const [service, setService] = useState<{ type: SaleType; record?: PatientRecord } | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
 
+  const listRequest = useRef(0); // only the newest answer may draw the list
   const loadList = async () => {
+    setRefreshing(true);
+    const mine = ++listRequest.current;
     const res = await api.listPatients();
+    if (mine !== listRequest.current) return;
     if (res.error) onToast(res.message || 'Could not load patients', 'error');
     else setPatients(res.patients || []);
     setLoading(false);
+    setRefreshing(false);
   };
 
   const loadDetail = async (id: string) => {
@@ -198,8 +209,12 @@ export const PatientsView: React.FC<Props> = ({ user, modules, onToast }) => {
                 </span>
               </div>
             )}
+            {refreshing && !loading && <UpdatingBar />}
             {loading ? (
-              <div className="mp-empty">Loading patients…</div>
+              <PlaceholderRows label="Loading patients" />
+            ) : noMatchForPhone && refreshing ? (
+              // The copy on screen may predate someone else registering this number.
+              <div className="mp-empty">Checking the latest list for {q}…</div>
             ) : noMatchForPhone ? (
               <div className="mp-empty">
                 <p>No patient on {q} yet.</p>

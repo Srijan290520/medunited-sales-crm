@@ -206,5 +206,7 @@ export function demoCall(action: string, token: string | null, payload?: Record<
   if (!backend) seed();
   const result = raw(action, token, payload);
   // A short pause so loading states look like the real thing.
-  return new Promise((resolve) => setTimeout(() => resolve(result), 120));
+  // ?slow=4000 in the address bar imitates Apps Script's delay (milliseconds).
+  const slow = Number(new URLSearchParams(location.search).get('slow')) || 0;
+  return new Promise((resolve) => setTimeout(() => resolve(result), 120 + slow));
 }

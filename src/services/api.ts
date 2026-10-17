@@ -10,6 +10,7 @@
 
 import { API_URL, isApiConfigured } from '../config';
 import { User, UserRole, SaleType } from '../types';
+import { clearCache, invalidate, markStale, once, refresh } from './cache';
 
 export interface ApiResponse {
   error: boolean;
@@ -38,6 +39,8 @@ function readToken(): string | null {
 }
 
 function writeToken(token: string | null) {
+  // A new login, a logout or an expired session: drop the last copies of data.
+  if (token !== memoryToken) clearCache();
   memoryToken = token;
   try {
     if (token) sessionStorage.setItem(TOKEN_KEY, token);
@@ -48,6 +51,13 @@ function writeToken(token: string | null) {
 }
 
 export const hasSession = (): boolean => !!readToken();
+
+// After a change succeeds, the cached copy it affects is fetched again next time.
+async function changes(prefix: string, req: Promise<ApiResponse>): Promise<ApiResponse> {
+  const res = await req;
+  if (!res.error) invalidate(prefix);
+  return res;
+}
 
 // The server sends { id, email, name, role, mustChangePassword }.
 export function toUser(u: any): User {
@@ -69,7 +79,22 @@ export function toUser(u: any): User {
 // on sample data. Vite drops this branch from the production build.
 const DEMO = import.meta.env.VITE_DEMO === 'true';
 
+// Everything else changes data, so cached answers already on their way are out of date.
+const READ_ACTIONS = new Set([
+  'ping', 'me', 'listSales', 'getSale', 'getAuditHistory', 'checkContact', 'getAttachment', 'getModules',
+  'getMedpassSettings', 'listPendingDiscounts', 'listPatients', 'getPatient', 'listPatientConflicts',
+  'dashboardSummary', 'getDashboardLayout', 'getTargets', 'incentiveReport', 'performance', 'listAuditLog',
+  'listUsers', 'listUserRequests', 'listReminders', 'getLists', 'getMonthlyTarget',
+]);
+
 async function call(action: string, payload?: Record<string, unknown>): Promise<ApiResponse> {
+  if (!READ_ACTIONS.has(action)) markStale();
+  const res = await send(action, payload);
+  if (!READ_ACTIONS.has(action)) markStale(); // and again once it's done
+  return res;
+}
+
+async function send(action: string, payload?: Record<string, unknown>): Promise<ApiResponse> {
   if (DEMO) {
     const { demoCall } = await import('../demo/demoBackend');
     return handleResult(await demoCall(action, readToken(), payload));
@@ -144,6 +169,7 @@ export const api = {
   },
 
   logout: async (): Promise<ApiResponse> => {
+    clearCache(); // at once, not when the server answers
     const res = readToken() ? await call('logout') : { error: false };
     writeToken(null);
     return res;
@@ -165,7 +191,8 @@ export const api = {
   },
 
   // ----- Medpass & Pharmacy records -----
-  listSales: (type: SaleType) => call('listSales', { type }),
+  // Always fresh; pages draw the last copy (cache.peek) while this runs.
+  listSales: (type: SaleType) => refresh('sales:' + type, () => call('listSales', { type })),
   getSale: (type: SaleType, id: string) => call('getSale', { type, id }),
   createSale: (type: SaleType, data: any) => call('createSale', { type, data }),
   updateSale: (type: SaleType, id: string, data: any) => call('updateSale', { type, id, data }),
@@ -184,16 +211,16 @@ export const api = {
     opts: { dryRun: boolean; agentEmail?: string; fileName?: string }
   ) => call('importSales', { type, rows, ...opts }),
 
-  getModules: () => call('getModules'), // → { modules: ModuleInfo[] }
+  getModules: () => once('modules', () => call('getModules')), // → { modules: ModuleInfo[] }
 
   // ----- Medpass (price, discounts) -----
-  getMedpassSettings: () => call('getMedpassSettings'),
-  updateMedpassSettings: (data: Record<string, unknown>) => call('updateMedpassSettings', { data }),
+  getMedpassSettings: () => once('medpass', () => call('getMedpassSettings')),
+  updateMedpassSettings: (data: Record<string, unknown>) => changes('medpass', call('updateMedpassSettings', { data })),
   listPendingDiscounts: () => call('listPendingDiscounts'),
   decideMedpassDiscount: (id: string, approve: boolean, note?: string) => call('decideMedpassDiscount', { id, approve, note }),
 
   // ----- Patients page -----
-  listPatients: () => call('listPatients'), // → { patients: PatientSummary[] }
+  listPatients: () => refresh('patients', () => call('listPatients')), // → { patients: PatientSummary[] }
   getPatient: (id: string) => call('getPatient', { id }), // → PatientDetail
   createPatient: (data: Record<string, unknown>) => call('createPatient', { data }),
   updatePatient: (id: string, data: Record<string, unknown>) => call('updatePatient', { id, data }),
@@ -227,22 +254,23 @@ export const api = {
   // Agents always get their own figures; managers may pick an agent ('' = team).
   performance: (month: string, agentEmail = '') => call('performance', { month, agentEmail }),
   listAuditLog: (filters: { q?: string; user?: string; action?: string; from?: string; to?: string; limit?: number; offset?: number }) => call('listAuditLog', filters),
-  updateHomekareCatalogue: (data: { add?: { name: string; unit: string; monthly: boolean }; hide?: string; show?: string }) => call('updateHomekareCatalogue', data),
+  updateHomekareCatalogue: (data: { add?: { name: string; unit: string; monthly: boolean }; hide?: string; show?: string }) =>
+    changes('modules', call('updateHomekareCatalogue', data)),
   saveDashboardLayout: (layout: { id: string; span: number }[]) => call('saveDashboardLayout', { layout }),
   resetDashboardLayout: () => call('resetDashboardLayout'),
   saveRoleDefaultLayout: (group: 'agent' | 'team', layout: { id: string; span: number }[]) => call('saveRoleDefaultLayout', { group, layout }),
 
   // ----- Users & incentives -----
-  listUsers: () => call('listUsers'),
-  createUser: (data: { name: string; email: string; role: UserRole; password?: string }) => call('createUser', { data }),
-  updateUser: (id: string, data: any) => call('updateUser', { id, data }),
-  deleteUser: (id: string, reason?: string) => call('deleteUser', { id, reason }),
-  updateIncentives: (id: string, data: any) => call('updateIncentives', { id, data }),
+  listUsers: () => once('users', () => call('listUsers')),
+  createUser: (data: { name: string; email: string; role: UserRole; password?: string }) => changes('users', call('createUser', { data })),
+  updateUser: (id: string, data: any) => changes('users', call('updateUser', { id, data })),
+  deleteUser: (id: string, reason?: string) => changes('users', call('deleteUser', { id, reason })),
+  updateIncentives: (id: string, data: any) => changes('users', call('updateIncentives', { id, data })),
   // Deactivation always names who takes over the person's patients.
   requestDeactivation: (userId: string, successorEmail: string, reason: string) =>
     call('requestDeactivation', { userId, successorEmail, reason }),
   listUserRequests: (includeDecided = false) => call('listUserRequests', { includeDecided }),
-  decideUserRequest: (id: string, approve: boolean, note?: string) => call('decideUserRequest', { id, approve, note }),
+  decideUserRequest: (id: string, approve: boolean, note?: string) => changes('users', call('decideUserRequest', { id, approve, note })),
 
   // ----- Refill reminders -----
   listReminders: (includeResolved: boolean) => call('listReminders', { includeResolved }),
@@ -250,8 +278,8 @@ export const api = {
   reassignReminder: (id: string, agentEmail: string) => call('reassignReminder', { id, agentEmail }),
 
   // ----- Settings -----
-  getOptionLists: () => call('getLists'),
-  updateOptionLists: (data: any) => call('updateLists', { data }),
+  getOptionLists: () => once('lists', () => call('getLists')),
+  updateOptionLists: (data: any) => changes('lists', call('updateLists', { data })),
   getMonthlyTarget: () => call('getMonthlyTarget'),
   updateMonthlyTarget: (amount: number) => call('updateMonthlyTarget', { amount }),
 };
