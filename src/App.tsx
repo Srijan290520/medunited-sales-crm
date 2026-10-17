@@ -11,6 +11,7 @@ import { IncentivesView } from './components/IncentivesView';
 import { PerformanceView } from './components/PerformanceView';
 import { PatientsView } from './components/PatientsView';
 import { isTeamRole } from './utils/roles';
+import { todayKey } from './utils/date';
 import { LoginView } from './components/LoginView';
 import { ChangePasswordView } from './components/ChangePasswordView';
 import { Toast } from './components/Toast';
@@ -128,6 +129,10 @@ export const App: React.FC = () => {
         api.getOptionLists();
         if (list.some((m) => m.id === 'medpass')) api.getMedpassSettings();
         if (isTeamRole(currentUser.Role)) api.listUsers();
+        // Pages that open on the current month.
+        api.listReminders(false);
+        api.performance(todayKey().slice(0, 7));
+        if (isTeamRole(currentUser.Role)) api.incentiveReport(todayKey().slice(0, 7));
       }, 2500);
     });
     return () => {

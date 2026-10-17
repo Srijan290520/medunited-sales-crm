@@ -612,3 +612,17 @@ live site as Admin (17 patients listed, a profile opens, no errors).
     refresh (~4 s); saving while updating shows the new record; logout leaves
     no copies and the next user (agent) never sees the previous list; phone
     width OK. 55/55 backend tests, tsc and build clean.
+
+- **2026-10-17 (later)** — Same last-copy loading for **Edit** (form opens at
+  once; history loads behind it), the **Dashboard** (cards drawn at once from
+  the last copy or the role's default layout with placeholders; summary and
+  layout drawn as each arrives; Customize waits for the widget list),
+  **Reminders**, **Performance** and **Incentives** (last copy per
+  month/person; another month never shows while the chosen one loads).
+  Background loading after login now also covers reminders and this month's
+  performance (and incentives for managers). Demo backend now does its work
+  after the simulated delay, like a real server. Measured in the demo with a
+  4 s delay: return visits draw in 14–19 ms; Edit opens in 27 ms.
+  Note for testing: the preview tab runs in the background, where timers are
+  slowed (a 5 ms timer took 316 ms), so time page switches with a
+  MutationObserver, not setTimeout polling.

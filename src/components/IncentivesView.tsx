@@ -1,4 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import { peek } from '../services/cache';
+import type { ApiResponse } from '../services/api';
+import { PlaceholderRows, UpdatingBar } from './Placeholders';
 import { User, IncentiveReport, IncentiveAgent } from '../types';
 import { api } from '../services/api';
 import { formatMoney, formatDate, todayKey } from '../utils/date';
@@ -15,13 +18,23 @@ export const IncentivesView: React.FC<Props> = ({ onToast }) => {
   const [month, setMonth] = useState(todayKey().slice(0, 7));
   const [report, setReport] = useState<IncentiveReport | null>(null);
   const [open, setOpen] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true); // nothing to show for this month yet
+  const [refreshing, setRefreshing] = useState(true);
+  const request = useRef(0); // only the newest answer may draw
 
+  // The month's last copy draws at once (if this tab has one); never another
+  // month's figures while the chosen one loads.
   useEffect(() => {
-    setLoading(true);
+    const last = peek<ApiResponse>('incentives:' + month);
+    setReport(last && !last.error ? last.report : null);
+    setLoading(!last);
+    setRefreshing(true);
     setOpen(null);
+    const mine = ++request.current;
     api.incentiveReport(month).then((res) => {
+      if (mine !== request.current) return;
       setLoading(false);
+      setRefreshing(false);
       if (res.error) onToast(res.message || 'Could not load incentives.', 'error');
       else setReport(res.report);
     });
@@ -99,7 +112,8 @@ export const IncentivesView: React.FC<Props> = ({ onToast }) => {
             <strong style={{ flex: 1 }}>{report ? `${report.agents.length} agent${report.agents.length === 1 ? '' : 's'} with sales in ${report.month}` : ''}</strong>
             {report && <span>Total incentive {formatMoney(report.totals.incentive)}</span>}
           </div>
-          {loading && <div className="mp-empty">Loading…</div>}
+          {refreshing && !loading && <UpdatingBar />}
+          {loading && <PlaceholderRows label="Loading incentives" rows={4} />}
           {!loading && report && report.agents.length === 0 && <div className="mp-empty">No completed sales in this month.</div>}
           {!loading && report && report.agents.map((a) => (
             <div key={a.agentEmail}>

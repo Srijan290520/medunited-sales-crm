@@ -241,23 +241,25 @@ export const api = {
     call('resolvePatientConflict', data),
 
   // ----- Dashboard -----
-  dashboardSummary: () => call('dashboardSummary'),
+  // Always fresh; the dashboard draws the last copy (cache.peek) meanwhile.
+  dashboardSummary: () => refresh('dash', () => call('dashboardSummary')),
   // Layouts only decide what is drawn; the summary is filtered by role either way.
-  getDashboardLayout: () => call('getDashboardLayout'),
+  getDashboardLayout: () => refresh('layout', () => call('getDashboardLayout')),
 
   // ----- Targets, incentives, audit log (Phase 5) -----
   getTargets: (month: string) => call('getTargets', { month }),
   saveTargets: (month: string, entries: { agentEmail: string; module: string; target: number | '' }[]) => call('saveTargets', { month, entries }),
   copyTargets: (toMonth: string, overwrite = false) => call('copyTargets', { toMonth, overwrite }),
   setTargetMeasure: (module: string, measure: 'revenue' | 'count') => call('setTargetMeasure', { module, measure }),
-  incentiveReport: (month: string) => call('incentiveReport', { month }), // managers and above only
+  incentiveReport: (month: string) => refresh('incentives:' + month, () => call('incentiveReport', { month })), // managers and above only
   // Agents always get their own figures; managers may pick an agent ('' = team).
-  performance: (month: string, agentEmail = '') => call('performance', { month, agentEmail }),
+  performance: (month: string, agentEmail = '') =>
+    refresh('perf:' + month + ':' + agentEmail, () => call('performance', { month, agentEmail })),
   listAuditLog: (filters: { q?: string; user?: string; action?: string; from?: string; to?: string; limit?: number; offset?: number }) => call('listAuditLog', filters),
   updateHomekareCatalogue: (data: { add?: { name: string; unit: string; monthly: boolean }; hide?: string; show?: string }) =>
     changes('modules', call('updateHomekareCatalogue', data)),
-  saveDashboardLayout: (layout: { id: string; span: number }[]) => call('saveDashboardLayout', { layout }),
-  resetDashboardLayout: () => call('resetDashboardLayout'),
+  saveDashboardLayout: (layout: { id: string; span: number }[]) => changes('layout', call('saveDashboardLayout', { layout })),
+  resetDashboardLayout: () => changes('layout', call('resetDashboardLayout')),
   saveRoleDefaultLayout: (group: 'agent' | 'team', layout: { id: string; span: number }[]) => call('saveRoleDefaultLayout', { group, layout }),
 
   // ----- Users & incentives -----
@@ -273,7 +275,8 @@ export const api = {
   decideUserRequest: (id: string, approve: boolean, note?: string) => changes('users', call('decideUserRequest', { id, approve, note })),
 
   // ----- Refill reminders -----
-  listReminders: (includeResolved: boolean) => call('listReminders', { includeResolved }),
+  listReminders: (includeResolved: boolean) =>
+    refresh('reminders:' + (includeResolved ? 'all' : 'active'), () => call('listReminders', { includeResolved })),
   markContacted: (id: string, outcome: 'not_interested' | 'could_not_connect') => call('markContacted', { id, outcome }),
   reassignReminder: (id: string, agentEmail: string) => call('reassignReminder', { id, agentEmail }),
 

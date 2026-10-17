@@ -1,7 +1,9 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { User, DashboardSummary, LayoutItem, WidgetId, DashboardLayoutInfo, SaleType } from '../types';
 import { isTeamRole, isSeniorRole } from '../utils/roles';
 import { api } from '../services/api';
+import type { ApiResponse } from '../services/api';
+import { peek } from '../services/cache';
 import { formatMoney, formatDate, formatTimeAgo, todayKey } from '../utils/date';
 import { exportToCsv, CsvColumn } from '../utils/exportCsv';
 import { ActivePage } from './Sidebar';
@@ -18,6 +20,27 @@ interface DashboardProps {
 // every number comes from dashboardSummary, which the server filters by role.
 
 const SPANS: LayoutItem['span'][] = [4, 6, 8, 12];
+
+// Drawn before the server's answer on a first visit: the built-in defaults
+// and titles from DashboardLayouts.gs. The server's layout replaces them.
+const DEFAULT_LAYOUTS: Record<'agent' | 'team', LayoutItem[]> = {
+  agent: [{ id: 'target', span: 4 }, { id: 'comparison', span: 4 }, { id: 'temperature', span: 4 }, { id: 'followups', span: 8 }, { id: 'reminders', span: 4 }, { id: 'modules', span: 4 }],
+  team: [{ id: 'target', span: 4 }, { id: 'comparison', span: 4 }, { id: 'discounts', span: 4 }, { id: 'team', span: 8 }, { id: 'temperature', span: 4 }, { id: 'followups', span: 8 }, { id: 'reminders', span: 4 }, { id: 'modules', span: 4 }],
+};
+const DEFAULT_TITLES: Partial<Record<WidgetId, string>> = {
+  target: 'This month vs target', comparison: 'This month vs last month', followups: 'Follow-ups due', reminders: 'Reminders due',
+  temperature: 'Open leads by temperature', modules: 'Completed sales by module', pipeline: 'Pipeline', activity: 'Recent activity',
+  discounts: 'Discounts waiting for approval', team: 'Team performance',
+};
+
+// Grey lines inside a card until its numbers arrive.
+const CardPlaceholder: React.FC = () => (
+  <div className="ph-card" aria-hidden="true">
+    <span className="ph-line" style={{ width: '45%', height: 22 }} />
+    <span className="ph-line" style={{ width: '90%' }} />
+    <span className="ph-line" style={{ width: '70%' }} />
+  </div>
+);
 const SIZE_NAMES: Record<number, string> = { 4: 'Small', 6: 'Medium', 8: 'Large', 12: 'Full width' };
 const MODULE_COLORS: Record<string, string> = { medpass: '#3730a3', pharmacy: '#0e7490', homekare: '#9d174d', lab: '#b45309' };
 
@@ -40,30 +63,46 @@ const Bars: React.FC<{ rows: { label: string; value: number; color: string; text
 };
 
 export const Dashboard: React.FC<DashboardProps> = ({ user, onToast, onNavigate }) => {
-  const [summary, setSummary] = useState<DashboardSummary | null>(null);
-  const [info, setInfo] = useState<DashboardLayoutInfo | null>(null);
-  const [layout, setLayout] = useState<LayoutItem[]>([]);
-  const [editing, setEditing] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const isTeam = isTeamRole(user.Role);
+  // The last copies this tab loaded draw at once; on a first visit, the
+  // role's default cards with placeholders. Fresh answers replace them.
+  const lastSummary = peek<ApiResponse>('dash');
+  const lastLayout = peek<ApiResponse>('layout');
+  const [summary, setSummary] = useState<DashboardSummary | null>(lastSummary && !lastSummary.error ? lastSummary.summary : null);
+  const [info, setInfo] = useState<DashboardLayoutInfo | null>(lastLayout && !lastLayout.error ? (lastLayout as unknown as DashboardLayoutInfo) : null);
+  const [layout, setLayout] = useState<LayoutItem[]>(
+    lastLayout && !lastLayout.error ? (lastLayout as unknown as DashboardLayoutInfo).layout : DEFAULT_LAYOUTS[isTeam ? 'team' : 'agent']
+  );
+  const [editing, setEditing] = useState(false);
+  const editingRef = useRef(false);
+  editingRef.current = editing;
+  const [saving, setSaving] = useState(false);
+  const [refreshing, setRefreshing] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
+  // The numbers and the layout are sent together but drawn apart, each as
+  // soon as it arrives.
   const load = async () => {
     setError(null);
-    const [s, l] = await Promise.all([api.dashboardSummary(), api.getDashboardLayout()]);
-    if (s.error) setError(s.message || 'Could not load the dashboard.');
-    else setSummary(s.summary);
-    if (!l.error) {
-      setInfo(l as unknown as DashboardLayoutInfo);
-      setLayout((l as unknown as DashboardLayoutInfo).layout);
-    }
+    setRefreshing(true);
+    const s = api.dashboardSummary().then((res) => {
+      if (res.error) setError(res.message || 'Could not load the dashboard.');
+      else setSummary(res.summary);
+    });
+    const l = api.getDashboardLayout().then((res) => {
+      if (res.error) return;
+      setInfo(res as unknown as DashboardLayoutInfo);
+      if (!editingRef.current) setLayout((res as unknown as DashboardLayoutInfo).layout); // never undo someone's edits
+    });
+    await Promise.all([s, l]);
+    setRefreshing(false);
   };
 
   useEffect(() => {
     load();
   }, [user]);
 
-  const titleOf = (id: WidgetId) => info?.widgets.find((w) => w.id === id)?.title || id;
+  const titleOf = (id: WidgetId) => info?.widgets.find((w) => w.id === id)?.title || DEFAULT_TITLES[id] || id;
   const go = (type: SaleType) => onNavigate?.(type);
 
   // ----- Customize -----
@@ -126,7 +165,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ user, onToast, onNavigate 
 
   // ----- Widgets -----
   const widget = (id: WidgetId) => {
-    if (!summary) return <div className="mp-muted">Loading…</div>;
+    if (!summary) return <CardPlaceholder />;
     switch (id) {
       case 'target': {
         // Agents: their own targets per module (Settings → Monthly targets).
@@ -318,7 +357,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ user, onToast, onNavigate 
       <div className="mp-header">
         <div className="mp-title">
           <h1>Dashboard</h1>
-          <p className="subtitle">{isTeam ? 'The whole team' : 'Your own patients and sales'}</p>
+          <p className="subtitle">
+            {isTeam ? 'The whole team' : 'Your own patients and sales'}
+            {refreshing && summary && <span className="ph-inline" role="status"> · Updating…</span>}
+          </p>
         </div>
         <div className="mp-actions">
           {editing ? (
@@ -329,7 +371,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ user, onToast, onNavigate 
               </button>
             </>
           ) : (
-            <button type="button" className="mp-btn" onClick={() => setEditing(true)}>Customize</button>
+            <button type="button" className="mp-btn" onClick={() => setEditing(true)} disabled={!info}>Customize</button>
           )}
         </div>
       </div>

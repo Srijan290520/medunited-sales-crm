@@ -1,4 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import { peek } from '../services/cache';
+import type { ApiResponse } from '../services/api';
+import { PlaceholderRows, UpdatingBar } from './Placeholders';
 import { User, Reminder, ProductLine, MedicineForm } from '../types';
 import { isTeamRole } from '../utils/roles';
 import { api } from '../services/api';
@@ -43,9 +46,13 @@ interface RemindersViewProps {
 export const RemindersView: React.FC<RemindersViewProps> = ({ user, onToast }) => {
   const canManageAll = isTeamRole(user.Role);
 
-  const [reminders, setReminders] = useState<Reminder[]>([]);
-  const [loading, setLoading] = useState<boolean>(true);
   const [showResolved, setShowResolved] = useState<boolean>(false);
+  // The last list this tab loaded draws at once; the fresh one replaces it.
+  const lastOf = (resolved: boolean) => peek<ApiResponse>('reminders:' + (resolved ? 'all' : 'active'));
+  const [reminders, setReminders] = useState<Reminder[]>(() => lastOf(false)?.reminders || []);
+  const [loading, setLoading] = useState<boolean>(() => !lastOf(false));
+  const [refreshing, setRefreshing] = useState<boolean>(true);
+  const listRequest = useRef(0); // only the newest answer may draw the list
   const [search, setSearch] = useState<string>('');
   const [agentFilter, setAgentFilter] = useState<string>('');
   const [agentRoster, setAgentRoster] = useState<User[]>([]);
@@ -62,28 +69,28 @@ export const RemindersView: React.FC<RemindersViewProps> = ({ user, onToast }) =
   const [savingMeds, setSavingMeds] = useState<boolean>(false);
   const [medsError, setMedsError] = useState<string | null>(null);
 
+  // The list and the agent list are sent together; the list draws as soon
+  // as it arrives (users come once per login, see api.ts).
   const loadData = async () => {
-    setLoading(true);
-    try {
-      const res = await api.listReminders(showResolved);
-      if (res.error) {
-        onToast(res.message || 'Could not load reminders', 'error');
-      } else {
-        setReminders(res.reminders || []);
-      }
-
-      if (canManageAll) {
-        const uRes = await api.listUsers();
-        if (!uRes.error && uRes.users) {
-          setAgentRoster(uRes.users.filter((u: User) => u.Role === 'agent' && u.Active));
-        }
-      }
-    } finally {
-      setLoading(false);
+    setRefreshing(true);
+    const mine = ++listRequest.current;
+    if (canManageAll) {
+      api.listUsers().then((uRes) => {
+        if (!uRes.error && uRes.users) setAgentRoster(uRes.users.filter((u: User) => u.Role === 'agent' && u.Active));
+      });
     }
+    const res = await api.listReminders(showResolved);
+    if (mine !== listRequest.current) return; // a newer request took over
+    if (res.error) onToast(res.message || 'Could not load reminders', 'error');
+    else setReminders(res.reminders || []);
+    setLoading(false);
+    setRefreshing(false);
   };
 
   useEffect(() => {
+    const last = lastOf(showResolved);
+    setReminders(last && !last.error ? last.reminders || [] : []);
+    setLoading(!last);
     loadData();
   }, [showResolved, user]);
 
@@ -323,10 +330,9 @@ export const RemindersView: React.FC<RemindersViewProps> = ({ user, onToast }) =
         </div>
 
         {/* Reminders List */}
+        {refreshing && !loading && <UpdatingBar />}
         {loading ? (
-          <div style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
-            Loading reminders…
-          </div>
+          <PlaceholderRows label="Loading reminders" />
         ) : filteredReminders.length === 0 ? (
           <div
             className="card"

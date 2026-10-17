@@ -1,4 +1,6 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { peek } from '../services/cache';
+import type { ApiResponse } from '../services/api';
 import { User } from '../types';
 import { isTeamRole } from '../utils/roles';
 import { api } from '../services/api';
@@ -123,6 +125,8 @@ export const PerformanceView: React.FC<Props> = ({ user, onToast }) => {
   const [metric, setMetric] = useState<'amount' | 'count'>('amount');
   const [asTable, setAsTable] = useState(false);
   const [failed, setFailed] = useState('');
+  const [refreshing, setRefreshing] = useState(true);
+  const request = useRef(0); // only the newest answer may draw
 
   useEffect(() => {
     if (!isTeam) return;
@@ -131,9 +135,17 @@ export const PerformanceView: React.FC<Props> = ({ user, onToast }) => {
     });
   }, [isTeam]);
 
+  // The last copy for this month and person draws at once (if this tab has
+  // one); never another month's figures while the chosen one loads.
   useEffect(() => {
     setFailed('');
+    const last = peek<ApiResponse>('perf:' + month + ':' + agentEmail);
+    setPerf(last && !last.error ? last.performance : null);
+    setRefreshing(true);
+    const mine = ++request.current;
     api.performance(month, agentEmail).then((res) => {
+      if (mine !== request.current) return;
+      setRefreshing(false);
       if (res.error) {
         setFailed(res.message || 'Could not load performance.');
         onToast(res.message || 'Could not load performance.', 'error');
@@ -178,7 +190,10 @@ export const PerformanceView: React.FC<Props> = ({ user, onToast }) => {
       <div className="mp-header">
         <div className="mp-title">
           <h1>Performance</h1>
-          <p className="subtitle">{scopeName ? `${scopeName} · ` : ''}month by month, with comparisons</p>
+          <p className="subtitle">
+            {scopeName ? `${scopeName} · ` : ''}month by month, with comparisons
+            {refreshing && perf && <span className="ph-inline" role="status"> · Updating…</span>}
+          </p>
         </div>
         <div className="mp-actions">
           <label htmlFor="pf-month" className="sr-only">Month</label>
@@ -196,7 +211,21 @@ export const PerformanceView: React.FC<Props> = ({ user, onToast }) => {
       </div>
       <main>
         {!perf ? (
-          <div className="mp-empty">{failed || 'Loading…'}</div>
+          failed ? (
+            <div className="mp-empty">{failed}</div>
+          ) : (
+            <div className="dw-grid" role="status" aria-label="Loading performance">
+              {[0, 1, 2, 3].map((i) => (
+                <article key={i} className="dw-card" style={{ gridColumn: 'span 3' }}>
+                  <div className="ph-card" aria-hidden="true">
+                    <span className="ph-line" style={{ width: '50%' }} />
+                    <span className="ph-line" style={{ width: '70%', height: 22 }} />
+                    <span className="ph-line" style={{ width: '85%' }} />
+                  </div>
+                </article>
+              ))}
+            </div>
+          )
         ) : (
           <>
             <div className="dw-grid" style={{ marginBottom: '16px' }}>
