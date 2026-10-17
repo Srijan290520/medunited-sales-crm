@@ -3234,24 +3234,7 @@ input:checked + .slider::before { transform: translateX(18px); }
 .ph-card { display: flex; flex-direction: column; gap: 10px; padding: 4px 0; }
 .ph-inline { color: #6b7280; font-size: 0.85em; }
 
-/* ===== Patients list: compact one-line rows and pages ===== */
-/* Fixed columns: name + phone | services | follow-up | agent. Long text is
-   trimmed (full text on hover), so a row stays one line; it stacks only
-   when the list itself is narrow (container query). */
-.pt-list { container-type: inline-size; }
-.pt-list .mp-row-main { display: grid; grid-template-columns: minmax(0, 2.2fr) minmax(0, 1.6fr) minmax(0, 1.1fr) minmax(0, 0.9fr); align-items: center; gap: 12px; min-height: 0; padding: 7px 14px 7px 0; }
-.pt-list .mp-who { min-width: 0; flex-direction: row; align-items: baseline; gap: 10px; }
-.pt-list .mp-who strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.92rem; flex: 0 1 auto; }
-.pt-list .mp-who small { flex: 1 1 auto; min-width: 0; }
-.pt-list .pt-mods { order: 0; min-width: 0; flex-wrap: nowrap; overflow: hidden; }
-.pt-list .pt-mods .mp-chip-static { font-size: 0.75rem; padding: 2px 8px; }
-.pt-list .mp-due { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.85rem; text-align: left; }
-.pt-list .mp-agent { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; font-size: 0.85rem; }
-@container (max-width: 520px) {
-  .pt-list .mp-row-main { grid-template-columns: minmax(0, 1fr) auto; row-gap: 4px; }
-  .pt-list .mp-who { grid-column: 1 / -1; }
-  .pt-list .pt-mods { grid-column: 1 / -1; }
-}
+/* ===== Page bar under list tables (pg-*) ===== */
 .pg-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding: 10px 16px; border-top: 1px solid #eef0f3; background: #fafbfd; font-size: 0.85rem; color: #4b5563; }
 .pg-range { flex: 1 1 auto; }
 .pg-nav { display: inline-flex; align-items: center; gap: 10px; }
@@ -3262,4 +3245,46 @@ input:checked + .slider::before { transform: translateX(18px); }
 .pg-size select { height: 32px; border: 1px solid #d0d5dd; border-radius: 8px; padding: 0 6px; background: #fff; font: inherit; }
 @media (max-width: 640px) {
   .pg-range { flex-basis: 100%; }
+}
+
+/* ===== List tables (dt-*): module pages and Patients ===== */
+/* Columns marked dt-p2 / dt-p3 give way first when the list is narrow
+   (the record panel is open, or a small screen); container queries. */
+.dt-wrap { container-type: inline-size; width: 100%; overflow-x: auto; }
+.dt { width: 100%; border-collapse: collapse; font-size: 0.875rem; table-layout: auto; }
+.dt thead th { position: sticky; top: 0; z-index: 1; background: #f8f9fc; color: #4b5563; font-size: 0.75rem; font-weight: 600; letter-spacing: 0.03em; text-transform: uppercase; text-align: left; padding: 8px 10px; border-bottom: 1px solid #e5e7eb; white-space: nowrap; }
+.dt td { padding: 7px 10px; border-bottom: 1px solid #eef0f3; vertical-align: middle; white-space: nowrap; color: #1f2937; }
+.dt tbody tr { cursor: pointer; background: #fff; }
+.dt tbody tr:hover { background: #f7f8fc; }
+.dt tbody tr.selected, .dt tbody tr.selected:hover { background: #eef0fb; }
+.dt tbody tr:last-child td { border-bottom: 0; }
+.dt .dt-right { text-align: right; }
+.dt .dt-check { width: 36px; padding-right: 0; }
+.dt .dt-check input { margin: 0; cursor: pointer; }
+.dt-name { border: 0; background: none; padding: 0; font: inherit; font-weight: 600; color: #111827; cursor: pointer; text-align: left; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
+.dt-name:hover { background: none; color: #3730a3; transform: none; }
+.dt-name:focus-visible { outline: 2px solid #3730a3; outline-offset: 2px; border-radius: 4px; }
+.dt-sub { display: block; font-size: 0.75rem; color: #6b7280; }
+.dt-muted { color: #6b7280; }
+.dt-trunc { max-width: 240px; overflow: hidden; text-overflow: ellipsis; }
+.dt-sort { border: 0; background: none; padding: 0; font: inherit; color: inherit; text-transform: inherit; letter-spacing: inherit; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; }
+.dt-sort:hover { background: none; color: #111827; transform: none; }
+.dt-sort.active { color: #111827; }
+.dt-arrow { font-size: 0.65rem; opacity: 0.55; }
+.dt-sort.active .dt-arrow { opacity: 1; }
+.dt .mp-pill { font-size: 0.75rem; padding: 2px 9px; }
+.dt .mp-chip-static { font-size: 0.75rem; padding: 2px 8px; }
+.dt-chips { display: flex; gap: 4px; }
+.dt .mp-due { font-size: 0.85rem; }
+@container (max-width: 980px) { .dt .dt-p3 { display: none; } }
+@container (max-width: 760px) { .dt .dt-p2 { display: none; } }
+@container (max-width: 560px) {
+  .dt thead { display: none; }
+  .dt, .dt tbody, .dt tr { display: block; width: 100%; }
+  .dt tbody tr { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; padding: 8px 12px; border-bottom: 1px solid #eef0f3; }
+  .dt td { display: block; padding: 0; border: 0; }
+  .dt td.dt-main { flex: 1 1 calc(100% - 40px); }
+  .dt .dt-check { width: auto; }
+  /* Cards on a phone: the number and the agent matter more than on a narrow desktop list. */
+  .dt td.dt-p2 { display: block; color: #4b5563; font-size: 0.8rem; }
 }

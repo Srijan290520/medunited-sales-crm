@@ -2,6 +2,8 @@ import React, { useState, useEffect, useMemo, useRef, Suspense, lazy } from 'rea
 import { peek } from '../services/cache';
 import type { ApiResponse } from '../services/api';
 import { PlaceholderRows, UpdatingBar } from './Placeholders';
+import { Pager, PAGE_SIZES } from './Pager';
+import { Th, useTableSort } from './DataTable';
 import {
   User,
   Sale,
@@ -62,6 +64,24 @@ const ReassignFileModal = lazy(() => import('./ReassignFileModal').then((m) => (
 
 const TAB_LABELS = { due: 'Due today', pending: 'Open', completed: 'Completed', cancelled: 'Lost', all: 'All' } as const;
 const STATUS_LABELS: Record<string, string> = { Pending: 'Open', Completed: 'Completed', Cancelled: 'Lost' };
+const TEMP_ORDER: Record<string, number> = { Hot: 0, Warm: 1, Cold: 2 };
+
+// One line for the table's Details column: what this record is about.
+function detailsOf(s: Sale): string {
+  if (s.Services && s.Services.length) return s.Services.map((l) => l.service.replace(/^HOMEKARE\s*-?\s*/i, '')).join(', ');
+  if (s.Tests && s.Tests.length) return s.Tests.map((l) => l.name).join(', ');
+  if (s.Members && s.Members.length) return `${s.PriceType || 'Full Price'} · ${s.Members.length} member${s.Members.length === 1 ? '' : 's'}`;
+  try {
+    const lines = JSON.parse(s.Products || '[]');
+    if (Array.isArray(lines) && lines.length) {
+      const names = lines.map((p: { name?: string }) => String(p.name || '').trim()).filter(Boolean);
+      if (names.length) return names.join(', ');
+    }
+  } catch {
+    /* not a medicine list */
+  }
+  return s.Detail || '';
+}
 
 const EMPTY_LAB: LabTracking = { homeCollection: false, collectionDate: '', appointmentDate: '', reportDeliveredOn: '', reportDeliveredVia: '' };
 
@@ -1044,6 +1064,43 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, moduleInfo, user, on
     all: sales.length,
   };
 
+  // The table: sortable columns and pages. Changing the tab, a filter or the
+  // search starts at page 1; the rows-per-page choice is remembered here.
+  const { sorted: sortedSales, sort, toggle: toggleSort } = useTableSort<Sale>(filteredSales, {
+    name: (x) => x.CustomerName.toLowerCase(),
+    phone: (x) => x.Contact.replace(/\D/g, ''),
+    details: (x) => detailsOf(x).toLowerCase(),
+    temp: (x) => TEMP_ORDER[x.Temperature || 'Warm'] ?? 1,
+    status: (x) => STATUS_LABELS[x.Status] || x.Status,
+    due: (x) => (x.Status === 'Pending' ? x.NextFollowUp || '' : x.ValidUntil || x.Date || ''),
+    amount: (x) => Number(x.Amount) || 0,
+    agent: (x) => x.AgentName.toLowerCase(),
+    created: (x) => x.CreatedAt || x.Date || '',
+  });
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState<number>(() => {
+    try {
+      const n = Number(localStorage.getItem('medunited_records_page_size'));
+      return PAGE_SIZES.includes(n) ? n : PAGE_SIZES[0];
+    } catch {
+      return PAGE_SIZES[0];
+    }
+  });
+  const changePageSize = (n: number) => {
+    setPageSize(n);
+    setPage(1);
+    try {
+      localStorage.setItem('medunited_records_page_size', String(n));
+    } catch {
+      /* storage blocked: the choice lasts for this visit */
+    }
+  };
+  useEffect(() => setPage(1), [type, activeTab, agentFilter, tempFilter, channelFilter, paymentFilter, priceTypeFilter, search]);
+  const pageCount = Math.max(1, Math.ceil(sortedSales.length / pageSize));
+  const currentPage = Math.min(page, pageCount);
+  const pageSales = sortedSales.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+  const listRef = useRef<HTMLElement>(null);
+
   const agentOptions = Array.from(
     new Set(sales.map((s) => JSON.stringify({ email: s.AgentEmail, name: s.AgentName })))
   ).map((str) => JSON.parse(str));
@@ -1471,12 +1528,12 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, moduleInfo, user, on
         {/* List (default view) with the record's details beside it */}
         {viewMode === 'table' && (
           <div className="mp-body">
-            <section className="mp-list" aria-label={`${moduleLabel} records`}>
+            <section className="mp-list" aria-label={`${moduleLabel} records`} ref={listRef}>
               {canManageAll && filteredSales.length > 0 && (
                 <div className="mp-list-head">
                   <input
                     type="checkbox"
-                    aria-label="Select all shown records"
+                    aria-label={`Select all ${filteredSales.length} records in this view`}
                     checked={filteredSales.every((s) => selectedIds.includes(s.ID))}
                     onChange={(e) => setSelectedIds(e.target.checked ? filteredSales.map((s) => s.ID) : [])}
                   />
@@ -1497,33 +1554,73 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, moduleInfo, user, on
               ) : filteredSales.length === 0 ? (
                 <div className="mp-empty">Nothing matches. Try another tab, temperature or filter, or clear the search.</div>
               ) : (
-                filteredSales.map((s) => (
-                  <div key={s.ID} className={`mp-row${s.ID === selectedId ? ' selected' : ''}`}>
-                    {canManageAll && (
-                      <input
-                        type="checkbox"
-                        aria-label={`Select ${s.CustomerName}`}
-                        checked={selectedIds.includes(s.ID)}
-                        onChange={(e) => setSelectedIds((ids) => (e.target.checked ? [...ids, s.ID] : ids.filter((x) => x !== s.ID)))}
-                      />
-                    )}
-                    <button type="button" className="mp-row-main" onClick={() => setSelectedId(s.ID)} aria-current={s.ID === selectedId}>
-                      <span className="mp-who">
-                        <strong>{s.CustomerName}</strong>
-                        <small>
-                          {s.Contact || 'No phone'}
-                          {s.AlsoIn && s.AlsoIn.length ? ` · Also in: ${s.AlsoIn.join(', ')}` : ''}
-                          {s.DoNotCall ? ' · Do not call' : ''}
-                        </small>
-                      </span>
-                      <span className={`mp-pill temp-${(s.Temperature || 'Warm').toLowerCase()}`}>{s.Temperature || 'Warm'}</span>
-                      <span className={`mp-pill status-${s.Status.toLowerCase()}`}>{STATUS_LABELS[s.Status] || s.Status}</span>
-                      <span className={`mp-due ${s.Status === 'Pending' ? s.FollowUpStatus || '' : ''}`}>{dueText(s)}</span>
-                      <span className="mp-amount">{s.Amount ? formatMoney(s.Amount) : '—'}</span>
-                      {canManageAll && <span className="mp-agent">{s.AgentName}</span>}
-                    </button>
+                <>
+                  <div className="dt-wrap">
+                    <table className="dt">
+                      <thead>
+                        <tr>
+                          {canManageAll && <th scope="col" className="dt-check"><span className="sr-only">Select</span></th>}
+                          <Th label="Customer" sortKey="name" sort={sort} onSort={toggleSort} />
+                          <Th label="Phone" sortKey="phone" sort={sort} onSort={toggleSort} className="dt-p2" />
+                          <Th label="Details" sortKey="details" sort={sort} onSort={toggleSort} className="dt-p3" />
+                          <Th label="Temp." sortKey="temp" sort={sort} onSort={toggleSort} />
+                          <Th label="Status" sortKey="status" sort={sort} onSort={toggleSort} />
+                          <Th label="Follow-up" sortKey="due" sort={sort} onSort={toggleSort} />
+                          <Th label="Amount" sortKey="amount" sort={sort} onSort={toggleSort} align="right" />
+                          {canManageAll && <Th label="Agent" sortKey="agent" sort={sort} onSort={toggleSort} className="dt-p2" />}
+                          <Th label="Created" sortKey="created" sort={sort} onSort={toggleSort} className="dt-p3" />
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {pageSales.map((s) => {
+                          const details = detailsOf(s);
+                          return (
+                            <tr key={s.ID} className={s.ID === selectedId ? 'selected' : undefined} onClick={() => setSelectedId(s.ID)}>
+                              {canManageAll && (
+                                <td className="dt-check" onClick={(e) => e.stopPropagation()}>
+                                  <input
+                                    type="checkbox"
+                                    aria-label={`Select ${s.CustomerName}`}
+                                    checked={selectedIds.includes(s.ID)}
+                                    onChange={(e) => setSelectedIds((ids) => (e.target.checked ? [...ids, s.ID] : ids.filter((x) => x !== s.ID)))}
+                                  />
+                                </td>
+                              )}
+                              <td className="dt-main">
+                                <button type="button" className="dt-name" title={s.CustomerName} aria-current={s.ID === selectedId} onClick={(e) => { e.stopPropagation(); setSelectedId(s.ID); }}>
+                                  {s.CustomerName}
+                                </button>
+                                {(s.DoNotCall || (s.AlsoIn && s.AlsoIn.length > 0)) && (
+                                  <span className="dt-sub">
+                                    {s.DoNotCall ? 'Do not call' : ''}
+                                    {s.DoNotCall && s.AlsoIn && s.AlsoIn.length ? ' · ' : ''}
+                                    {s.AlsoIn && s.AlsoIn.length ? `Also in ${s.AlsoIn.join(', ')}` : ''}
+                                  </span>
+                                )}
+                              </td>
+                              <td className="dt-p2">{s.Contact || <span className="dt-muted">No phone</span>}</td>
+                              <td className="dt-p3"><div className="dt-trunc" title={details}>{details || <span className="dt-muted">—</span>}</div></td>
+                              <td><span className={`mp-pill temp-${(s.Temperature || 'Warm').toLowerCase()}`}>{s.Temperature || 'Warm'}</span></td>
+                              <td><span className={`mp-pill status-${s.Status.toLowerCase()}`}>{STATUS_LABELS[s.Status] || s.Status}</span></td>
+                              <td><span className={`mp-due ${s.Status === 'Pending' ? s.FollowUpStatus || '' : ''}`}>{dueText(s)}</span></td>
+                              <td className="dt-right">{s.Amount ? formatMoney(s.Amount) : <span className="dt-muted">—</span>}</td>
+                              {canManageAll && <td className="dt-p2">{s.AgentName}</td>}
+                              <td className="dt-p3 dt-muted">{formatDate((s.CreatedAt || s.Date || '').slice(0, 10))}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
                   </div>
-                ))
+                  <Pager
+                    page={currentPage}
+                    pageSize={pageSize}
+                    total={sortedSales.length}
+                    onPage={(n) => { setPage(n); listRef.current?.scrollIntoView({ block: 'start' }); }}
+                    onPageSize={changePageSize}
+                    label={`${moduleLabel} records`}
+                  />
+                </>
               )}
             </section>
 

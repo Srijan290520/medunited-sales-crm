@@ -3,6 +3,7 @@ import { peek } from '../services/cache';
 import type { ApiResponse } from '../services/api';
 import { PlaceholderRows, UpdatingBar } from './Placeholders';
 import { Pager, PAGE_SIZES } from './Pager';
+import { Th, useTableSort } from './DataTable';
 import {
   ActivityDirection,
   ActivityOutcome,
@@ -166,9 +167,19 @@ export const PatientsView: React.FC<Props> = ({ user, modules, onToast }) => {
     }
   };
   useEffect(() => setPage(1), [q, scope]);
-  const pages = Math.max(1, Math.ceil(shown.length / pageSize));
+  const ownerOf = (p: PatientSummary) => (p.Mine ? 'You' : p.Conflict ? 'Owner to decide' : p.OwnerName);
+  const { sorted, sort, toggle: toggleSort } = useTableSort<PatientSummary>(shown, {
+    name: (p) => p.Name.toLowerCase(),
+    phone: (p) => digitsOf(p.Contact),
+    area: (p) => p.Area.toLowerCase(),
+    services: (p) => p.Modules.map((m) => m.label).join(', '),
+    due: (p) => p.NextFollowUp || '',
+    agent: (p) => ownerOf(p).toLowerCase(),
+    last: (p) => p.LastContact || '',
+  });
+  const pages = Math.max(1, Math.ceil(sorted.length / pageSize));
   const currentPage = Math.min(page, pages); // the list may have shrunk after a refresh
-  const pageRows = shown.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+  const pageRows = sorted.slice((currentPage - 1) * pageSize, currentPage * pageSize);
 
   const dueCount = patients.filter((p) => (isTeam || p.Mine) && (p.FollowUpStatus === 'overdue' || p.FollowUpStatus === 'today')).length;
   const selected = detail?.patient || patients.find((p) => p.ID === selectedId) || null;
@@ -252,34 +263,58 @@ export const PatientsView: React.FC<Props> = ({ user, modules, onToast }) => {
             ) : shown.length === 0 ? (
               <div className="mp-empty">{q ? 'No patients match.' : scope === 'due' ? 'No follow-ups due. ' : 'No patients yet.'}</div>
             ) : (
-              pageRows.map((p) => (
-                <div key={p.ID} className={`mp-row ${p.ID === selectedId ? 'selected' : ''}`}>
-                  <button type="button" className="mp-row-main" onClick={() => setSelectedId(p.ID)}>
-                    <span className="mp-who">
-                      <strong title={p.Name}>{p.Name}</strong>
-                      <small title={p.Contact + (p.Area ? ` · ${p.Area}` : '')}>
-                        {p.Contact}
-                        {p.Area ? ` · ${p.Area}` : ''}
-                        {p.HouseholdSize > 1 ? ` · ${p.HouseholdSize} on this number` : ''}
-                      </small>
-                    </span>
-                    <span className="pt-mods">
-                      {p.Modules.length === 0 ? (
-                        <span className="mp-muted">No services yet</span>
-                      ) : (
-                        p.Modules.map((m) => (
-                          <span key={m.type} className={`mp-chip-static ${m.open ? 'pt-open' : ''}`} title={`${m.open} open, ${m.completed} completed, ${m.lost} lost`}>
-                            {m.label}
-                            {m.open ? ' · open' : m.completed ? ' ✓' : ''}
-                          </span>
-                        ))
-                      )}
-                    </span>
-                    <span className={`mp-due ${p.FollowUpStatus}`} title={dueText(p)}>{dueText(p)}</span>
-                    <span className="mp-agent" title={p.Mine ? 'You' : p.Conflict ? 'Owner to decide' : p.OwnerName}>{p.Mine ? 'You' : p.Conflict ? 'Owner to decide' : p.OwnerName}</span>
-                  </button>
-                </div>
-              ))
+              <div className="dt-wrap">
+                <table className="dt">
+                  <thead>
+                    <tr>
+                      <Th label="Name" sortKey="name" sort={sort} onSort={toggleSort} />
+                      <Th label="Phone" sortKey="phone" sort={sort} onSort={toggleSort} className="dt-p2" />
+                      <Th label="Area" sortKey="area" sort={sort} onSort={toggleSort} className="dt-p3" />
+                      <Th label="Services" sortKey="services" sort={sort} onSort={toggleSort} />
+                      <Th label="Follow-up" sortKey="due" sort={sort} onSort={toggleSort} />
+                      <Th label="Agent" sortKey="agent" sort={sort} onSort={toggleSort} className="dt-p2" />
+                      <Th label="Last contact" sortKey="last" sort={sort} onSort={toggleSort} className="dt-p3" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pageRows.map((p) => (
+                      <tr key={p.ID} className={p.ID === selectedId ? 'selected' : undefined} onClick={() => setSelectedId(p.ID)}>
+                        <td className="dt-main">
+                          <button type="button" className="dt-name" title={p.Name} aria-current={p.ID === selectedId} onClick={(e) => { e.stopPropagation(); setSelectedId(p.ID); }}>
+                            {p.Name}
+                          </button>
+                          {(p.HouseholdSize > 1 || p.DoNotCall) && (
+                            <span className="dt-sub">
+                              {p.DoNotCall ? 'Do not call' : ''}
+                              {p.DoNotCall && p.HouseholdSize > 1 ? ' · ' : ''}
+                              {p.HouseholdSize > 1 ? `${p.HouseholdSize} on this number` : ''}
+                            </span>
+                          )}
+                        </td>
+                        <td className="dt-p2">{p.Contact}</td>
+                        <td className="dt-p3"><div className="dt-trunc" title={[p.Area, p.Pincode].filter(Boolean).join(' · ')}>{p.Area || <span className="dt-muted">—</span>}</div></td>
+                        <td>
+                          {p.Modules.length === 0 ? (
+                            <span className="dt-muted">No services yet</span>
+                          ) : (
+                            <span className="dt-chips">
+                              {p.Modules.map((m) => (
+                                <span key={m.type} className={`mp-chip-static ${m.open ? 'pt-open' : ''}`} title={`${m.open} open, ${m.completed} completed, ${m.lost} lost`}>
+                                  {m.label}
+                                  {m.open ? ' · open' : m.completed ? ' ✓' : ''}
+                                </span>
+                              ))}
+                            </span>
+                          )}
+                        </td>
+                        <td>{dueText(p) ? <span className={`mp-due ${p.FollowUpStatus}`}>{dueText(p)}</span> : <span className="dt-muted">—</span>}</td>
+                        <td className="dt-p2">{ownerOf(p)}</td>
+                        <td className="dt-p3 dt-muted">{p.LastContact ? formatDate(p.LastContact.slice(0, 10)) : '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             )}
             {!loading && shown.length > 0 && (
               <Pager page={currentPage} pageSize={pageSize} total={shown.length} onPage={(n) => { setPage(n); listRef.current?.scrollIntoView({ block: 'start' }); }} onPageSize={changePageSize} label="patients" />
