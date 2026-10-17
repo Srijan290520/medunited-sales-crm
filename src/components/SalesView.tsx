@@ -127,6 +127,8 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, moduleInfo, user, on
   const [editingSale, setEditingSale] = useState<Sale | null>(null);
   const [activities, setActivities] = useState<SaleActivity[]>([]);
   const [auditHistory, setAuditHistory] = useState<AuditEntry[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const historyFor = useRef(''); // which record the history being loaded belongs to
   const [historyTab, setHistoryTab] = useState<'audits' | 'activities' | 'all'>('audits');
   const [actStatusIntent, setActStatusIntent] = useState<'reopen' | 'complete' | 'keep'>('reopen');
   const [formError, setFormError] = useState<string | null>(null);
@@ -504,17 +506,21 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, moduleInfo, user, on
     setActStatusIntent(sale.Status === 'Cancelled' ? 'reopen' : 'keep');
     setHistoryTab('audits');
 
-    // Fetch activities and audit history
-    const detailRes = await api.getSale(type, sale.ID);
-    if (!detailRes.error) {
-      if (detailRes.activities) setActivities(detailRes.activities);
-      if (detailRes.auditHistory) setAuditHistory(detailRes.auditHistory);
-    } else {
-      setActivities([]);
-      setAuditHistory([]);
-    }
-
+    // The form opens at once: every field it needs is already in the list.
+    // The call history and change log load behind it (one Apps Script trip).
+    setActivities([]);
+    setAuditHistory([]);
+    setHistoryLoading(true);
+    historyFor.current = sale.ID;
     setModalOpen(true);
+    api.getSale(type, sale.ID).then((detailRes) => {
+      if (historyFor.current !== sale.ID) return; // closed, or another record opened since
+      if (!detailRes.error) {
+        if (detailRes.activities) setActivities(detailRes.activities);
+        if (detailRes.auditHistory) setAuditHistory(detailRes.auditHistory);
+      }
+      setHistoryLoading(false);
+    });
   };
 
   const openEditMedicationsModal = (sale: Sale) => {
@@ -1644,7 +1650,7 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, moduleInfo, user, on
                       className={`edit-tab-btn ${editMainTab === 'history' ? 'active' : ''}`}
                       onClick={() => setEditMainTab('history')}
                     >
-                      <span>🕒</span> History &amp; Audit Trail ({auditHistory.length + activities.length})
+                      <span>🕒</span> History &amp; Audit Trail ({historyLoading ? '…' : auditHistory.length + activities.length})
                     </button>
                   </div>
                 </div>
@@ -3350,7 +3356,7 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, moduleInfo, user, on
                       <div>
                         {auditHistory.length === 0 ? (
                           <div className="muted small-text" style={{ padding: '20px', textAlign: 'center', background: '#fff', borderRadius: '8px' }}>
-                            No modification history recorded yet.
+                            {historyLoading ? 'Loading history…' : 'No modification history recorded yet.'}
                           </div>
                         ) : (
                           <div className="audit-list">
@@ -3406,7 +3412,7 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, moduleInfo, user, on
                       <div>
                         {activities.length === 0 ? (
                           <div className="muted small-text" style={{ padding: '20px', textAlign: 'center', background: '#fff', borderRadius: '8px' }}>
-                            No contact interaction logged yet.
+                            {historyLoading ? 'Loading calls…' : 'No contact interaction logged yet.'}
                           </div>
                         ) : (
                           <div style={{ background: '#fff', padding: '16px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
@@ -3462,7 +3468,7 @@ export const SalesView: React.FC<SalesViewProps> = ({ type, moduleInfo, user, on
                           if (combined.length === 0) {
                             return (
                               <div className="muted small-text" style={{ padding: '20px', textAlign: 'center', background: '#fff', borderRadius: '8px' }}>
-                                No history recorded yet.
+                                {historyLoading ? 'Loading history…' : 'No history recorded yet.'}
                               </div>
                             );
                           }
