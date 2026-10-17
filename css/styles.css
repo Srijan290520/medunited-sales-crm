@@ -3233,3 +3233,33 @@ input:checked + .slider::before { transform: translateX(18px); }
 
 .ph-card { display: flex; flex-direction: column; gap: 10px; padding: 4px 0; }
 .ph-inline { color: #6b7280; font-size: 0.85em; }
+
+/* ===== Patients list: compact one-line rows and pages ===== */
+/* Fixed columns: name + phone | services | follow-up | agent. Long text is
+   trimmed (full text on hover), so a row stays one line; it stacks only
+   when the list itself is narrow (container query). */
+.pt-list { container-type: inline-size; }
+.pt-list .mp-row-main { display: grid; grid-template-columns: minmax(0, 2.2fr) minmax(0, 1.6fr) minmax(0, 1.1fr) minmax(0, 0.9fr); align-items: center; gap: 12px; min-height: 0; padding: 7px 14px 7px 0; }
+.pt-list .mp-who { min-width: 0; flex-direction: row; align-items: baseline; gap: 10px; }
+.pt-list .mp-who strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.92rem; flex: 0 1 auto; }
+.pt-list .mp-who small { flex: 1 1 auto; min-width: 0; }
+.pt-list .pt-mods { order: 0; min-width: 0; flex-wrap: nowrap; overflow: hidden; }
+.pt-list .pt-mods .mp-chip-static { font-size: 0.75rem; padding: 2px 8px; }
+.pt-list .mp-due { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.85rem; text-align: left; }
+.pt-list .mp-agent { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; font-size: 0.85rem; }
+@container (max-width: 520px) {
+  .pt-list .mp-row-main { grid-template-columns: minmax(0, 1fr) auto; row-gap: 4px; }
+  .pt-list .mp-who { grid-column: 1 / -1; }
+  .pt-list .pt-mods { grid-column: 1 / -1; }
+}
+.pg-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding: 10px 16px; border-top: 1px solid #eef0f3; background: #fafbfd; font-size: 0.85rem; color: #4b5563; }
+.pg-range { flex: 1 1 auto; }
+.pg-nav { display: inline-flex; align-items: center; gap: 10px; }
+.pg-btn { height: 32px; padding: 0 12px; border: 1px solid #d0d5dd; border-radius: 8px; background: #fff; color: #374151; font: inherit; font-weight: 600; cursor: pointer; }
+.pg-btn:hover:not(:disabled) { background: #f7f8fc; color: #374151; transform: none; }
+.pg-btn:disabled { opacity: 0.45; cursor: default; }
+.pg-size { display: inline-flex; align-items: center; gap: 6px; }
+.pg-size select { height: 32px; border: 1px solid #d0d5dd; border-radius: 8px; padding: 0 6px; background: #fff; font: inherit; }
+@media (max-width: 640px) {
+  .pg-range { flex-basis: 100%; }
+}

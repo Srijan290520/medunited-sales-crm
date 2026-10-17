@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { peek } from '../services/cache';
 import type { ApiResponse } from '../services/api';
 import { PlaceholderRows, UpdatingBar } from './Placeholders';
+import { Pager, PAGE_SIZES } from './Pager';
 import {
   ActivityDirection,
   ActivityOutcome,
@@ -81,6 +82,7 @@ export const PatientsView: React.FC<Props> = ({ user, modules, onToast }) => {
   const [logOpen, setLogOpen] = useState(false);
   const [service, setService] = useState<{ type: SaleType; record?: PatientRecord } | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+  const listRef = useRef<HTMLElement>(null);
 
   const listRequest = useRef(0); // only the newest answer may draw the list
   const loadList = async () => {
@@ -143,6 +145,31 @@ export const PatientsView: React.FC<Props> = ({ user, modules, onToast }) => {
     return patients;
   }, [patients, q, qDigits, isPhoneSearch, scope, isTeam]);
 
+  // Pages instead of one long list. The rows-per-page choice is remembered
+  // in this browser; going to another tab or search starts at page 1.
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState<number>(() => {
+    try {
+      const n = Number(localStorage.getItem('medunited_patients_page_size'));
+      return PAGE_SIZES.includes(n) ? n : PAGE_SIZES[0];
+    } catch {
+      return PAGE_SIZES[0];
+    }
+  });
+  const changePageSize = (n: number) => {
+    setPageSize(n);
+    setPage(1);
+    try {
+      localStorage.setItem('medunited_patients_page_size', String(n));
+    } catch {
+      /* storage blocked: the choice lasts for this visit */
+    }
+  };
+  useEffect(() => setPage(1), [q, scope]);
+  const pages = Math.max(1, Math.ceil(shown.length / pageSize));
+  const currentPage = Math.min(page, pages); // the list may have shrunk after a refresh
+  const pageRows = shown.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+
   const dueCount = patients.filter((p) => (isTeam || p.Mine) && (p.FollowUpStatus === 'overdue' || p.FollowUpStatus === 'today')).length;
   const selected = detail?.patient || patients.find((p) => p.ID === selectedId) || null;
   const noMatchForPhone = isPhoneSearch && qDigits.length >= 10 && shown.length === 0;
@@ -201,7 +228,7 @@ export const PatientsView: React.FC<Props> = ({ user, modules, onToast }) => {
         )}
 
         <div className="mp-body">
-          <section className="mp-list pt-list" aria-label="Patients">
+          <section className="mp-list pt-list" aria-label="Patients" ref={listRef}>
             {q && (
               <div className="mp-list-head">
                 <span className="mp-muted">
@@ -225,12 +252,12 @@ export const PatientsView: React.FC<Props> = ({ user, modules, onToast }) => {
             ) : shown.length === 0 ? (
               <div className="mp-empty">{q ? 'No patients match.' : scope === 'due' ? 'No follow-ups due. ' : 'No patients yet.'}</div>
             ) : (
-              shown.slice(0, 200).map((p) => (
+              pageRows.map((p) => (
                 <div key={p.ID} className={`mp-row ${p.ID === selectedId ? 'selected' : ''}`}>
                   <button type="button" className="mp-row-main" onClick={() => setSelectedId(p.ID)}>
                     <span className="mp-who">
-                      <strong>{p.Name}</strong>
-                      <small>
+                      <strong title={p.Name}>{p.Name}</strong>
+                      <small title={p.Contact + (p.Area ? ` · ${p.Area}` : '')}>
                         {p.Contact}
                         {p.Area ? ` · ${p.Area}` : ''}
                         {p.HouseholdSize > 1 ? ` · ${p.HouseholdSize} on this number` : ''}
@@ -248,11 +275,14 @@ export const PatientsView: React.FC<Props> = ({ user, modules, onToast }) => {
                         ))
                       )}
                     </span>
-                    <span className={`mp-due ${p.FollowUpStatus}`}>{dueText(p)}</span>
-                    <span className="mp-agent">{p.Mine ? 'You' : p.Conflict ? 'Owner to decide' : p.OwnerName}</span>
+                    <span className={`mp-due ${p.FollowUpStatus}`} title={dueText(p)}>{dueText(p)}</span>
+                    <span className="mp-agent" title={p.Mine ? 'You' : p.Conflict ? 'Owner to decide' : p.OwnerName}>{p.Mine ? 'You' : p.Conflict ? 'Owner to decide' : p.OwnerName}</span>
                   </button>
                 </div>
               ))
+            )}
+            {!loading && shown.length > 0 && (
+              <Pager page={currentPage} pageSize={pageSize} total={shown.length} onPage={(n) => { setPage(n); listRef.current?.scrollIntoView({ block: 'start' }); }} onPageSize={changePageSize} label="patients" />
             )}
           </section>
 
