@@ -36,6 +36,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ user, onToast, secti
   const [channelsText, setChannelsText] = useState<string>('');
   const [heardFromText, setHeardFromText] = useState<string>('');
   const [lostReasonsText, setLostReasonsText] = useState<string>('');
+  const [relationsText, setRelationsText] = useState<string>('');
   const [savingLists, setSavingLists] = useState<boolean>(false);
 
   // Monthly revenue target (Manager/Admin)
@@ -93,6 +94,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ user, onToast, secti
           setChannelsText(lRes.lists.channels.join('\n'));
           setHeardFromText(lRes.lists.heardFrom.join('\n'));
           setLostReasonsText(lRes.lists.lostReasons.join('\n'));
+          setRelationsText((lRes.lists.relations || []).join('\n'));
         }
       }
     } finally {
@@ -179,15 +181,16 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ user, onToast, secti
     const channels = channelsText.split('\n').map((s) => s.trim()).filter(Boolean);
     const heardFrom = heardFromText.split('\n').map((s) => s.trim()).filter(Boolean);
     const lostReasons = lostReasonsText.split('\n').map((s) => s.trim()).filter(Boolean);
+    const relations = relationsText.split('\n').map((s) => s.trim()).filter(Boolean);
 
-    if (channels.length === 0 || lostReasons.length === 0) {
-      onToast('Channels and Lost Reasons must have at least one option each', 'error');
+    if (channels.length === 0 || lostReasons.length === 0 || relations.length === 0) {
+      onToast('Channels, Lost Reasons and Relations must have at least one option each', 'error');
       return;
     }
 
     setSavingLists(true);
     try {
-      const res = await api.updateOptionLists({ channels, heardFrom, lostReasons });
+      const res = await api.updateOptionLists({ channels, heardFrom, lostReasons, relations });
       if (res.error) {
         onToast(res.message || 'Could not update options', 'error');
       } else {
@@ -437,6 +440,17 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ user, onToast, secti
                   onChange={(e) => setLostReasonsText(e.target.value)}
                   placeholder="One lost reason per line…"
                 />
+              </div>
+
+              <div>
+                <label style={{ fontWeight: 600 }}>Family relations</label>
+                <textarea
+                  rows={8}
+                  value={relationsText}
+                  onChange={(e) => setRelationsText(e.target.value)}
+                  placeholder="One relation per line…"
+                />
+                <small className="mp-muted">Used to link patients on the Patients page. Removing one doesn't change links already made.</small>
               </div>
             </div>
 

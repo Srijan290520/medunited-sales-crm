@@ -225,6 +225,10 @@ export const api = {
   createPatient: (data: Record<string, unknown>) => call('createPatient', { data }),
   updatePatient: (id: string, data: Record<string, unknown>) => call('updatePatient', { id, data }),
   logPatientActivity: (id: string, data: Record<string, unknown>) => call('logPatientActivity', { id, data }),
+  // Family links: "related is patient's relation", and the other way round.
+  addPatientRelation: (data: { patientId: string; relatedId: string; relation: string; reverseRelation: string }) =>
+    call('addPatientRelation', data),
+  removePatientRelation: (id: string, patientId: string, reason = '') => call('removePatientRelation', { id, patientId, reason }),
 
   // ----- Patients (owners, migration, conflicts) -----
   reassignPatient: (data: { contact?: string; patientId?: string; agentEmail: string; scope?: 'household' | 'person'; reason?: string }) =>

@@ -15,7 +15,11 @@ var DEFAULT_LISTS = {
   channels: ['Phone call', 'Walk-in', 'WhatsApp', 'Website form', 'Health camp', 'OPD/IPD referral', 'Other'],
   heardFrom: ['Google search', 'Facebook / Instagram', 'Newspaper', 'Hoarding / banner', 'Existing patient',
     'Doctor referral', 'Health camp', 'Friend or family', 'Other'],
-  lostReasons: ['Price too high', 'Already has a provider', 'Not reachable', 'Wrong number', 'Not interested', 'Other']
+  lostReasons: ['Price too high', 'Already has a provider', 'Not reachable', 'Wrong number', 'Not interested', 'Other'],
+  // Family links between patients (Relations.gs). "Under their care" is the
+  // other side of "Caregiver / attendant".
+  relations: ['Father', 'Mother', 'Husband', 'Wife', 'Son', 'Daughter', 'Brother', 'Sister', 'Grandfather', 'Grandmother',
+    'Grandson', 'Granddaughter', 'Other relative', 'Caregiver / attendant', 'Under their care']
 };
 
 function getListsSheet() { return getOrCreateSheet('Lists', ['Key', 'Values']); }
@@ -70,8 +74,8 @@ function svc_updateLists(session, data) {
   });
   var after = getLists();
   audit(session, 'update_lists', 'Lists', '', auditDiff(
-    { channels: before.channels.join(', '), heardFrom: before.heardFrom.join(', '), lostReasons: before.lostReasons.join(', ') },
-    { channels: after.channels.join(', '), heardFrom: after.heardFrom.join(', '), lostReasons: after.lostReasons.join(', ') }));
+    { channels: before.channels.join(', '), heardFrom: before.heardFrom.join(', '), lostReasons: before.lostReasons.join(', '), relations: before.relations.join(', ') },
+    { channels: after.channels.join(', '), heardFrom: after.heardFrom.join(', '), lostReasons: after.lostReasons.join(', '), relations: after.relations.join(', ') }));
   return svc_getLists(session);
 }
 

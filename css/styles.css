@@ -3288,3 +3288,19 @@ input:checked + .slider::before { transform: translateX(18px); }
   /* Cards on a phone: the number and the agent matter more than on a narrow desktop list. */
   .dt td.dt-p2 { display: block; color: #4b5563; font-size: 0.8rem; }
 }
+
+/* Patients: family & relations */
+.pt-section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.pt-relations { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.pt-relations li { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.pt-rel-name { padding: 0; font-weight: 600; }
+.pt-rel-meta { font-size: 0.8rem; }
+.pt-rel-remove { margin-left: auto; border: 0; background: none; color: #6b7280; cursor: pointer; padding: 2px 6px; border-radius: 6px; font-size: 0.85rem; }
+.pt-rel-remove:hover { background: #fef2f2; color: #b42318; transform: none; }
+.pt-link-results { list-style: none; margin: 6px 0 0; padding: 0; border: 1px solid var(--border); border-radius: 8px; max-height: 260px; overflow-y: auto; }
+.pt-link-results li { border-bottom: 1px solid #eef0f3; }
+.pt-link-results li:last-child { border-bottom: 0; }
+.pt-link-results li.mp-muted { padding: 10px 12px; }
+.pt-link-results button { width: 100%; text-align: left; border: 0; background: #fff; padding: 9px 12px; font: inherit; color: #111827; cursor: pointer; }
+.pt-link-results button:hover { background: #f7f8fc; color: #111827; transform: none; }
+.pt-link-chosen { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 12px; border: 1px solid #c7d2fe; background: #f5f6ff; border-radius: 8px; margin-bottom: 12px; }

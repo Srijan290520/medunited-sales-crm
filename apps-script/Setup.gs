@@ -11,6 +11,7 @@ function setupSpreadsheet() {
   getUserRequestsSheet();
   getUserLayoutsSheet();
   getTargetsSheet();
+  getRelationsSheet();
   getRemindersSheet();
   getActivitiesSheet();
   getListsSheet();

@@ -13,6 +13,7 @@ import {
   PatientDetail,
   PatientRecord,
   PatientSummary,
+  PatientRelation,
   SaleType,
   User,
 } from '../types';
@@ -81,6 +82,7 @@ export const PatientsView: React.FC<Props> = ({ user, modules, onToast }) => {
   const [detailLoading, setDetailLoading] = useState(false);
   const [form, setForm] = useState<{ mode: 'create' | 'edit'; prefill?: { name?: string; contact?: string } } | null>(null);
   const [logOpen, setLogOpen] = useState(false);
+  const [linkOpen, setLinkOpen] = useState(false);
   const [service, setService] = useState<{ type: SaleType; record?: PatientRecord } | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLElement>(null);
@@ -334,6 +336,18 @@ export const PatientsView: React.FC<Props> = ({ user, modules, onToast }) => {
               onService={openService}
               onOpenRecord={(r) => setService({ type: r.Type, record: r })}
               onSelectPerson={(id) => setSelectedId(id)}
+              canLink={!!detail && (detail.patient.CanEdit || isTeam)}
+              onLink={() => setLinkOpen(true)}
+              onUnlink={async (rel) => {
+                if (!detail) return;
+                if (!window.confirm(`Remove the link: ${rel.Name} as ${detail.patient.Name}'s ${rel.Relation}?`)) return;
+                const res = await api.removePatientRelation(rel.ID, detail.patient.ID);
+                if (res.error) onToast(res.message || 'Could not remove the link.', 'error');
+                else {
+                  applyDetail(res as unknown as PatientDetail);
+                  onToast('Link removed', 'success');
+                }
+              }}
             />
           )}
         </div>
@@ -352,6 +366,20 @@ export const PatientsView: React.FC<Props> = ({ user, modules, onToast }) => {
             setSelectedId(d.patient.ID);
             setSearch('');
             onToast(notice || (form.mode === 'create' ? `${d.patient.Name} registered` : 'Patient updated'), 'success');
+          }}
+        />
+      )}
+
+      {linkOpen && detail && (
+        <LinkRelativeModal
+          patient={detail.patient}
+          patients={patients}
+          linked={(detail.relations || []).map((r) => r.PatientID)}
+          onClose={() => setLinkOpen(false)}
+          onSaved={(d, name) => {
+            setLinkOpen(false);
+            applyDetail(d);
+            onToast(`${name} linked`, 'success');
           }}
         />
       )}
@@ -401,9 +429,12 @@ interface ProfileProps {
   onService: (type: SaleType) => void;
   onOpenRecord: (r: PatientRecord) => void;
   onSelectPerson: (id: string) => void;
+  canLink: boolean;
+  onLink: () => void;
+  onUnlink: (rel: PatientRelation) => void;
 }
 
-const PatientProfile: React.FC<ProfileProps> = ({ patient: p, detail, loading, modules, onClose, onEdit, onLogCall, onService, onOpenRecord, onSelectPerson }) => {
+const PatientProfile: React.FC<ProfileProps> = ({ patient: p, detail, loading, modules, onClose, onEdit, onLogCall, onService, onOpenRecord, onSelectPerson, canLink, onLink, onUnlink }) => {
   const [allActivity, setAllActivity] = useState(false);
   const ref = useRef<HTMLElement>(null);
   // On narrow screens the profile sits under the list: bring it into view.
@@ -532,6 +563,42 @@ const PatientProfile: React.FC<ProfileProps> = ({ patient: p, detail, loading, m
               {h.OwnerName ? <span className="mp-muted"> · {h.OwnerName}</span> : ''}
             </button>
           ))}
+        </section>
+      )}
+
+      {detail && (
+        <section className="mp-panel-section" aria-label="Family and relations">
+          <div className="pt-section-head">
+            <h3>Family &amp; relations</h3>
+            {canLink && (
+              <button type="button" className="mp-link" onClick={onLink}>
+                + Link a relative
+              </button>
+            )}
+          </div>
+          {(detail.relations || []).length === 0 ? (
+            <div className="mp-muted">No relatives linked{canLink ? ' yet' : ''}.</div>
+          ) : (
+            <ul className="pt-relations">
+              {(detail.relations || []).map((r) => (
+                <li key={r.ID}>
+                  <span className="mp-chip-static">{r.Relation}</span>
+                  <button type="button" className="mp-link pt-rel-name" onClick={() => onSelectPerson(r.PatientID)} title="Open their profile">
+                    {r.Name}
+                  </button>
+                  <span className="mp-muted pt-rel-meta">
+                    {r.Contact}
+                    {r.OwnerName ? ` · ${r.OwnerName}` : r.Conflict ? ' · owner to decide' : ''}
+                  </span>
+                  {canLink && (
+                    <button type="button" className="pt-rel-remove" onClick={() => onUnlink(r)} aria-label={`Remove the link to ${r.Name}`} title="Remove this link">
+                      ✕
+                    </button>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
         </section>
       )}
 
@@ -841,6 +908,169 @@ const LogContactModal: React.FC<{ patient: PatientSummary; onClose: () => void; 
           </button>
           <button type="submit" disabled={busy}>
             {busy ? 'Saving…' : 'Save'}
+          </button>
+        </div>
+      </form>
+    </>
+  );
+};
+
+
+// ===== Link a relative =====
+const DEFAULT_RELATIONS = ['Father', 'Mother', 'Husband', 'Wife', 'Son', 'Daughter', 'Brother', 'Sister', 'Grandfather', 'Grandmother',
+  'Grandson', 'Granddaughter', 'Other relative', 'Caregiver / attendant', 'Under their care'];
+// The likely other side of each relation (no gender on file, so the person
+// linking confirms it when there's more than one).
+const REVERSE_OF: Record<string, string[]> = {
+  Father: ['Son', 'Daughter'], Mother: ['Son', 'Daughter'], Husband: ['Wife'], Wife: ['Husband'],
+  Son: ['Father', 'Mother'], Daughter: ['Father', 'Mother'], Brother: ['Brother', 'Sister'], Sister: ['Brother', 'Sister'],
+  Grandfather: ['Grandson', 'Granddaughter'], Grandmother: ['Grandson', 'Granddaughter'],
+  Grandson: ['Grandfather', 'Grandmother'], Granddaughter: ['Grandfather', 'Grandmother'],
+  'Other relative': ['Other relative'], 'Caregiver / attendant': ['Under their care'], 'Under their care': ['Caregiver / attendant'],
+};
+
+const LinkRelativeModal: React.FC<{
+  patient: PatientSummary;
+  patients: PatientSummary[];
+  linked: string[]; // already linked: not offered again
+  onClose: () => void;
+  onSaved: (d: PatientDetail, name: string) => void;
+}> = ({ patient, patients, linked, onClose, onSaved }) => {
+  const [words, setWords] = useState<string[]>(DEFAULT_RELATIONS);
+  const [search, setSearch] = useState('');
+  const [other, setOther] = useState<PatientSummary | null>(null);
+  const [relation, setRelation] = useState('');
+  const [reverse, setReverse] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
+
+  useEffect(() => {
+    api.getOptionLists().then((res) => {
+      if (!res.error && res.lists && Array.isArray(res.lists.relations) && res.lists.relations.length) setWords(res.lists.relations);
+    });
+  }, []);
+
+  const q = search.trim();
+  const qDigits = digitsOf(q);
+  const matches = q.length < 2
+    ? []
+    : patients
+        .filter((x) => x.ID !== patient.ID && !linked.includes(x.ID))
+        .filter((x) => (qDigits.length >= 3 ? digitsOf(x.Contact).includes(qDigits) || digitsOf(x.AltContact).includes(qDigits) : normName(x.Name).includes(normName(q))))
+        .slice(0, 8);
+
+  const suggested = (REVERSE_OF[relation] || []).filter((w) => words.includes(w));
+  const pickRelation = (w: string) => {
+    setRelation(w);
+    const s = (REVERSE_OF[w] || []).filter((x) => words.includes(x));
+    setReverse(s.length === 1 ? s[0] : '');
+  };
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (busyRef.current) return;
+    setError(null);
+    if (!other) return setError('Choose the relative from the list.');
+    if (!relation || !reverse) return setError('Choose both sides of the relation.');
+    busyRef.current = true;
+    setBusy(true);
+    try {
+      const res = await api.addPatientRelation({ patientId: patient.ID, relatedId: other.ID, relation, reverseRelation: reverse });
+      if (res.error) setError(res.message || 'Could not link them.');
+      else onSaved(res as unknown as PatientDetail, other.Name);
+    } finally {
+      busyRef.current = false;
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <div className="overlay open" style={{ zIndex: 1200 }} onClick={onClose} />
+      <form className="sales-modal-popup open pt-modal" style={{ zIndex: 1201 }} role="dialog" aria-modal="true" aria-labelledby="pt-link-title" onSubmit={submit}>
+        <div className="modal-header-hero">
+          <div className="modal-header-title">
+            <div>
+              <h3 id="pt-link-title">Link a relative · {patient.Name}</h3>
+              <div className="modal-header-sub">For family on another number. Each keeps their own agent.</div>
+            </div>
+            <button type="button" className="popup-close" onClick={onClose} aria-label="Close">
+              ✕
+            </button>
+          </div>
+        </div>
+        <div className="pt-modal-body">
+          {!other ? (
+            <div className="form-group">
+              <label htmlFor="pt-link-search">Find the relative</label>
+              <input id="pt-link-search" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Name or phone number" autoFocus autoComplete="off" />
+              {q.length >= 2 && (
+                <ul className="pt-link-results" role="listbox" aria-label="Matching patients">
+                  {matches.length === 0 ? (
+                    <li className="mp-muted">No registered patient matches. Register them first on the Patients page, then link them here.</li>
+                  ) : (
+                    matches.map((x) => (
+                      <li key={x.ID}>
+                        <button type="button" onClick={() => setOther(x)}>
+                          <strong>{x.Name}</strong>
+                          <span className="mp-muted"> {x.Contact}{x.OwnerName ? ` · ${x.OwnerName}` : ''}</span>
+                        </button>
+                      </li>
+                    ))
+                  )}
+                </ul>
+              )}
+            </div>
+          ) : (
+            <>
+              <div className="pt-link-chosen">
+                <span>
+                  <strong>{other.Name}</strong> <span className="mp-muted">{other.Contact}</span>
+                </span>
+                <button type="button" className="mp-link" onClick={() => { setOther(null); setRelation(''); setReverse(''); }}>
+                  Change
+                </button>
+              </div>
+              <div className="form-group">
+                <label htmlFor="pt-link-rel">{other.Name} is {patient.Name}'s</label>
+                <select id="pt-link-rel" value={relation} onChange={(e) => pickRelation(e.target.value)} required>
+                  <option value="">Choose…</option>
+                  {words.map((w) => (
+                    <option key={w}>{w}</option>
+                  ))}
+                </select>
+              </div>
+              {relation && (
+                <div className="form-group">
+                  <label htmlFor="pt-link-rev">and {patient.Name} is {other.Name}'s</label>
+                  <select id="pt-link-rev" value={reverse} onChange={(e) => setReverse(e.target.value)} required>
+                    <option value="">Choose…</option>
+                    {suggested.length > 0 && (
+                      <optgroup label="Suggested">
+                        {suggested.map((w) => (
+                          <option key={w}>{w}</option>
+                        ))}
+                      </optgroup>
+                    )}
+                    <optgroup label={suggested.length ? 'Others' : 'Relations'}>
+                      {words.filter((w) => !suggested.includes(w)).map((w) => (
+                        <option key={w}>{w}</option>
+                      ))}
+                    </optgroup>
+                  </select>
+                </div>
+              )}
+            </>
+          )}
+          {error && <div className="contact-check blocking">{error}</div>}
+        </div>
+        <div className="pt-modal-foot">
+          <button type="button" className="secondary" onClick={onClose} disabled={busy}>
+            Cancel
+          </button>
+          <button type="submit" disabled={busy || !other || !relation || !reverse}>
+            {busy ? 'Linking…' : 'Link'}
           </button>
         </div>
       </form>

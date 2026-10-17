@@ -29,7 +29,7 @@ var WRITE_ACTIONS = [
   'createSale', 'importSales', 'updateSale', 'deleteSale', 'reopenSale', 'reassignSale', 'logSaleActivity',
   'saveDashboardLayout', 'resetDashboardLayout', 'saveRoleDefaultLayout',
   'saveTargets', 'copyTargets', 'setTargetMeasure', 'updateHomekareCatalogue',
-  'createPatient', 'updatePatient', 'logPatientActivity',
+  'createPatient', 'updatePatient', 'logPatientActivity', 'addPatientRelation', 'removePatientRelation',
   'reassignPatient', 'bulkReassign', 'importReassignments', 'handoverAgent', 'migratePatients', 'resolvePatientConflict', 'decideMedpassDiscount', 'updateMedpassSettings',
   'createUser', 'updateUser', 'deleteUser', 'updateIncentives', 'requestDeactivation', 'decideUserRequest',
   'markContacted', 'reassignReminder',
@@ -153,6 +153,10 @@ function dispatch(action, token, p) {
       return Object.assign({ error: false }, svc_updatePatient(session, p.id, p.data || {}));
     case 'logPatientActivity':
       return Object.assign({ error: false }, svc_logPatientActivity(session, p.id, p.data || {}));
+    case 'addPatientRelation': // Relations.gs
+      return Object.assign({ error: false }, svc_addPatientRelation(session, p));
+    case 'removePatientRelation':
+      return Object.assign({ error: false }, svc_removePatientRelation(session, p));
 
     // ----- Patients (owners, migration, conflicts) -----
     case 'migratePatients':

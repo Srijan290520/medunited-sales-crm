@@ -307,6 +307,7 @@ export interface OptionLists {
   channels: string[];
   heardFrom: string[];
   lostReasons: string[];
+  relations?: string[]; // family links between patients
   temperatures: string[];
   directions: string[];
   activityTypes: string[];
@@ -504,4 +505,16 @@ export interface PatientDetail {
   activities: PatientActivity[];
   reminders: Reminder[];
   household: { ID: string; Name: string; OwnerName: string; Conflict: boolean }[];
+  relations?: PatientRelation[]; // family links to patients on other numbers
+}
+
+// A relative linked to this patient: Relation is what they are to this patient.
+export interface PatientRelation {
+  ID: string;
+  Relation: string;
+  PatientID: string;
+  Name: string;
+  Contact: string;
+  OwnerName: string;
+  Conflict: boolean;
 }

@@ -195,7 +195,10 @@ function patientDetail(session, world, p) {
       return { ID: String(x.ID), Name: String(x.Name), OwnerName: o ? o.name : '', Conflict: x.OwnerStatus === PATIENT_CONFLICT };
     });
 
-  return { patient: summary, records: records, activities: timeline.slice(0, 100), reminders: reminders, household: household };
+  return {
+    patient: summary, records: records, activities: timeline.slice(0, 100), reminders: reminders, household: household,
+    relations: relationsFor(world, p.ID) // Relations.gs
+  };
 }
 
 function svc_getPatient(session, id) {

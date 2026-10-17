@@ -1522,3 +1522,53 @@ test('patients page: calls on the patient itself, with a follow-up, on the timel
   assert.equal(call('logPatientActivity', arjun, { id: p.ID, data: { type: 'Call', direction: 'Outgoing', outcome: 'No answer' } }).forbidden, true);
   ok(call('logPatientActivity', arjun, { id: p.ID, data: { type: 'Call', direction: 'Incoming', outcome: 'Connected' } }));
 });
+
+test('patient relations: link both ways, who may link, no duplicates, unlink keeps the row', () => {
+  const { call, ctx, arjun, divya, manager } = world();
+  const father = ok(call('createPatient', arjun, { data: { name: 'Ramesh Iyer', contact: '9000055551' } })).patient;
+  const daughter = ok(call('createPatient', divya, { data: { name: 'Sunita Iyer', contact: '9000055552' } })).patient;
+  const other = ok(call('createPatient', divya, { data: { name: 'Gopal Rao', contact: '9000055553' } })).patient;
+
+  // Divya owns Sunita, so she may link her to Arjun's patient; each keeps their agent.
+  const linked = ok(call('addPatientRelation', divya, { patientId: daughter.ID, relatedId: father.ID, relation: 'father', reverseRelation: 'Daughter' }));
+  assert.equal(linked.relations.length, 1);
+  assert.equal(linked.relations[0].Relation, 'Father', 'normalised to the list spelling');
+  assert.equal(linked.relations[0].Name, 'Ramesh Iyer');
+  assert.equal(linked.relations[0].OwnerName, 'Arjun Agent');
+  const fromFather = ok(call('getPatient', arjun, { id: father.ID }));
+  assert.equal(fromFather.relations[0].Relation, 'Daughter');
+  assert.equal(fromFather.relations[0].PatientID, daughter.ID);
+  assert.equal(fromFather.patient.OwnerEmail, 'arjun@medunited.in');
+
+  // Anyone can see the link; only an agent of one side, a manager or an admin can change it.
+  assert.equal(call('addPatientRelation', arjun, { patientId: other.ID, relatedId: daughter.ID, relation: 'Brother', reverseRelation: 'Sister' }).forbidden, true);
+  assert.equal(ok(call('getPatient', arjun, { id: daughter.ID })).relations.length, 1);
+
+  // Duplicates (either direction), self-links and unknown words are refused.
+  assert.match(call('addPatientRelation', arjun, { patientId: father.ID, relatedId: daughter.ID, relation: 'Daughter', reverseRelation: 'Father' }).message, /already linked/);
+  assert.match(call('addPatientRelation', manager, { patientId: father.ID, relatedId: father.ID, relation: 'Father', reverseRelation: 'Son' }).message, /own relative/);
+  assert.match(call('addPatientRelation', manager, { patientId: father.ID, relatedId: other.ID, relation: 'Neighbour', reverseRelation: 'Son' }).message, /from the list/);
+
+  // A manager can link anyone; the relation list is editable like other dropdowns.
+  ok(call('addPatientRelation', manager, { patientId: other.ID, relatedId: father.ID, relation: 'Caregiver / attendant', reverseRelation: 'Under their care' }));
+  assert.equal(ok(call('getPatient', manager, { id: father.ID })).relations.length, 2);
+
+  // Unlinking stamps the row (never deleted) and is audited; Divya may unlink her patient's link.
+  const linkId = linked.relations[0].ID;
+  // Arjun has neither of Divya's two patients, so he can't unlink them (but he could unlink the caregiver link: Ramesh is his).
+  const divyaOnly = ok(call('addPatientRelation', manager, { patientId: other.ID, relatedId: daughter.ID, relation: 'Other relative', reverseRelation: 'Other relative' }));
+  const divyaLink = divyaOnly.relations.find((r) => r.PatientID === daughter.ID).ID;
+  assert.equal(call('removePatientRelation', arjun, { id: divyaLink }).forbidden, true);
+  const after = ok(call('removePatientRelation', divya, { id: linkId, patientId: daughter.ID, reason: 'Wrong person' }));
+  assert.deepEqual([...after.relations.map((r) => r.Name)], ['Gopal Rao'], 'only the father link is gone');
+  const rows = ctx.sheetToObjects(ctx.getRelationsSheet());
+  const removed = rows.find((r) => r.ID === linkId);
+  assert.ok(removed && removed.RemovedAt && removed.RemovedReason === 'Wrong person');
+  assert.equal(rows.length, 3, 'rows are kept');
+  assert.match(call('removePatientRelation', divya, { id: linkId }).message, /no longer exists/);
+  const log = ctx.sheetToObjects(ctx.getAuditSheet()).filter((a) => a.Entity === 'PatientRelation').map((a) => a.Action);
+  assert.deepEqual([...log].sort(), ['link', 'link', 'link', 'unlink']);
+
+  // Relations are a dropdown list like the others.
+  assert.ok(ok(call('getLists', arjun)).lists.relations.includes('Under their care'));
+});
