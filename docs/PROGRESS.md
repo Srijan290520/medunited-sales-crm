@@ -575,14 +575,11 @@ live site as Admin (17 patients listed, a profile opens, no errors).
    logins and sample data.
 
 ### Open items, in order
-1. **Speed is still the main complaint.** On the evening test Google itself
-   was slow (`ping` 15.8 s once; a profile 8–19 s). Next, all frontend-only:
-   - show the last loaded list/profile at once and refresh it in the
-     background (stale-while-revalidate, sessionStorage);
-   - fetch users, dropdown lists and Medpass settings once per login instead
-     of on every page (some screens ask for `listUsers` 2–3 times);
-   - later, if needed: one combined request per page, a short server-side
-     cache for `listSales`, a timer that keeps the script warm.
+1. **Speed.** 2026-10-17: frontend loading reworked (see the log entry at
+   the end). Still possible later: the patient profile (`getPatient`) and
+   dashboard could use the same last-copy approach; one combined request per
+   page; a short server-side cache for `listSales`; a timer that keeps the
+   script warm.
 2. **Owner conflict:** 7569199231 (Amarjeet Dubey) has open records under
    both Amar and HARI (from repeated saves). The user decides on Settings →
    Patient owners.
@@ -591,3 +588,27 @@ live site as Admin (17 patients listed, a profile opens, no errors).
 5. Later (from the user's earlier list): Medpass renewal rules, Homekare visit
    tracking, incentives for Homekare and Lab, target bonuses, a Lab test
    catalogue.
+
+- **2026-10-17** — Faster-feeling pages (frontend only; no Apps Script change).
+  - `src/services/cache.ts`: last copy of server answers in **sessionStorage
+    only** (key prefix `mu_cache:`), wiped on login, logout (at the click) and
+    an expired session. `refresh` (always fetch, keep the answer), `once`
+    (fetch once per login), `shared` (one request per key at a time), and
+    `markStale`: every non-read action (api.ts `READ_ACTIONS`) bumps an epoch
+    so answers already on their way aren't kept.
+  - api.ts: `listSales`/`listPatients` use `refresh`; `getModules`,
+    `getMedpassSettings`, `getLists`, `listUsers` use `once`; the calls that
+    change them clear them.
+  - SalesView: draws the last copy at once, **Updating…** bar, table shows as
+    soon as its own answer arrives (form data separately; the Patients-page
+    embed now waits for `formReady`); only the newest answer draws.
+    PatientsView: same, and **Register this caller** waits while updating.
+  - `Placeholders.tsx` (grey rows, Updating bar; `ph-*` CSS).
+  - App: 2.5 s after login, loads every module list, patients, lists, Medpass
+    prices and (team) users in the background.
+  - Demo: `?slow=4000` in the demo address imitates Apps Script's delay.
+  - Checked in the demo with 3–6 s delays: first visit shows placeholders and
+    the table after one request; later visits show rows in ~10 ms then
+    refresh (~4 s); saving while updating shows the new record; logout leaves
+    no copies and the next user (agent) never sees the previous list; phone
+    width OK. 55/55 backend tests, tsc and build clean.

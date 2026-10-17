@@ -182,6 +182,16 @@ and the monthly target.
 
 ## Pages and dashboard
 
+- **Loading:** Apps Script answers in 2–30 s, so lists (each module and
+  Patients) show the last copy this browser tab loaded straight away, with a
+  thin **Updating…** bar until the fresh one arrives; the first visit shows
+  grey placeholder rows. Right after login the module lists, patients and
+  form data load in the background. Dropdown lists, users, Medpass prices and
+  the module list are fetched once per login (changing them refreshes them).
+  The copies live only in this tab's session storage, like the login, and are
+  wiped on login, logout and an expired session. While the Patients list is
+  updating, **Register this caller** waits for the fresh list, so a number
+  someone else just registered isn't registered twice.
 - **Module pages** (Medpass, Pharmacy, Homekare, Lab & Radiology) share one
   layout: a search box, **Filters** (agent, channel, payment, price type),
   **⋯ More** (import, export, reassign from file, board view) and **New record**.
