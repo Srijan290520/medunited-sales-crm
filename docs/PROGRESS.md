@@ -626,3 +626,16 @@ live site as Admin (17 patients listed, a profile opens, no errors).
   Note for testing: the preview tab runs in the background, where timers are
   slowed (a 5 ms timer took 316 ms), so time page switches with a
   MutationObserver, not setTimeout polling.
+
+- **2026-10-17** — Proper tables (module pages and Patients: sortable
+  headers, pages of 25/50/100, columns step aside when the record panel is
+  open, cards on a phone; `DataTable.tsx`, `Pager.tsx`, `.dt-*`).
+  **Family relations** (user: full family list; link only, each keeps their
+  agent; either patient's agent or managers/admins link): new
+  `Relations.gs` (`PatientRelations` tab, `addPatientRelation`,
+  `removePatientRelation` — unlink stamps RemovedAt, never deletes),
+  `getPatient` returns `relations`, `relations` dropdown list in Lists.gs and
+  Settings. Profile "Family & relations" section and a Link form with the
+  reverse suggested. 56/56 backend tests. **Backend files to paste live:**
+  Relations.gs (new), Code.gs, Lists.gs, PatientProfiles.gs, Setup.gs; then
+  publish a new version on the deployment in public/config.js, then the site.

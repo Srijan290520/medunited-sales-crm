@@ -68,7 +68,7 @@ Apps Script deployment without rebuilding.
    file per `.gs` file in `apps-script/` and paste each in:
    `Activities, Attachments, Audit, Auth, BulkReassign, Code, DashboardLayouts,
    Handover, Homekare, Import, Incentives, Lab, Lists, Medpass, Modules, PatientProfiles, Patients,
-   Performance, Reminders, SalesService, Setup, SmokeTest, UserService, Utils`.
+   Performance, Relations, Reminders, SalesService, Setup, SmokeTest, UserService, Utils`.
 3. **Project Settings (gear) → "Show appsscript.json manifest file"** → open
    `appsscript.json` and replace it with `apps-script/appsscript.json`.
    *(Or use [clasp](https://github.com/google/clasp): `clasp push` from the
@@ -293,10 +293,19 @@ box — it searches **every** patient, whoever handles them.
   their household and records.
 - Tabs: **My patients** (agents), **Follow-ups due** (overdue or today, from
   the patient's own call-back or any open record), **All patients**.
+- **Family & relations** on the profile: **+ Link a relative** links a
+  patient on another number (people on the same number are already shown as
+  a household). You choose both sides ("Gita is Sunita's Mother" and "Sunita
+  is Gita's Daughter"; the reverse is suggested, since there's no gender on
+  file). Each keeps their own agent; the link is information only. The agent
+  of either patient, managers and admins link and unlink (✕); unlinking keeps
+  the row (stamped as removed) and every change is in the audit log. The
+  relation words are a dropdown list in Settings ("Under their care" is the
+  other side of "Caregiver / attendant"). Tab: `PatientRelations`.
 
 New `Patients` columns (`AltContact`, `Address`, `Area`, `Pincode`, `Notes`,
 `NextFollowUp`) are added automatically on first use. Backend:
-`apps-script/PatientProfiles.gs`.
+`apps-script/PatientProfiles.gs` and `apps-script/Relations.gs`.
 
 ## Patients and owners
 

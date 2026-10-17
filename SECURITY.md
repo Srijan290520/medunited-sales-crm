@@ -47,6 +47,12 @@ Report problems privately to the repository owner, not in public issues.
   the Incentives page and the incentive column of team figures are refused or
   removed for agents on the server. Agents see their own targets, never
   anyone else's.
+- Family links between patients: anyone who can look a patient up sees the
+  linked relatives' names, numbers and agents (everyone can look up any
+  patient). Only the agent of either patient, a manager or an admin can link
+  or unlink; relation words must come from the Settings list; a link never
+  changes who owns a patient or their records; unlinking never deletes the
+  row; both are audited.
 - Performance figures: agents get only their own (the server ignores any
   agent they ask for); managers and above get the team or one agent. The
   performance data never includes incentive amounts.
